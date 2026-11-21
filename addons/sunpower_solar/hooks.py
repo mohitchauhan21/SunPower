@@ -90,6 +90,40 @@ def apply_gst(env):
     return True
 
 
+QUOTE_NOTE = ("Prices are exclusive of GST, which is shown separately. The price covers the "
+              "complete kit, installation, net-metering paperwork and subsidy filing by "
+              "SunPower. Warranty: panels 20 years; inverter, batteries and charge "
+              "controller 2 years, starting on the delivery date.")
+
+
+def apply_branding(env):
+    """Logo, Indian time zone and number format (1,78,980), clean quote wording,
+    no automatic lead-enrichment messages."""
+    import base64
+    from odoo.tools.misc import file_path
+    company = env.company
+    try:
+        with open(file_path("sunpower_solar/static/description/logo.png"), "rb") as f:
+            company.logo = base64.b64encode(f.read())
+    except (FileNotFoundError, ValueError):
+        pass
+    lang = env["res.lang"]._activate_lang("en_IN")
+    if lang:
+        lang.write({"grouping": "[3,2,-1]", "date_format": "%d/%m/%Y"})
+    users = env["res.users"].with_context(active_test=False).search([("share", "=", False)])
+    vals = {"tz": "Asia/Kolkata"}
+    if lang:
+        vals["lang"] = "en_IN"
+    users.write(vals)
+    company.partner_id.write(vals)
+    if lang:  # documents follow the customer's language -> Indian number grouping
+        env["res.partner"].with_context(active_test=False).search(
+            [("lang", "in", ("en_US", False))]).write({"lang": "en_IN"})
+    env["sale.order.template"].search([("solar_kw", ">", 0)]).write({"note": QUOTE_NOTE})
+    if "lead_enrich_auto" in env["res.config.settings"]._fields:
+        env["res.config.settings"].create({"lead_enrich_auto": "manual"}).execute()
+
+
 def post_init_hook(env):
     company = env.company
     if company.name in ("My Company", "YourCompany"):
@@ -201,3 +235,4 @@ def post_init_hook(env):
             })
             _xmlid(env, qt, "qt_%s_%skw" % (system_type, kw))
     apply_gst(env)
+    apply_branding(env)

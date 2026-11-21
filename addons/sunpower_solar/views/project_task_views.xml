@@ -88,7 +88,7 @@
         <field name="model">project.task</field>
         <field name="priority">40</field>
         <field name="arch" type="xml">
-            <list create="0">
+            <list create="0" default_order="installation_date desc">
                 <field name="installation_date"/>
                 <field name="name"/>
                 <field name="partner_id"/>

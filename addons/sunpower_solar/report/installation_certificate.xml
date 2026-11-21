@@ -34,11 +34,11 @@
 
                         <h5 class="mt-4">Checklist</h5>
                         <ul>
-                            <li><t t-out="'✔' if task.chk_stands else '✘'"/> Mounting stands fixed</li>
-                            <li><t t-out="'✔' if task.chk_panels else '✘'"/> Panels laid &amp; clamped</li>
-                            <li><t t-out="'✔' if task.chk_wiring else '✘'"/> DCDB/ACDB &amp; wiring connected</li>
-                            <li><t t-out="'✔' if task.chk_earthing else '✘'"/> Earthing &amp; lightning arrester</li>
-                            <li><t t-out="'✔' if task.chk_generation else '✘'"/> Power generation tested</li>
+                            <li><strong t-out="'Done' if task.chk_stands else 'NOT DONE'"/> – Mounting stands fixed</li>
+                            <li><strong t-out="'Done' if task.chk_panels else 'NOT DONE'"/> – Panels laid &amp; clamped</li>
+                            <li><strong t-out="'Done' if task.chk_wiring else 'NOT DONE'"/> – DCDB/ACDB &amp; wiring connected</li>
+                            <li><strong t-out="'Done' if task.chk_earthing else 'NOT DONE'"/> – Earthing &amp; lightning arrester</li>
+                            <li><strong t-out="'Done' if task.chk_generation else 'NOT DONE'"/> – Power generation tested</li>
                         </ul>
 
                         <div class="row mt-5">
