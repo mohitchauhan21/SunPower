@@ -5,7 +5,7 @@ Run inside the Odoo shell, e.g. for phase 1:
       "C:\\Users\\Ankit Kumar\\odoo18\\odoo\\odoo-bin" shell -c "C:\\Users\\Ankit Kumar\\odoo18\\odoo.conf" -d sunpower
 Set PHASES below to choose which phases to run.
 """
-PHASES = [1, 2, 3, 4, 5]
+PHASES = [1, 2, 3, 4, 5, 6]
 
 results = []
 
@@ -303,6 +303,52 @@ def phase5(env):
         so._solar_refresh_job_financials()
         check(5, "Job moves to 'Installed' with labour cost", so.job_stage == "installed"
               and so.job_labour_cost > 0, "%s / %s" % (so.job_stage, so.job_labour_cost))
+        env.flush_all()
+        sp.rollback()
+    env.invalidate_all()
+
+
+def phase6(env):
+    """Repairs: find by phone/serial, free vs billed, customer confirmation."""
+    from datetime import timedelta
+    from odoo import fields
+    with env.cr.savepoint(flush=False) as sp:
+        so = _confirmed_job(env, 3)
+        _dispatch(so)
+        inv_w = so.warranty_ids.filtered(lambda w: w.product_id.default_code.startswith("INV"))
+        phone = so.partner_id.phone
+        lot = env["stock.lot"].search([("solar_partner_id.phone", "ilike", phone[-6:]),
+                                       ("product_id.default_code", "=like", "INV%")])
+        check(6, "Phone number finds the customer's inverter", lot == inv_w.lot_id, lot.name)
+        wiz = env["solar.enquiry.wizard"].create({"channel": "call", "intent": "complaint",
+                                                  "phone": phone, "summary": "E-07, no power"})
+        t = env["solar.service.ticket"].browse(wiz.action_create()["res_id"])
+        check(6, "Complaint call creates a ticket linked to the serial", t.lot_id == inv_w.lot_id
+              and t.partner_id == so.partner_id, t.name)
+        check(6, "Ticket knows it is under warranty", t.under_warranty)
+        t.write({"labour_hours": 2, "resolution": "<p>fixed</p>", "line_ids": [(0, 0, {
+            "product_id": inv_w.product_id.id, "quantity": 1, "price_unit": 20000})]})
+        t.action_resolve()
+        check(6, "In warranty: customer pays nothing, no invoice",
+              t.customer_charge == 0 and not t.invoice_id and t.repair_cost > 0, t.repair_cost)
+        check(6, "Ticket waits for customer confirmation", t.stage == "awaiting")
+        t.action_reopen()
+        check(6, "'Still a problem' reopens the ticket", t.stage == "repair")
+        t.action_resolve()
+        t.action_customer_confirm()
+        check(6, "Customer confirmation closes the ticket", t.stage == "closed" and t.customer_confirmed)
+        so._solar_refresh_job_financials()
+        check(6, "Warranty repair cost counted against the job", so.job_repair_cost == t.repair_cost,
+              so.job_repair_cost)
+        inv_w.start_date = fields.Date.today() - timedelta(days=800)
+        t2 = env["solar.service.ticket"].create({
+            "partner_id": so.partner_id.id, "lot_id": inv_w.lot_id.id, "labour_hours": 1,
+            "resolution": "<p>fixed</p>", "line_ids": [(0, 0, {
+                "product_id": inv_w.product_id.id, "quantity": 1, "price_unit": 20000})]})
+        check(6, "Expired warranty detected", not t2.under_warranty)
+        t2.action_resolve()
+        check(6, "Out of warranty: invoice created & posted automatically",
+              t2.invoice_id and t2.invoice_id.state == "posted", t2.invoice_id.amount_total)
         env.flush_all()
         sp.rollback()
     env.invalidate_all()
