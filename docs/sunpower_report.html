@@ -70,7 +70,7 @@ dl.gloss dd{margin:0;color:var(--muted)}
   <div class="meta">
     <span class="chip">Built on Odoo 18 (free edition)</span>
     <span class="chip">Runs on one Windows laptop</span>
-    <span class="chip">Status: Phase 2 of 10</span>
+    <span class="chip">Status: all 10 phases done · 85/85 checks pass</span>
     <span class="chip">21 Nov 2026</span>
   </div>
 </header>
@@ -90,6 +90,7 @@ dl.gloss dd{margin:0;color:var(--muted)}
     <li><a href="#testing">How it is tested</a></li>
     <li><a href="#status">Where things stand</a></li>
     <li><a href="#suggest">Risks and suggestions</a></li>
+    <li><a href="#demo">7-minute demo script</a></li>
     <li><a href="#words">Word list</a></li>
   </ol>
 </nav>
@@ -190,14 +191,18 @@ flowchart TD
 
 <section id="journey" class="read">
 <h2>5. One customer's journey</h2>
-<p>This is the exact path tested in Phase 2 with a sample customer, Meera Joshi, who wants a 3 kW system.</p>
+<p>This is the exact path tested across Phases 2–7 with a sample customer, Meera Joshi, who wants a 3 kW system.</p>
 <ol class="steps">
   <li><strong>Website.</strong> Meera fills the "Get a Solar Quote" form: 3 kW On-Grid, ₹3,200 monthly bill, 420 sq ft roof, wants subsidy. She sees "Thank you, reference 48".</li>
   <li><strong>Sales board.</strong> Enquiry 48 appears, tagged <em>Website Form</em> and <em>No Survey</em>, with a "call within 2 hours" reminder. The system suggests 3 kW from the bill.</li>
   <li><strong>Phone check.</strong> Trying to book a survey before confirming the grid connection is refused with a clear message. After marking the grid "Suitable", the survey is created and pre-filled. It works out that up to 4.2 kW fits.</li>
   <li><strong>Survey.</strong> Marking it "visited" without the roof direction is refused. After entering South, 15° tilt and 18 m of cable, it is approved.</li>
   <li><strong>Quote.</strong> Before approval the quote is blocked. After approval, "New Quotation" fills the 3 kW On-Grid package: ₹1,44,000 kit + ₹15,000 installation = ₹1,59,000, linked to the survey.</li>
-  <li><strong>Next phases:</strong> 30% advance → warehouse packs and scans → warranties start → crew installs and Meera signs → certificate emailed → subsidy file moves forward → profit shows on the dashboard.</li>
+  <li><strong>GST and savings.</strong> The quote adds 12% GST on the kit and 18% on installation (₹1,78,980 total, split into SGST + CGST). PVGIS estimates 4,654 kWh a year, ₹37,230 saved a year. After the ₹78,000 government subsidy her cost is ₹1,00,980 and payback is 2.7 years.</li>
+  <li><strong>Order confirmed.</strong> The warehouse gets an 11-line packing list, the crew gets "Install 3 kW On-Grid – Meera Joshi", and a subsidy file opens. Dispatch is refused until the 30% advance (₹53,694) is paid.</li>
+  <li><strong>Dispatch.</strong> Sending the truck without scanning is refused. After scanning inverter INV3KW-260016, controller MPPT60-260041 and panel batch PNL-2026-A, warranties start on their own: until 21/11/2028 and 21/11/2046.</li>
+  <li><strong>On the roof.</strong> Technician Ramesh cannot finish without the checklist, a photo, the kW and Meera's signature. Once done, 6.5 hours are logged for each technician and the certificate is emailed from SunPower with every serial listed.</li>
+  <li><strong>Money.</strong> Final invoice paid, subsidy received. Profit: ₹1,59,000 − ₹1,17,680 parts − ₹3,120 labour = <strong>₹38,200 (24%)</strong>, checked by hand. The job shows "Completed &amp; Paid".</li>
 </ol>
 </section>
 
@@ -227,12 +232,12 @@ flowchart TD
 <div class="tbl"><table>
 <thead><tr><th>Helper</th><th>You give it</th><th>It gives back</th><th>How it works</th><th>Status</th></tr></thead>
 <tbody>
-<tr><td>Bill reader</td><td>Photo of the electricity bill</td><td>Units, amount, consumer no., suggested kW</td><td>Text reader (OCR) + small language model; kW = units ÷ 120</td><td><span class="pill prog">Switching to free models</span></td></tr>
-<tr><td>WhatsApp / voice reader</td><td>Pasted message or voice note (Hindi/Hinglish ok)</td><td>Name, phone, area, kW, subsidy, enquiry or complaint</td><td>Whisper (speech to text) + small language model</td><td><span class="pill prog">Switching to free models</span></td></tr>
-<tr><td>Fault-code helper</td><td>Fault code + description</td><td>Likely cause, safe steps, visit needed, parts</td><td>Searches a written guide of ~30 inverter faults, then writes advice only from it</td><td><span class="pill done">Working (guide)</span></td></tr>
-<tr><td>Panel photo check</td><td>Photo of panels</td><td>Clean / dusty / bird-drop / damaged, with confidence</td><td>Image model trained on solar panel photos (ConvNeXt)</td><td><span class="pill done">Working</span></td></tr>
+<tr><td>Bill reader</td><td>Photo of the electricity bill</td><td>Units, amount, consumer no., suggested kW</td><td>Text reader (OCR) + small language model; kW = units ÷ 120</td><td><span class="pill done">Working · 3 s</span></td></tr>
+<tr><td>WhatsApp / voice reader</td><td>Pasted message or voice note (Hindi/Hinglish ok)</td><td>Name, phone, area, kW, subsidy, enquiry or complaint</td><td>Whisper-small (speech to text) + Qwen2.5 small language model</td><td><span class="pill done">Working · 10–17 s</span></td></tr>
+<tr><td>Fault-code helper</td><td>Fault code + description</td><td>Likely cause, safe steps, visit needed, parts</td><td>Searches a written guide of ~30 inverter faults, then writes advice only from it</td><td><span class="pill done">Working · 13 s</span></td></tr>
+<tr><td>Panel photo check</td><td>Photo of panels</td><td>Clean / dusty / bird-drop / damaged, with confidence</td><td>Image model trained on solar panel photos (ConvNeXt)</td><td><span class="pill done">Working · 7 s</span></td></tr>
 </tbody></table></div>
-<p class="read">The Odoo buttons that call these helpers ("Read bill", "Read message", "AI diagnose", "Check photos") are built in Phase 8, together with a test that switches the AI off and confirms nothing else breaks.</p>
+<p class="read">The buttons inside Odoo are <strong>✨ Read bill with AI</strong> (enquiry), <strong>✨ Fill with AI</strong> (WhatsApp/Call screen), <strong>✨ AI Diagnose</strong> (repair ticket) and <strong>✨ Check photos with AI</strong> (crew form). They live in a separate add-on, <code>sunpower_ai</code>. When the AI program is off, each button says "The AI assistant is not running right now. Please fill in the details manually." Tested: nothing else breaks. Known limit: the small photo model correctly flagged a dusty panel as "not clean" but named it "bird-drop".</p>
 </section>
 
 <section id="tech">
@@ -242,6 +247,7 @@ flowchart TD
 <tbody>
 <tr><td>Business system</td><td>Odoo 18 Community (free)</td><td>The ready-made house: customers, quotes, stock, invoices, staff, website</td></tr>
 <tr><td>Our solar add-on</td><td><code>sunpower_solar</code></td><td>The rooms we added: surveys, packages, warranties, jobs, repairs, subsidy, dashboard</td></tr>
+<tr><td>AI add-on</td><td><code>sunpower_ai</code></td><td>The four ✨ AI buttons; talks to the AI helper program</td></tr>
 <tr><td>Website add-on</td><td><code>sunpower_website</code></td><td>Homepage, savings estimate, customer "My Solar" area, technician page</td></tr>
 <tr><td>Database</td><td>PostgreSQL 18, private copy on port 5433</td><td>The filing cabinet; separate from the one already on the laptop</td></tr>
 <tr><td>Programming language</td><td>Python 3.12</td><td>What Odoo and the AI helper are written in</td></tr>
@@ -260,6 +266,8 @@ flowchart TD
 <tbody>
 <tr><td><code>Desktop\SunPower\addons\sunpower_solar</code></td><td>Our main add-on: <code>models</code> (rules and records), <code>views</code> (screens), <code>report</code> (PDFs), <code>static</code> (dashboard look), <code>tests</code>, <code>hooks.py</code> (packages and settings created at install), <code>demo_data.py</code> (sample business)</td></tr>
 <tr><td><code>Desktop\SunPower\addons\sunpower_website</code></td><td>Website pages</td></tr>
+<tr><td><code>Desktop\SunPower\addons\sunpower_ai</code></td><td>AI buttons inside Odoo</td></tr>
+<tr><td><code>Desktop\SunPower\docs</code></td><td>This report and sample PDFs: quote, installation certificate, director report</td></tr>
 <tr><td><code>Desktop\SunPower\ai_service</code></td><td>AI helper program, fault guide, sample bill and photos</td></tr>
 <tr><td><code>Desktop\SunPower\scripts</code></td><td><code>rebuild_db.py</code> (fresh database with sample data), <code>phase_checks.py</code> (automatic checks per phase)</td></tr>
 <tr><td><code>Desktop\SunPower\run_odoo.ps1</code></td><td>Starts everything after a restart</td></tr>
@@ -270,20 +278,20 @@ flowchart TD
 
 <section id="testing">
 <h2>10. How it is tested</h2>
-<p class="read">Every phase is tested three ways before moving on: automatic checks (seconds), the built-in tests (about a minute), and clicking through the real screens like a staff member or customer would.</p>
+<p class="read">Every phase was tested three ways before moving on: automatic checks (<code>scripts/phase_checks.py</code>, <strong>85 checks, all passing</strong>, leaving no test data behind), Odoo built-in tests (<strong>6 of 6 passing</strong>), and doing the real steps as a salesperson, storekeeper, technician or customer would.</p>
 <div class="tbl"><table>
 <thead><tr><th>Phase</th><th>What it covers</th><th>How it is checked</th><th>Status</th></tr></thead>
 <tbody>
-<tr><td>1 Foundation</td><td>India company, rupees, GST, packages, warranty terms, technicians, menus</td><td>21 automatic checks, all 23 menus opened, 4 built-in tests</td><td><span class="pill done">Passed</span></td></tr>
-<tr><td>2 Enquiry &amp; survey</td><td>Web form, reminder, phone-check block, survey rules, quote block, package chosen</td><td>Full walk-through as Meera + automatic checks</td><td><span class="pill prog">Finishing</span></td></tr>
-<tr><td>3 Quote, kit &amp; payment</td><td>Parts list, savings estimate, 30% advance invoice</td><td>Make a 3 kW quote, check PDF, take advance</td><td><span class="pill next">Next</span></td></tr>
-<tr><td>4 Dispatch &amp; warranty</td><td>Scanning required, advance required, warranty dates</td><td>Try dispatch without scan and without advance</td><td><span class="pill next">Planned</span></td></tr>
-<tr><td>5 On the roof</td><td>Phone form, photo and signature rules, certificate</td><td>Phone-sized screen, try finishing early</td><td><span class="pill next">Planned</span></td></tr>
-<tr><td>6 Repairs</td><td>Find by phone/serial, free vs billed, customer link</td><td>One ticket in warranty, one expired</td><td><span class="pill next">Planned</span></td></tr>
-<tr><td>7 Money &amp; dashboard</td><td>Profit adds up, subsidy steps, technician pay, sharing</td><td>Check one job by hand against the dashboard</td><td><span class="pill next">Planned</span></td></tr>
-<tr><td>8 AI helpers</td><td>Four helpers + "AI off" test</td><td>Sample bill, Hinglish message, fault codes, photos</td><td><span class="pill next">Planned</span></td></tr>
-<tr><td>9 Frontend polish</td><td>Website, crew screens, dashboard, branded PDFs</td><td>Every page at phone and laptop size</td><td><span class="pill next">Planned</span></td></tr>
-<tr><td>10 Report &amp; demo</td><td>Final report, 7-minute demo script</td><td>One full demo run</td><td><span class="pill next">Planned</span></td></tr>
+<tr><td>1 Foundation</td><td>India company, rupees, GST, packages, warranty terms, technicians, menus</td><td>21 checks, all 23 menus opened</td><td><span class="pill done">Passed</span></td></tr>
+<tr><td>2 Enquiry &amp; survey</td><td>Web form, reminder, phone-check block, survey rules, quote block, package chosen</td><td>Walk-through as Meera in the browser + 12 checks</td><td><span class="pill done">Passed</span></td></tr>
+<tr><td>3 Quote, kit &amp; payment</td><td>GST, HSN codes, savings estimate, packing list, crew job, subsidy file, 30% advance rule</td><td>Meera's quote, PDF read, advance taken + 12 checks</td><td><span class="pill done">Passed</span></td></tr>
+<tr><td>4 Dispatch &amp; warranty</td><td>Scanning required, warranty dates (2 y / 20 y), find by serial</td><td>Dispatch without scan refused, then done + 10 checks</td><td><span class="pill done">Passed</span></td></tr>
+<tr><td>5 On the roof</td><td>Technician's view, finish rules, hours logged, certificate e-mail</td><td>Done as technician Ramesh, phone-size screen + 6 checks</td><td><span class="pill done">Passed</span></td></tr>
+<tr><td>6 Repairs</td><td>Find by phone, free vs billed, customer "everything works" link</td><td>Kavya (18 months, free), Manish (26 months, billed ₹28,664), real link clicked + 10 checks</td><td><span class="pill done">Passed</span></td></tr>
+<tr><td>7 Money &amp; dashboard</td><td>Profit maths, dashboard counts, technician pay, subsidy, sharing</td><td>Meera's profit checked by hand; dashboard vs independent counts + 10 checks</td><td><span class="pill done">Passed</span></td></tr>
+<tr><td>8 AI helpers</td><td>Four helpers + "AI off" test</td><td>Sample bill, Hinglish message, voice note, fault code, photos + 4 checks</td><td><span class="pill done">Passed</span></td></tr>
+<tr><td>9 Frontend polish</td><td>Logo, Indian numbers/dates/time, subsidy on quote, website footer, phone layout</td><td>PDFs re-read, crew screens at 375 px wide</td><td><span class="pill done">Done</span></td></tr>
+<tr><td>10 Report &amp; demo</td><td>This report and the demo script</td><td>—</td><td><span class="pill done">Done</span></td></tr>
 </tbody></table></div>
 <h3>Problems found by testing, and fixed</h3>
 <div class="tbl"><table>
@@ -295,6 +303,13 @@ flowchart TD
 <tr><td>Website add-on broke every update</td><td>Wrong format in one menu line</td><td>One-line fix</td></tr>
 <tr><td>Quote came up empty</td><td>Odoo's quotation-template feature was off</td><td>Switched on at install; quote now fills the package</td></tr>
 <tr><td>Confusing "which customer?" popup before refusal</td><td>Quote button visible too early</td><td>Button hidden until the survey is approved</td></tr>
+<tr><td>No GST on quotes</td><td>Products not linked to India's tax rates</td><td>12% GST on kits, 18% on installation, HSN codes added</td></tr>
+<tr><td>₹1.5 lakh of stock could leave unpaid</td><td>No payment check on dispatch</td><td>New rule: dispatch blocked until a 30% advance is paid (adjustable)</td></tr>
+<tr><td>Crew job named "[SRV-INSTALL] Solar Installation…"</td><td>Default product name</td><td>Now "Install 3 kW On-Grid – Meera Joshi"</td></tr>
+<tr><td>"Send SMS?" pop-up on every dispatch</td><td>Odoo default, SMS not set up</td><td>Switched off</td></tr>
+<tr><td><strong>Crew could not finish a job</strong></td><td>Certificate e-mail needed the technician's own e-mail address</td><td>Sent from the company; an e-mail problem never blocks finishing</td></tr>
+<tr><td>Certificate PDF crashed</td><td>Template layout mistake</td><td>Fixed, plus a new test that builds all three PDFs</td></tr>
+<tr><td>Western numbers (178,980), world time, "Your logo"</td><td>Default settings</td><td>Indian grouping (1,78,980), Indian time and dates, SunPower logo</td></tr>
 </tbody></table></div>
 </section>
 
@@ -303,14 +318,15 @@ flowchart TD
 <div class="tbl"><table style="min-width:0">
 <thead><tr><th>Area</th><th>Status</th></tr></thead>
 <tbody>
-<tr><td>All six scenes built in the main add-on</td><td><span class="pill done">Done</span></td></tr>
-<tr><td>Sample business (40 jobs, 195 warranties, tickets, subsidies)</td><td><span class="pill done">Loaded</span></td></tr>
-<tr><td>Website pages</td><td><span class="pill done">Built, shown</span></td></tr>
-<tr><td>Version history (git)</td><td><span class="pill done">On</span></td></tr>
-<tr><td>AI helper program</td><td><span class="pill prog">Moving to free models</span></td></tr>
-<tr><td>AI buttons inside Odoo</td><td><span class="pill next">Phase 8</span></td></tr>
-<tr><td>Phases 3–10 testing</td><td><span class="pill next">To do</span></td></tr>
+<tr><td>All six scenes of the brief, working end to end</td><td><span class="pill done">Done &amp; tested</span></td></tr>
+<tr><td>Sample business (41 jobs, 198 warranties, tickets, subsidies)</td><td><span class="pill done">Loaded</span></td></tr>
+<tr><td>AI helpers (free, on the laptop) + AI buttons in Odoo</td><td><span class="pill done">Working</span></td></tr>
+<tr><td>Website pages, footer and phone layout</td><td><span class="pill done">Done</span></td></tr>
+<tr><td>Branded PDFs: quote, certificate, director report</td><td><span class="pill done">Done</span></td></tr>
+<tr><td>Version history (git), every phase saved</td><td><span class="pill done">On</span></td></tr>
+<tr><td>Checks 85/85 · built-in tests 6/6</td><td><span class="pill done">Passing</span></td></tr>
 </tbody></table></div>
+<p><strong>To start everything after a restart:</strong> run <code>run_odoo.ps1</code> (Odoo + database) and <code>ai_service\run.ps1</code> (AI helper), then open <code>http://localhost:8069</code>.</p>
 </section>
 
 <section id="suggest" class="read">
@@ -332,8 +348,23 @@ flowchart TD
 </ul>
 </section>
 
+<section id="demo" class="read">
+<h2>13. 7-minute demo script</h2>
+<p>Follow one customer through every scene. Log in as <code>admin</code> / <code>admin</code>; keep a second window logged in as a technician.</p>
+<ol class="steps">
+  <li><strong>(1 min) Enquiry.</strong> Open <code>/solar-quote</code> and submit a 3 kW request. In SunPower → Sales → Enquiry Pipeline, show the new card, the "call within 2 hours" reminder and the suggested kW. Click Schedule Roof Survey to show the refusal, then set Grid = Suitable.</li>
+  <li><strong>(1 min) AI.</strong> Sales → Log WhatsApp / Call: paste a Hinglish message, click ✨ Fill with AI, create the enquiry. Upload a bill on an enquiry and click ✨ Read bill with AI.</li>
+  <li><strong>(1 min) Survey → quote.</strong> Fill direction and tilt, Mark Visited, Approve. New Quotation fills the package. Compute with PVGIS, then Preview: GST, savings, subsidy, cost after subsidy.</li>
+  <li><strong>(1 min) Order.</strong> Confirm: packing list, crew job and subsidy file appear. Try Validate on the delivery: refused until 30% is paid. Create the 30% invoice and register payment.</li>
+  <li><strong>(1 min) Dispatch.</strong> Show the scanned serials, Validate, open Warranties: 2 years and 20 years started automatically.</li>
+  <li><strong>(1 min) Roof.</strong> In the technician window at phone size: Start Work, try Finish (refused), tick checklist, add a photo, ✨ Check photos with AI, sign, Finish. Open the certificate PDF.</li>
+  <li><strong>(1 min) Breakdown and month-end.</strong> Service → Find by Serial / Customer: type a phone number. Open a ticket, ✨ AI Diagnose, Repair Done: free in warranty, invoice if expired. End on the Dashboard: profit per job, losses in red, Share → PDF.</li>
+</ol>
+<p>Backup: if anything misbehaves, <code>scripts\rebuild_db.py</code> recreates a clean database with all sample data in about 15 minutes.</p>
+</section>
+
 <section id="words" class="read">
-<h2>13. Word list</h2>
+<h2>14. Word list</h2>
 <dl class="gloss">
   <dt>Odoo</dt><dd>Free business software the system is built on.</dd>
   <dt>Add-on (module)</dt><dd>A package of extra screens and rules plugged into Odoo.</dd>
