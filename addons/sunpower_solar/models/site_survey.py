@@ -85,6 +85,9 @@ class SolarSiteSurvey(models.Model):
         self.write({"state": "done"})
 
     def action_approve(self):
+        if not (self.env.user.has_group("sunpower_solar.group_sales")
+                or self.env.su):
+            raise UserError(_("Only Sales or the Director can approve a survey."))
         for s in self:
             if s.state != "done":
                 raise UserError(_("Only visited surveys can be approved."))

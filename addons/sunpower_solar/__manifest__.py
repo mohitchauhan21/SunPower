@@ -20,7 +20,9 @@
         "account",
     ],
     "data": [
+        "security/security.xml",
         "security/ir.model.access.csv",
+        "security/record_rules.xml",
         "data/sequences.xml",
         "data/cron.xml",
         "report/reports.xml",

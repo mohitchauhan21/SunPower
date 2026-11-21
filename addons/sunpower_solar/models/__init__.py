@@ -9,3 +9,4 @@ from . import service_ticket
 from . import subsidy
 from . import dashboard
 from . import demo_data
+from . import roles

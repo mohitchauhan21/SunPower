@@ -7,7 +7,7 @@ Run inside the Odoo shell ($ODOO_HOME = folder with odoo/, venv/ and odoo.conf):
                 < scripts/phase_checks.py
 Set PHASES below to choose which phases to run.
 """
-PHASES = [1, 2, 3, 4, 5, 6, 7, 8]
+PHASES = [1, 2, 3, 4, 5, 6, 7, 8, 11]
 
 results = []
 
@@ -417,6 +417,42 @@ def phase8(env):
     except UserError as e:
         check(8, "AI down -> friendly 'fill in manually' message", "manually" in e.args[0])
     icp.set_param("sunpower_ai.url", old or "")
+
+
+def phase11(env):
+    """Roles, reset links and sign-in setup."""
+    from odoo.exceptions import AccessError
+    U = env["res.users"]
+    roles = {l: U.search([("login", "=", l)])._sunpower_role() for l in (
+        "director@sunpower.demo", "sales@sunpower.demo", "warehouse@sunpower.demo",
+        "support@sunpower.demo", "tech01@sunpower.demo")}
+    check(11, "One demo login per role", list(roles.values()) == ["director", "sales", "warehouse", "support", "technician"], roles)
+    tech = U.search([("login", "=", "tech01@sunpower.demo")])
+    check(11, "Technicians have no warehouse rights", not tech.has_group("stock.group_stock_user"))
+    sales = U.search([("login", "=", "sales@sunpower.demo")])
+    try:
+        env["solar.dashboard"].with_user(sales).get_data("month")
+        check(11, "Dashboard blocked for Sales", False)
+    except AccessError:
+        check(11, "Dashboard blocked for Sales", True)
+    with env.cr.savepoint(flush=False) as sp:
+        partner = sales.partner_id
+        partner.signup_prepare(signup_type="reset")
+        token = partner._generate_signup_token()
+        U.sudo().signup({"password": "NewPass#2026"}, token)
+        try:
+            env["res.partner"]._signup_retrieve_partner(token, check_validity=True)
+            reused = True
+        except Exception:
+            reused = False
+        check(11, "Reset link sets password and works only once", not reused)
+        env.flush_all()
+        sp.rollback()
+    env.invalidate_all()
+    google = env.ref("auth_oauth.provider_google", raise_if_not_found=False)
+    check(11, "Google sign-in installed (needs Client ID to switch on)", bool(google))
+    check(11, "Odoo.com sign-in provider is off", not env.ref("auth_oauth.provider_openerp").enabled)
+    check(11, "Customers can self-sign-up (Google)", env["ir.config_parameter"].sudo().get_param("auth_signup.invitation_scope") == "b2c")
 
 
 for p in PHASES:

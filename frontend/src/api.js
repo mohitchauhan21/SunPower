@@ -21,6 +21,11 @@ export const api = {
   login: (login, password) => rpc('/web/session/authenticate', { db: DB, login, password }),
   session: () => rpc('/web/session/get_session_info'),
   logout: () => rpc('/web/session/destroy'),
+  me: () => rpc('/api/sunpower/me'),
+  providers: () => rpc('/api/sunpower/auth/providers'),
+  requestReset: (email) => rpc('/api/sunpower/auth/reset', { email }),
+  checkReset: (token) => rpc('/api/sunpower/auth/reset/check', { token }),
+  confirmReset: (token, password) => rpc('/api/sunpower/auth/reset/confirm', { token, password }),
   dashboard: (period) =>
     rpc('/web/dataset/call_kw/solar.dashboard/get_data', {
       model: 'solar.dashboard', method: 'get_data', args: [period], kwargs: {}

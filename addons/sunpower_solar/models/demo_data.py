@@ -57,10 +57,8 @@ class SolarDemoData(models.AbstractModel):
 
     def _technicians(self):
         Users = self.env["res.users"].with_context(no_reset_password=True)
-        groups = [self.env.ref("base.group_user").id,
-                  self.env.ref("project.group_project_user").id,
-                  self.env.ref("stock.group_stock_user").id,
-                  self.env.ref("hr_timesheet.group_hr_timesheet_user").id]
+        # Technician role: own jobs only, no stock/prices (see security/security.xml)
+        groups = [self.env.ref("sunpower_solar.group_technician").id]
         techs = Users.browse()
         for i, name in enumerate(TECHS):
             login = "tech%02d@sunpower.demo" % (i + 1)
@@ -283,4 +281,5 @@ class SolarDemoData(models.AbstractModel):
                                        "survey_date": now + timedelta(days=1)})
 
         orders._solar_refresh_job_financials()
+        self.env["solar.role.setup"].apply()
         return {"type": "ir.actions.client", "tag": "reload"}

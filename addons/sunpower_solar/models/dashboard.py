@@ -1,6 +1,7 @@
 from datetime import datetime, time, timedelta
 
 from odoo import _, api, fields, models
+from odoo.exceptions import AccessError
 
 
 class SolarDashboard(models.AbstractModel):
@@ -22,6 +23,9 @@ class SolarDashboard(models.AbstractModel):
 
     @api.model
     def get_data(self, period="month", refresh=False):
+        if not self.env.user.has_group("sunpower_solar.group_director"):
+            raise AccessError(_("The dashboard is only available to directors."))
+        self = self.sudo()
         start, end = self._period_bounds(period)
         dt_start = datetime.combine(start, time.min)
         dt_end = datetime.combine(end, time.max)

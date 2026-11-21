@@ -1,9 +1,36 @@
 id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
-access_solar_site_survey,solar.site.survey,model_solar_site_survey,base.group_user,1,1,1,1
-access_solar_warranty,solar.warranty,model_solar_warranty,base.group_user,1,1,1,1
-access_solar_service_ticket,solar.service.ticket,model_solar_service_ticket,base.group_user,1,1,1,1
-access_solar_service_ticket_line,solar.service.ticket.line,model_solar_service_ticket_line,base.group_user,1,1,1,1
-access_solar_subsidy,solar.subsidy.application,model_solar_subsidy_application,base.group_user,1,1,1,1
-access_solar_director_report,solar.director.report,model_solar_director_report,base.group_user,1,1,1,1
-access_solar_enquiry_wizard,solar.enquiry.wizard,model_solar_enquiry_wizard,base.group_user,1,1,1,1
-access_solar_ticket_portal,solar.service.ticket.portal,model_solar_service_ticket,base.group_portal,1,0,0,0
+access_survey_director,survey director,model_solar_site_survey,group_director,1,1,1,1
+access_survey_sales,survey sales,model_solar_site_survey,group_sales,1,1,1,0
+access_survey_technician,survey technician,model_solar_site_survey,group_technician,1,1,0,0
+access_survey_support,survey support,model_solar_site_survey,group_support,1,0,0,0
+access_warranty_director,warranty director,model_solar_warranty,group_director,1,1,1,1
+access_warranty_staff_read,warranty staff,model_solar_warranty,base.group_user,1,0,0,0
+access_warranty_portal,warranty portal,model_solar_warranty,base.group_portal,1,0,0,0
+access_ticket_director,ticket director,model_solar_service_ticket,group_director,1,1,1,1
+access_ticket_support,ticket support,model_solar_service_ticket,group_support,1,1,1,0
+access_ticket_technician,ticket technician,model_solar_service_ticket,group_technician,1,1,0,0
+access_ticket_sales,ticket sales,model_solar_service_ticket,group_sales,1,0,0,0
+access_solar_ticket_portal,ticket portal,model_solar_service_ticket,base.group_portal,1,0,0,0
+access_ticket_line_director,ticket line director,model_solar_service_ticket_line,group_director,1,1,1,1
+access_ticket_line_support,ticket line support,model_solar_service_ticket_line,group_support,1,1,1,1
+access_ticket_line_technician,ticket line technician,model_solar_service_ticket_line,group_technician,1,1,1,1
+access_ticket_line_staff_read,ticket line staff,model_solar_service_ticket_line,base.group_user,1,0,0,0
+access_subsidy_director,subsidy director,model_solar_subsidy_application,group_director,1,1,1,1
+access_subsidy_sales,subsidy sales,model_solar_subsidy_application,group_sales,1,1,1,0
+access_subsidy_support,subsidy support,model_solar_subsidy_application,group_support,1,0,0,0
+access_director_report,director report,model_solar_director_report,group_director,1,1,1,1
+access_enquiry_wizard_sales,enquiry wizard sales,model_solar_enquiry_wizard,group_sales,1,1,1,1
+access_enquiry_wizard_support,enquiry wizard support,model_solar_enquiry_wizard,group_support,1,1,1,1
+access_lot_technician,lot technician,stock.model_stock_lot,group_technician,1,0,0,0
+access_lot_support,lot support,stock.model_stock_lot,group_support,1,0,0,0
+access_order_support,order support,sale.model_sale_order,group_support,1,0,0,0
+access_order_line_support,order line support,sale.model_sale_order_line,group_support,1,0,0,0
+access_order_technician,order technician,sale.model_sale_order,group_technician,1,0,0,0
+access_order_line_technician,order line technician,sale.model_sale_order_line,group_technician,1,0,0,0
+access_order_warehouse,order warehouse,sale.model_sale_order,group_warehouse,1,0,0,0
+access_order_line_warehouse,order line warehouse,sale.model_sale_order_line,group_warehouse,1,0,0,0
+access_lead_support,lead support,crm.model_crm_lead,group_support,1,0,0,0
+access_stage_support,crm stage support,crm.model_crm_stage,group_support,1,0,0,0
+access_move_support,invoice support,account.model_account_move,group_support,1,0,0,0
+access_task_warehouse,task warehouse,project.model_project_task,group_warehouse,1,0,0,0
+access_task_support,task support,project.model_project_task,group_support,1,0,0,0

@@ -45,14 +45,14 @@ class SaleOrder(models.Model):
     ticket_count = fields.Integer(compute="_compute_solar_counts")
 
     # Job financials (refreshed by _solar_refresh_job_financials / cron)
-    job_invoiced = fields.Monetary("Invoiced", readonly=True)
-    job_collected = fields.Monetary("Collected", readonly=True)
-    job_material_cost = fields.Monetary("Material Cost", readonly=True)
-    job_labour_cost = fields.Monetary("Labour Cost", readonly=True)
-    job_labour_hours = fields.Float("Technician Hours", readonly=True)
-    job_repair_cost = fields.Monetary("Warranty Repair Cost", readonly=True)
-    job_profit = fields.Monetary("Job Profit", readonly=True)
-    job_margin = fields.Float("Margin %", readonly=True, digits=(5, 1))
+    job_invoiced = fields.Monetary("Invoiced", groups="sunpower_solar.group_director", readonly=True)
+    job_collected = fields.Monetary("Collected", groups="sunpower_solar.group_director", readonly=True)
+    job_material_cost = fields.Monetary("Material Cost", groups="sunpower_solar.group_director", readonly=True)
+    job_labour_cost = fields.Monetary("Labour Cost", groups="sunpower_solar.group_director", readonly=True)
+    job_labour_hours = fields.Float("Technician Hours", groups="sunpower_solar.group_director", readonly=True)
+    job_repair_cost = fields.Monetary("Warranty Repair Cost", groups="sunpower_solar.group_director", readonly=True)
+    job_profit = fields.Monetary("Job Profit", groups="sunpower_solar.group_director", readonly=True)
+    job_margin = fields.Float("Margin %", groups="sunpower_solar.group_director", readonly=True, digits=(5, 1))
     job_stage = fields.Selection([
         ("quote", "Quotation"), ("confirmed", "Confirmed – awaiting dispatch"),
         ("dispatched", "Dispatched – awaiting install"), ("installed", "Installed"),
@@ -215,7 +215,7 @@ class SaleOrder(models.Model):
                 stage = ("closed" if not pending or pending == [_("Subsidy")]
                          else "installed" if installed
                          else "dispatched" if delivered else "confirmed")
-            order.write({
+            order.sudo().write({
                 "job_invoiced": invoiced, "job_collected": collected,
                 "job_material_cost": material, "job_labour_cost": labour,
                 "job_labour_hours": hours, "job_repair_cost": repair,

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, inr, num } from '../api.js';
 import Tabs from '../components/ui/Tabs.jsx';
 import { useToast } from '../components/ui/Toast.jsx';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../auth.jsx';
 
 const PERIODS = [
   { value: 'today', label: 'Today' },
@@ -13,40 +15,6 @@ const ENGINE = 'http://localhost:8069';
 
 const stageTone = (s = '') => (/completed|closed/i.test(s) ? 'pill--ok' : /awaiting|dispatched|confirmed/i.test(s) ? 'pill--warn' : '');
 
-function Login({ onDone }) {
-  const [login, setLogin] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  const submit = async (e) => {
-    e.preventDefault();
-    setBusy(true);
-    setError('');
-    try {
-      const res = await api.login(login, password);
-      if (!res?.uid) throw new Error('Incorrect login or password.');
-      onDone(res);
-    } catch (err) {
-      setError(/access denied|wrong login/i.test(err.message) ? 'Incorrect login or password.' : err.message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <section className="wrap login">
-      <h1 className="headline">Staff console</h1>
-      <p className="lead">Sign in with your SunPower account.</p>
-      <form className="form" onSubmit={submit}>
-        {error && <div className="form-error" role="alert">{error}</div>}
-        <div className="field"><label className="label" htmlFor="c-login">Email or login</label><input id="c-login" className="input" required autoComplete="username" value={login} onChange={(e) => setLogin(e.target.value)} /></div>
-        <div className="field"><label className="label" htmlFor="c-pass">Password</label><input id="c-pass" className="input" type="password" required autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} /></div>
-        <button className="btn btn--primary btn--block" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
-      </form>
-    </section>
-  );
-}
 
 export default function Console() {
   const toast = useToast();
@@ -77,15 +45,18 @@ export default function Console() {
 
   useEffect(() => { if (session) load(period); }, [session, period, load]);
 
+  const { signOut } = useAuth();
+  const navigate = useNavigate();
   const logout = async () => {
-    await api.logout().catch(() => {});
+    await signOut();
+    navigate('/login');
     setSession(null);
     setData(null);
     toast('Signed out.');
   };
 
   if (session === undefined) return <p className="empty" style={{ padding: '160px 0' }}>Loading…</p>;
-  if (!session) return <Login onDone={setSession} />;
+  if (!session) return null; // RequireRole sends visitors to /login
 
   const k = data?.kpi || {};
   const q = query.trim().toLowerCase();

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo noupdate="1">
+    <!-- Where the React website lives (reset links and Google sign-in land there) -->
+    <function model="ir.config_parameter" name="set_param">
+        <value>sunpower.frontend_url</value>
+        <value>http://localhost:5173</value>
+    </function>
+    <!-- Customers may create their own account (e.g. with Google). Staff are only
+         ever created by the Director; new self-signups get the portal template. -->
+    <function model="ir.config_parameter" name="set_param">
+        <value>auth_signup.invitation_scope</value>
+        <value>b2c</value>
+    </function>
+    <!-- Gmail for real emails. The app password is entered by the Director in
+         Settings > Technical > Outgoing Mail Servers > Gmail (never in code). -->
+    <record id="mail_server_gmail" model="ir.mail_server" forcecreate="True">
+        <field name="name">Gmail</field>
+        <field name="smtp_host">smtp.gmail.com</field>
+        <field name="smtp_port">587</field>
+        <field name="smtp_encryption">starttls</field>
+        <field name="smtp_authentication">login</field>
+        <field name="sequence">1</field>
+        <field name="active" eval="False"/>
+    </record>
+</odoo>

@@ -6,8 +6,10 @@
     "category": "Website",
     "author": "SunPower Hackathon Team",
     "license": "LGPL-3",
-    "depends": ["sunpower_solar", "website", "portal"],
+    "depends": ["sunpower_solar", "website", "portal", "auth_signup", "auth_oauth"],
     "data": [
+        "data/auth_settings.xml",
+        "data/auth_providers.xml",
         "views/layout.xml",
         "views/home.xml",
         "views/estimate.xml",
