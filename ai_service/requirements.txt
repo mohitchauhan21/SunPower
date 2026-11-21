@@ -6,5 +6,16 @@ httpx>=0.27
 numpy>=1.26
 pillow>=10.0
 python-multipart>=0.0.9
+# photo defect classifier (local, CPU)
 tensorflow>=2.20; python_version >= "3.13"
 tensorflow>=2.16; python_version < "3.13"
+# free local models (CPU): LLM, whisper ASR, embeddings
+# CPU-only torch wheel (~200 MB instead of ~2.5 GB CUDA build)
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch>=2.5
+transformers>=4.45
+accelerate>=0.30
+soundfile>=0.12
+# local OCR for /bill/parse (ONNX, models bundled ~15 MB)
+rapidocr>=2.0
+onnxruntime>=1.18

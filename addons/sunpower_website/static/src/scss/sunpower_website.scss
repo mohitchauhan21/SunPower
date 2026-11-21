@@ -171,3 +171,12 @@ $sp-danger: #c0392b;
     .sp-job-actions { display: flex; flex-wrap: wrap; gap: 10px; .btn { flex: 1 1 200px; } form { display: contents; } }
     .sp-list { padding-left: 18px; }
 }
+
+// ---------- header / footer branding (outside .sp-site)
+.sp-header-cta { background: $sp-sun !important; border-color: $sp-sun !important; color: #1b1300 !important; font-weight: 600; }
+.sp-footer {
+    h5 { font-weight: 700; }
+    p { opacity: .85; }
+    .sp-footer-links li { margin-bottom: 8px; overflow-wrap: anywhere; }
+    a { text-decoration: none; }
+}

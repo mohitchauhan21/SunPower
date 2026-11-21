@@ -34,10 +34,9 @@
                             <div class="sp-card mb-3">
                                 <div class="d-flex flex-wrap justify-content-between align-items-start gap-2">
                                     <div>
-                                        <h5 class="mb-1" t-out="job.name"/>
+                                        <h5 class="mb-1"><t t-out="job.installation_kw_confirmed or job.installation_kw_planned"/> kW rooftop solar installation</h5>
                                         <div class="sp-muted">
-                                            <t t-if="job.sale_order_id">Order <t t-out="job.sale_order_id.name"/> · </t>
-                                            <t t-out="job.installation_kw_confirmed or job.installation_kw_planned"/> kW
+                                            <t t-if="job.sale_order_id">Order <t t-out="job.sale_order_id.name"/></t>
                                             <t t-if="job.installation_date"> · Scheduled
                                                 <span t-field="job.installation_date" t-options="{'widget': 'datetime', 'format': 'd MMM yyyy, HH:mm'}"/></t>
                                         </div>

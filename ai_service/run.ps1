@@ -25,7 +25,7 @@ if (-not (Test-Path $venvPy)) {
 if (-not $Reinstall) {
     # venv exists but deps may be missing (e.g. an interrupted install)
     $ErrorActionPreference = "Continue"
-    & $venvPy -c "import fastapi, uvicorn, huggingface_hub, dotenv, multipart, PIL, numpy" 2>$null
+    & $venvPy -c "import fastapi, uvicorn, huggingface_hub, dotenv, multipart, PIL, numpy, torch, transformers, soundfile, rapidocr" 2>$null
     if ($LASTEXITCODE -ne 0) { $Reinstall = $true }
     $ErrorActionPreference = "Stop"
 }

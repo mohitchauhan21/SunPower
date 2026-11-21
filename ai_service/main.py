@@ -15,6 +15,12 @@ so Odoo can fall back to manual data entry.
 """
 from __future__ import annotations
 
+import os
+
+# Plain HTTP downloads were ~10x faster than the Xet protocol on this network; must be set
+# before huggingface_hub is imported. Override with HF_HUB_DISABLE_XET=0.
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+
 import asyncio
 import base64
 import contextvars
@@ -423,6 +429,58 @@ Message:
 >>>"""
 
 
+_PLACEHOLDERS = {"customer", "name", "user", "client", "sir", "madam", "john doe", "jane doe", "your name",
+                 "123 main street", "main street", "street", "city", "address"}
+
+
+def _ground_lead(d: dict, rx: dict, transcript: str) -> None:
+    """Guard against small-model hallucinations (in place).
+
+    - intent: keyword rules win when they fire (small models over-predict "complaint").
+    - numbers: must be in a plausible range, otherwise the regex value (or null).
+    - name/street/city: for Latin-script messages the value must actually occur in the text;
+      Devanagari messages are exempt because the model is asked to transliterate them.
+    """
+    if rx.get("intent"):
+        d["intent"] = rx["intent"]
+    if rx.get("system_type"):
+        d["system_type"] = rx["system_type"]
+    for key, lo, hi in (("system_kw", 0.5, 500), ("monthly_bill", 100, 500000)):
+        v = to_float(d.get(key))
+        if v is None or not (lo <= v <= hi):
+            r = rx.get(key)
+            d[key] = r if r is not None and lo <= r <= hi else None
+    latin = not re.search(r"[ऀ-ॿ]", transcript)
+    low = transcript.lower()
+    for key in ("name", "street", "city"):
+        v = to_str(d.get(key))
+        if not v or v.lower() in _PLACEHOLDERS:
+            d[key] = None
+        elif latin:
+            words = [w for w in re.findall(r"[a-z0-9]+", v.lower()) if len(w) > 2]
+            if not words or not all(w in low for w in words):
+                d[key] = None
+
+
+def _lead_summary(intent: str, d: dict, stype: str, transcript: str = "") -> str:
+    """One-line English summary built from extracted fields (small local models often omit it)."""
+    who = " ".join(x for x in (to_str(d.get("name")), f"({to_str(d.get('city'))})" if to_str(d.get("city")) else None) if x)
+    if intent == "complaint":
+        latin = not re.search(r"[ऀ-ॿ]", transcript)
+        gist = re.sub(r"\s+", " ", transcript).strip()[:120] if latin else "service issue reported"
+        return f"Complaint from {who or 'customer'}: {gist}"
+    bits = []
+    kw = to_float(d.get("system_kw"))
+    bits.append(f"{kw:g} kW {stype.replace('_', '-')} system" if kw else f"{stype.replace('_', '-')} solar system")
+    bill = to_float(d.get("monthly_bill"))
+    if bill:
+        bits.append(f"monthly bill Rs {bill:,.0f}")
+    if to_bool(d.get("subsidy")):
+        bits.append("asked about subsidy")
+    head = "New solar enquiry" if intent == "new_enquiry" else "Customer message"
+    return f"{head}{' from ' + who if who else ''}: " + ", ".join(bits)
+
+
 @app.post("/lead/parse")
 async def lead_parse(text: Optional[str] = Form(None), audio: Optional[UploadFile] = File(None)):
     start_deadline()
@@ -465,6 +523,7 @@ async def lead_parse(text: Optional[str] = Form(None), audio: Optional[UploadFil
     except AIError as e:
         d, model = dict(rx), None
         warning = f"LLM unavailable ({e.code}); name/address not extracted, other fields from pattern matching"
+    _ground_lead(d, rx, transcript)
     intent = str(d.get("intent") or "other").lower().strip()
     if intent not in {"new_enquiry", "complaint", "other"}:
         intent = "other"
@@ -485,7 +544,7 @@ async def lead_parse(text: Optional[str] = Form(None), audio: Optional[UploadFil
         "system_type": stype,
         "subsidy": to_bool(d.get("subsidy")),
         "monthly_bill": to_float(d.get("monthly_bill")),
-        "summary": to_str(d.get("summary")) or transcript[:160],
+        "summary": to_str(d.get("summary")) or _lead_summary(intent, d, stype, transcript),
         "transcript": transcript,
         "model": model,
         "asr_model": asr_model,
@@ -566,6 +625,10 @@ Using the knowledge base (and general inverter knowledge only if needed), reply 
   "confidence": number between 0 and 1}}"""
 
 
+SAFETY_STEP = ("Safety first: switch the AC breaker and DC isolator OFF and wait 5 minutes before touching "
+               "any wiring; PV strings stay live in daylight, so wear insulated gloves.")
+
+
 @app.post("/fault/diagnose")
 async def fault_diagnose(body: FaultIn):
     start_deadline()
@@ -629,13 +692,23 @@ async def fault_diagnose(body: FaultIn):
         parts = d.get("likely_parts") or []
         if not steps:
             raise AIError("bad_model_output", "model returned no steps", 502)
+        best = top[0][1]
+        steps = [str(s) for s in steps] if isinstance(steps, list) else [str(steps)]
+        parts = [str(p) for p in parts] if isinstance(parts, list) else [str(parts)]
+        # Safety/consistency guards (small local models reorder or drop these):
+        # isolation always comes first; site-visit and parts never fall below the KB entry.
+        if not re.search(r"isolat|switch\w* (?:the )?(?:ac|dc)|off\b|de-?energi", steps[0], re.I):
+            steps.insert(0, SAFETY_STEP)
+        conf = max(0.0, min(1.0, conf)) if conf is not None else 0.5
+        if model.startswith("local:"):
+            conf = min(conf, 0.8)
         return {
             "ok": True,
-            "likely_cause": to_str(d.get("likely_cause")) or top[0][1]["causes"][0],
-            "steps": [str(s) for s in steps] if isinstance(steps, list) else [str(steps)],
-            "needs_site_visit": to_bool(d.get("needs_site_visit")),
-            "likely_parts": [str(p) for p in parts] if isinstance(parts, list) else [str(parts)],
-            "confidence": max(0.0, min(1.0, conf)) if conf is not None else 0.5,
+            "likely_cause": to_str(d.get("likely_cause")) or best["causes"][0],
+            "steps": steps,
+            "needs_site_visit": to_bool(d.get("needs_site_visit")) or bool(best["needs_site_visit"]),
+            "likely_parts": parts or list(best["likely_parts"]),
+            "confidence": round(conf, 2),
             "matches": matches,
             "retrieval": retrieval,
             "model": model,

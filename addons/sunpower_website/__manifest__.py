@@ -14,6 +14,7 @@
         "views/portal.xml",
         "views/technician.xml",
         "views/menus.xml",
+        "views/branding.xml",
     ],
     "assets": {
         "web.assets_frontend": [

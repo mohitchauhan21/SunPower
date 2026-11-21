@@ -5,7 +5,7 @@ Everything is lazy: nothing heavy is imported or downloaded until first use
 concurrent requests queue instead of loading twice. Models are cached in the
 standard Hugging Face cache (~/.cache/huggingface), outside the repo.
 
-  LLM        Qwen/Qwen2.5-1.5B-Instruct  (override with env LOCAL_LLM, e.g. Qwen/Qwen2.5-0.5B-Instruct)
+  LLM        Qwen/Qwen2.5-0.5B-Instruct  (override with env LOCAL_LLM=Qwen/Qwen2.5-1.5B-Instruct for better quality)
   ASR        openai/whisper-small
   Embeddings sentence-transformers/all-MiniLM-L6-v2 (mean pooling, via transformers)
   OCR        RapidOCR (ONNX, pip package `rapidocr` + onnxruntime)
@@ -24,7 +24,7 @@ import numpy as np
 
 log = logging.getLogger("sunpower_ai.local")
 
-LLM_ID = os.getenv("LOCAL_LLM", "Qwen/Qwen2.5-1.5B-Instruct")
+LLM_ID = os.getenv("LOCAL_LLM", "Qwen/Qwen2.5-0.5B-Instruct")
 ASR_ID = os.getenv("LOCAL_ASR", "openai/whisper-small")
 EMB_ID = os.getenv("LOCAL_EMB", "sentence-transformers/all-MiniLM-L6-v2")
 OCR_ID = "rapidocr"
@@ -53,7 +53,7 @@ def _load_llm():
     torch = _torch()
     from transformers import AutoModelForCausalLM, AutoTokenizer
     tok = AutoTokenizer.from_pretrained(LLM_ID)
-    model = AutoModelForCausalLM.from_pretrained(LLM_ID, torch_dtype=torch.float32)
+    model = AutoModelForCausalLM.from_pretrained(LLM_ID, dtype=torch.float32)
     model.eval()
     _cache["llm"] = (tok, model)
     LOAD_SECONDS[LLM_ID] = round(time.time() - t, 1)
@@ -244,7 +244,7 @@ def regex_bill(text: str) -> dict:
 
 
 COMPLAINT_WORDS = r"not working|kaam nahi|kam nahi|band ho|kharab|error|fault|problem|issue|complaint|shikayat|" \
-                  r"trip|repair|stopped|less units|kam units|leak|damage|technician"
+                  r"trip|repair|stopped|less units|kam units|leak|damage|technician|खराब|काम नहीं|शिकायत|बंद हो|समस्या"
 
 
 def regex_lead(text: str) -> dict:
@@ -262,11 +262,11 @@ def regex_lead(text: str) -> dict:
     if m:
         out["monthly_bill"] = _num(next(g for g in m.groups() if g))
     out["subsidy"] = bool(re.search(r"subsid|surya ghar|yojana|सब्सिडी|योजना", text, re.I))
-    if re.search(r"off[\s-]?grid|battery|backup|bina grid", text, re.I):
+    if re.search(r"off[\s-]?grid|battery|backup|bina grid|बैटरी|बैकअप|ऑफ ग्रिड", text, re.I):
         out["system_type"] = "off_grid"
     if re.search(COMPLAINT_WORDS, text, re.I):
         out["intent"] = "complaint"
-    elif re.search(r"solar|panel|install|lagwana|lagana|kw|quote|enquiry|inquiry", text, re.I):
+    elif re.search(r"solar|panel|install|lagwana|lagana|kw|quote|enquiry|inquiry|सोलर|लगवाना|चाहिए|किलोवाट", text, re.I):
         out["intent"] = "new_enquiry"
     return out
 
