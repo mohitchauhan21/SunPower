@@ -5,7 +5,7 @@ Run inside the Odoo shell, e.g. for phase 1:
       "C:\\Users\\Ankit Kumar\\odoo18\\odoo\\odoo-bin" shell -c "C:\\Users\\Ankit Kumar\\odoo18\\odoo.conf" -d sunpower
 Set PHASES below to choose which phases to run.
 """
-PHASES = [1, 2, 3, 4, 5, 6]
+PHASES = [1, 2, 3, 4, 5, 6, 7]
 
 results = []
 
@@ -349,6 +349,41 @@ def phase6(env):
         t2.action_resolve()
         check(6, "Out of warranty: invoice created & posted automatically",
               t2.invoice_id and t2.invoice_id.state == "posted", t2.invoice_id.amount_total)
+        env.flush_all()
+        sp.rollback()
+    env.invalidate_all()
+
+
+def phase7(env):
+    """Money: profit maths, dashboard vs independent counts, pay, subsidy, sharing."""
+    jobs = env["sale.order"].search([("is_solar_job", "=", True), ("state", "=", "sale")])
+    jobs._solar_refresh_job_financials()
+    bad = jobs.filtered(lambda o: abs(o.amount_untaxed - o.job_material_cost - o.job_labour_cost
+                                      - o.job_repair_cost - o.job_profit) > 0.01)
+    check(7, "Profit = revenue - parts - labour - repairs (every job)", not bad, "%s jobs" % len(jobs))
+    check(7, "Loss-making jobs exist and are flagged", bool(jobs.filtered(lambda o: o.job_profit < 0)))
+    D = env["solar.dashboard"]
+    for period in ["today", "week", "month", "year"]:
+        d = D.get_data(period)
+        start, end = D._period_bounds(period)
+        won = env["sale.order"].search_count([
+            ("is_solar_job", "=", True), ("state", "=", "sale"),
+            ("date_order", ">=", str(start)), ("date_order", "<=", str(end) + " 23:59:59")])
+        check(7, "Dashboard '%s' orders won matches" % period, d["kpi"]["orders_won"] == won,
+              "%s vs %s" % (d["kpi"]["orders_won"], won))
+    tick = env["solar.service.ticket"].search_count([("stage", "not in", ("closed", "cancel"))])
+    check(7, "Dashboard open repairs matches", D.get_data("month")["kpi"]["tickets_open"] == tick, tick)
+    groups = env["account.analytic.line"]._read_group(
+        [("task_id.is_installation", "=", True)], ["employee_id"], ["unit_amount:sum", "amount:sum"])
+    check(7, "Technician pay = hours x hourly rate", all(
+        round(h * e.hourly_cost) == round(-a) for e, h, a in groups), "%s technicians" % len(groups))
+    sub = env["solar.subsidy.application"]
+    check(7, "PM Surya Ghar subsidy: 1/2/3/5 kW = 30k/60k/78k/78k",
+          [sub._expected_subsidy(k) for k in (1, 2, 3, 5)] == [30000, 60000, 78000, 78000])
+    with env.cr.savepoint(flush=False) as sp:
+        wiz = env["solar.director.report"].create({"period": "month", "email_to": "x@example.com"})
+        html = env["ir.actions.report"]._render_qweb_html("sunpower_solar.action_report_director", wiz.ids)[0]
+        check(7, "Director report builds with jobs and repairs", b"Profit by job" in html and b"Open repairs" in html)
         env.flush_all()
         sp.rollback()
     env.invalidate_all()
