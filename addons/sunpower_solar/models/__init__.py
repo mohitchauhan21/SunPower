@@ -10,3 +10,4 @@ from . import subsidy
 from . import dashboard
 from . import demo_data
 from . import roles
+from . import payment

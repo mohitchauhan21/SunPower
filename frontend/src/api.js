@@ -7,7 +7,11 @@ async function rpc(url, params = {}) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', method: 'call', params })
   });
-  if (!res.ok) throw new Error(`Server error (${res.status})`);
+  if (!res.ok) {
+    throw new Error(res.status >= 500
+      ? 'We can’t reach SunPower right now. Please try again in a minute.'
+      : `Something went wrong (${res.status}). Please try again.`);
+  }
   const data = await res.json();
   if (data.error) throw new Error(data.error.data?.message || data.error.message || 'Request failed');
   return data.result;

@@ -18,7 +18,12 @@ from odoo import _, fields, http
 from odoo.exceptions import AccessDenied, UserError
 from odoo.http import request
 
-from .auth import MIN_PASSWORD, _engine_url, _rate_limited
+from urllib.parse import urlencode
+
+from odoo.addons.payment import utils as payment_utils
+from odoo.addons.sale.controllers.portal import PaymentPortal as SalePaymentPortal
+
+from .auth import MIN_PASSWORD, _engine_url, _frontend_url, _rate_limited
 
 _logger = logging.getLogger(__name__)
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -128,8 +133,9 @@ class SunpowerAccountApi(http.Controller):
         out_orders = []
         for o in orders:
             o._portal_ensure_token()
-            invoices = o.invoice_ids.filtered(lambda m: m.state == "posted" and m.move_type == "out_invoice")
-            paid = sum(m.amount_total - m.amount_residual for m in invoices)
+            paid = o._solar_paid_amount()
+            advance_due = max(o._solar_advance_needed() - paid, 0) if o.state == "sale" else 0
+            pending_tx = o.transaction_ids.filtered(lambda t: t.state in ("pending", "authorized"))
             jobs = o.tasks_ids.filtered("is_installation")
             job = jobs[:1]
             delivered = any(p.state == "done" for p in o.picking_ids)
@@ -142,11 +148,15 @@ class SunpowerAccountApi(http.Controller):
                 "state": o.state, "quote_pending": o.state == "sent",
                 "date": _dt(o.date_order), "total": o.amount_total, "paid": paid,
                 "due": max(o.amount_total - paid, 0),
+                "advance_pct": o.company_id.solar_min_advance_pct or 0,
+                "advance_due": round(advance_due, 2),
+                "payment_pending": bool(pending_tx),
                 "pdf_url": "%s/my/orders/%s?access_token=%s&report_type=pdf&download=true"
                            % (engine, o.id, o.access_token),
                 "review_url": "%s/my/orders/%s?access_token=%s" % (engine, o.id, o.access_token),
                 "steps": [
                     {"label": _("Order confirmed"), "done": o.state == "sale"},
+                    {"label": _("Advance paid"), "done": o.state == "sale" and not advance_due},
                     {"label": _("Kit dispatched"), "done": delivered},
                     {"label": _("Installation scheduled"), "done": bool(job and job.installation_date),
                      "date": _dt(job.installation_date) if job else None},
@@ -260,3 +270,54 @@ class SunpowerAccountApi(http.Controller):
         # keep this browser signed in after the password change
         request.session.session_token = request.env.user._compute_session_token(request.session.sid)
         return {"ok": True}
+
+
+    # ----------------------------------------------------------------- payments
+    @http.route("/api/sunpower/my/order/pay", type="json", auth="user", csrf=False)
+    def order_pay(self, order_id=None, kind="advance", **kw):
+        """Link to the secure payment page for the advance (or the balance) of
+        one of the customer's own confirmed orders."""
+        partner = self._customer()
+        order = request.env["sale.order"].sudo().search([
+            ("id", "=", int(order_id or 0)), ("partner_id", "child_of", partner.id),
+            ("state", "=", "sale")], limit=1)
+        if not order:
+            return {"ok": False, "error": _("Order not found.")}
+        paid = order._solar_paid_amount()
+        if kind == "balance":
+            amount = order.amount_total - paid
+        else:
+            amount = order._solar_advance_needed() - paid
+        amount = order.currency_id.round(max(amount, 0))
+        if amount <= 0:
+            return {"ok": False, "error": _("Nothing to pay right now. Thank you!")}
+        providers = request.env["payment.provider"].sudo()._get_compatible_providers(
+            order.company_id.id, order.partner_invoice_id.id, amount,
+            currency_id=order.currency_id.id, sale_order_id=order.id)
+        if not providers:
+            return {"ok": False, "error": _("Online payment isn't switched on yet. "
+                                            "Please call us on +91 79 4000 5000 to pay.")}
+        token = payment_utils.generate_access_token(
+            order.partner_invoice_id.id, amount, order.currency_id.id)
+        url = "%s/payment/pay?%s" % (_engine_url(), urlencode({
+            "sale_order_id": order.id, "amount": amount, "access_token": token,
+            "sunpower": 1}))
+        return {"ok": True, "url": url, "amount": amount}
+
+    @http.route("/api/sunpower/payment/return", type="http", auth="public")
+    def payment_return(self, order=None, **kw):
+        """Where the payment page sends the customer when it is finished."""
+        order_rec = request.env["sale.order"].sudo().browse(int(order or 0)).exists()
+        target = "%s/account?%s" % (_frontend_url(), urlencode({"paid": order_rec.name or ""}))
+        return request.redirect(target, local=False)
+
+
+class SunpowerPaymentPortal(SalePaymentPortal):
+    """Payments started from the website return to My account instead of the
+    engine's order page."""
+
+    def _get_extra_payment_form_values(self, sale_order_id=None, sunpower=None, **kwargs):
+        values = super()._get_extra_payment_form_values(sale_order_id=sale_order_id, **kwargs)
+        if sunpower and sale_order_id:
+            values["landing_route"] = "/api/sunpower/payment/return?order=%s" % int(sale_order_id)
+        return values

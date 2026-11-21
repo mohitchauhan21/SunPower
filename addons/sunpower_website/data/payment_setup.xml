@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Online advance payment: runs once (the Director can change everything
+         afterwards in Settings; see solar.payment.setup) -->
+    <function model="solar.payment.setup" name="apply"/>
+</odoo>

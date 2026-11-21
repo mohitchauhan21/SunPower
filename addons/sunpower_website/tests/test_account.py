@@ -64,3 +64,42 @@ class TestSunpowerAccount(HttpCase):
             headers={"Content-Type": "application/json"}).json()
         self.assertIn("error", res)
         self.assertEqual(theirs.stage, "new")
+
+    def test_pay_advance_online(self):
+        partner = self.env["res.partner"].create({"name": "Payer", "email": "payer@x.test"})
+        self.env["res.users"].with_context(no_reset_password=True).create({
+            "name": "Payer", "login": "payer@x.test", "password": "longenough1", "partner_id": partner.id,
+            "groups_id": [(6, 0, [self.env.ref("base.group_portal").id])]})
+        product = self.env["product.product"].create({"name": "Kit", "list_price": 100000, "type": "consu"})
+        order = self.env["sale.order"].create({
+            "partner_id": partner.id, "order_line": [(0, 0, {"product_id": product.id, "product_uom_qty": 1})]})
+        order.with_context(sunpower_no_invite=True).action_confirm()
+        needed = order._solar_advance_needed()
+        self.assertGreater(needed, 0)
+
+        self.authenticate("payer@x.test", "longenough1")
+        r = self.rpc("/api/sunpower/my/order/pay", order_id=order.id)
+        self.assertTrue(r["ok"], r)
+        self.assertIn("/payment/pay?", r["url"])
+        self.assertAlmostEqual(r["amount"], needed)
+        # the payment page opens for that link
+        page = self.url_open(r["url"].split("8069", 1)[-1] if "8069" in r["url"] else r["url"])
+        self.assertEqual(page.status_code, 200)
+
+        # simulate the provider confirming the payment
+        provider = self.env.ref("payment.payment_provider_demo")
+        tx = self.env["payment.transaction"].sudo().create({
+            "provider_id": provider.id, "payment_method_id": provider.payment_method_ids[:1].id,
+            "amount": r["amount"], "currency_id": order.currency_id.id, "partner_id": partner.id,
+            "reference": "TEST-%s" % order.id, "operation": "online_direct", "sale_order_ids": [(6, 0, order.ids)]})
+        tx._set_done()
+        tx._post_process()
+        self.assertAlmostEqual(order._solar_paid_amount(), needed, places=0)
+        data = self.rpc("/api/sunpower/my/overview")
+        mine = [o for o in data["orders"] if o["id"] == order.id][0]
+        self.assertEqual(mine["advance_due"], 0)
+        # nothing more to pay as advance; someone else's order is refused
+        self.assertFalse(self.rpc("/api/sunpower/my/order/pay", order_id=order.id)["ok"])
+        other = self.env["sale.order"].create({"partner_id": self.env["res.partner"].create({"name": "X"}).id,
+                                               "order_line": [(0, 0, {"product_id": product.id})]})
+        self.assertFalse(self.rpc("/api/sunpower/my/order/pay", order_id=other.id)["ok"])
