@@ -1,0 +1,1042 @@
+// SunPower Solutions — Solar Installation Management System
+//
+// Conventions
+// - Money: integer paise (Int). Never floats. ₹1 = 100 paise.
+// - Power: integer watts (capacityWatts). 3 kW = 3000.
+// - GST: basis points (gstRateBps). 12% = 1200.
+// - Durations: integer minutes.
+// - Every state change is written to AuditLog by the service layer.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ───────────────────────────── Enums ─────────────────────────────
+
+enum Role {
+  ADMIN
+  DIRECTOR
+  SALES
+  WAREHOUSE
+  TECHNICIAN
+  SUPPORT
+}
+
+enum CustomerType {
+  RESIDENTIAL
+  COMMERCIAL
+}
+
+enum LeadSource {
+  WEB_FORM
+  WHATSAPP
+  PHONE
+  WALK_IN
+  REFERRAL
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  QUALIFIED
+  SURVEY_SCHEDULED
+  SURVEY_APPROVED
+  QUOTE_SENT
+  WON
+  LOST
+}
+
+enum SystemType {
+  ON_GRID
+  OFF_GRID
+  PANEL_SET
+}
+
+enum GridSuitability {
+  SUITABLE
+  NEEDS_UPGRADE
+  UNSUITABLE
+}
+
+enum RoofDirection {
+  N
+  NE
+  E
+  SE
+  S
+  SW
+  W
+  NW
+}
+
+enum RoofType {
+  RCC
+  METAL_SHEET
+  TILED
+  ASBESTOS
+  OTHER
+}
+
+enum SurveyStatus {
+  SCHEDULED
+  COMPLETED
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum ProductKind {
+  GOODS
+  SERVICE
+}
+
+enum ProductCategory {
+  PANEL
+  INVERTER
+  BATTERY
+  CHARGE_CONTROLLER
+  MOUNTING
+  WIRING
+  PROTECTION
+  EARTHING
+  CONNECTOR
+  SERVICE
+  OTHER
+}
+
+enum QuoteStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  REJECTED
+  EXPIRED
+  SUPERSEDED
+}
+
+enum OrderStatus {
+  AWAITING_ADVANCE
+  CONFIRMED
+  PACKED
+  DISPATCHED
+  DELIVERED
+  INSTALLED
+  HANDED_OVER
+  CANCELLED
+}
+
+enum PaymentType {
+  ADVANCE
+  BALANCE
+  FULL
+  OTHER
+}
+
+enum PaymentMethod {
+  CASH
+  UPI
+  BANK_TRANSFER
+  CHEQUE
+  CARD
+}
+
+enum StockLocationType {
+  WAREHOUSE
+  VEHICLE
+  CUSTOMER_SITE
+  SUPPLIER
+  SCRAP
+}
+
+enum StockMovementType {
+  RECEIPT
+  PICK
+  DISPATCH
+  DELIVER
+  RETURN
+  ADJUSTMENT
+  TICKET_USE
+}
+
+enum SerialStatus {
+  IN_STOCK
+  RESERVED
+  DISPATCHED
+  DELIVERED
+  INSTALLED
+  RETURNED
+  REPLACED
+  SCRAPPED
+}
+
+enum PickListStatus {
+  OPEN
+  PICKING
+  PACKED
+  CANCELLED
+}
+
+enum JobStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum TicketStatus {
+  OPEN
+  ASSIGNED
+  IN_PROGRESS
+  RESOLVED
+  CUSTOMER_CONFIRMED
+  CLOSED
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum InvoiceType {
+  ORDER
+  TICKET
+}
+
+enum InvoiceStatus {
+  DRAFT
+  ISSUED
+  PARTIALLY_PAID
+  PAID
+  VOID
+}
+
+enum ExpenseCategory {
+  TRAVEL
+  FOOD
+  TOOLS
+  SUBCONTRACT
+  MATERIAL
+  OTHER
+}
+
+enum SubsidyStatus {
+  NOT_APPLIED
+  APPLIED
+  INSPECTION_PENDING
+  INSPECTED
+  APPROVED
+  DISBURSED
+  REJECTED
+}
+
+enum NotificationChannel {
+  WHATSAPP
+  SMS
+  EMAIL
+}
+
+enum DeliveryStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+enum OutboxStatus {
+  PENDING
+  PROCESSED
+  FAILED
+}
+
+// ───────────────────────────── People ─────────────────────────────
+
+model User {
+  id              String   @id @default(cuid())
+  name            String
+  email           String   @unique
+  phone           String?
+  passwordHash    String
+  role            Role
+  active          Boolean  @default(true)
+  /// Technician pay rate (cost to company). Only visible to DIRECTOR/ADMIN.
+  hourlyRatePaise Int?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  leadsAssigned      Lead[]            @relation("LeadAssignee")
+  surveys            Survey[]          @relation("Surveyor")
+  surveysApproved    Survey[]          @relation("SurveyApprover")
+  quotesCreated      Quote[]
+  paymentsRecorded   Payment[]
+  pickListsAssigned  PickList[]
+  jobsLed            InstallationJob[] @relation("CrewLead")
+  jobCrew            JobCrew[]
+  jobPhotos          JobPhoto[]
+  ticketsAssigned    Ticket[]          @relation("TicketAssignee")
+  ticketsCreated     Ticket[]          @relation("TicketCreator")
+  ticketLabour       TicketLabour[]
+  timesheets         Timesheet[]       @relation("TimesheetUser")
+  timesheetsApproved Timesheet[]       @relation("TimesheetApprover")
+  expenses           Expense[]
+  stockMovements     StockMovement[]
+  auditLogs          AuditLog[]
+  notifications      Notification[]
+  shareLinks         ShareLink[]
+}
+
+model Customer {
+  id          String       @id @default(cuid())
+  name        String
+  /// Normalised 10-digit Indian mobile (e.g. 9876543210). Unique so enquiries de-duplicate.
+  phone       String       @unique
+  altPhone    String?
+  email       String?
+  type        CustomerType @default(RESIDENTIAL)
+  addressLine String
+  city        String
+  state       String       @default("Maharashtra")
+  pincode     String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  leads         Lead[]
+  quotes        Quote[]
+  orders        Order[]
+  serialUnits   SerialUnit[]
+  tickets       Ticket[]
+  invoices      Invoice[]
+  subsidies     SubsidyApplication[]
+  notifications Notification[]
+
+  @@index([name])
+  @@index([altPhone])
+}
+
+// ───────────────────────────── Sales ─────────────────────────────
+
+model Lead {
+  id                 String           @id @default(cuid())
+  number             String           @unique
+  customerId         String
+  source             LeadSource
+  status             LeadStatus       @default(NEW)
+  systemType         SystemType?
+  requestedWatts     Int?
+  wantsSubsidy       Boolean          @default(false)
+  needs              String?
+  assignedToId       String?
+  // Call checklist
+  shadowFreeAreaSqft Int?
+  monthlyBillPaise   Int?
+  gridSuitability    GridSuitability?
+  contactedAt        DateTime?
+  qualifiedAt        DateTime?
+  lostReason         String?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  customer   Customer @relation(fields: [customerId], references: [id])
+  assignedTo User?    @relation("LeadAssignee", fields: [assignedToId], references: [id])
+  surveys    Survey[]
+  quotes     Quote[]
+
+  @@index([status])
+  @@index([customerId])
+  @@index([createdAt])
+}
+
+model Survey {
+  id                 String           @id @default(cuid())
+  leadId             String
+  status             SurveyStatus     @default(SCHEDULED)
+  scheduledAt        DateTime
+  surveyorId         String?
+  roofDirection      RoofDirection?
+  roofType           RoofType?
+  tiltDegrees        Int?
+  cableDistanceM     Int?
+  shadowFreeAreaSqft Int?
+  monthlyBillPaise   Int?
+  gridSuitability    GridSuitability?
+  recommendedWatts   Int?
+  notes              String?
+  completedAt        DateTime?
+  approved           Boolean          @default(false)
+  approvedById       String?
+  approvedAt         DateTime?
+  rejectionReason    String?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  lead       Lead    @relation(fields: [leadId], references: [id])
+  surveyor   User?   @relation("Surveyor", fields: [surveyorId], references: [id])
+  approvedBy User?   @relation("SurveyApprover", fields: [approvedById], references: [id])
+  quotes     Quote[]
+
+  @@index([leadId])
+  @@index([surveyorId, scheduledAt])
+}
+
+// ───────────────────────────── Catalogue ─────────────────────────────
+
+model Product {
+  id             String          @id @default(cuid())
+  sku            String          @unique
+  name           String
+  kind           ProductKind     @default(GOODS)
+  category       ProductCategory
+  unit           String          @default("pc")
+  requiresSerial Boolean         @default(false)
+  warrantyMonths Int             @default(0)
+  costPaise      Int
+  pricePaise     Int
+  gstRateBps     Int             @default(1200)
+  hsnCode        String?
+  /// Rated power, for panels/inverters (watts).
+  ratedWatts     Int?
+  active         Boolean         @default(true)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  packageItems   PackageItem[]
+  quoteLines     QuoteLine[]
+  orderLines     OrderLine[]
+  serialUnits    SerialUnit[]
+  stockLevels    StockLevel[]
+  stockMovements StockMovement[]
+  pickListItems  PickListItem[]
+  ticketParts    TicketPart[]
+  invoiceLines   InvoiceLine[]
+
+  @@index([category])
+}
+
+/// A bill-of-materials template, e.g. "3 kW On-Grid".
+model PackageTemplate {
+  id            String     @id @default(cuid())
+  code          String     @unique
+  name          String
+  systemType    SystemType
+  capacityWatts Int
+  description   String?
+  active        Boolean    @default(true)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  items  PackageItem[]
+  quotes Quote[]
+
+  @@unique([systemType, capacityWatts])
+}
+
+model PackageItem {
+  id         String @id @default(cuid())
+  templateId String
+  productId  String
+  quantity   Int
+  sortOrder  Int    @default(0)
+
+  template PackageTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  product  Product         @relation(fields: [productId], references: [id])
+
+  @@unique([templateId, productId])
+}
+
+model Quote {
+  id            String      @id @default(cuid())
+  number        String      @unique
+  version       Int         @default(1)
+  leadId        String
+  customerId    String
+  /// A quote can only exist for an approved survey (enforced in the service layer).
+  surveyId      String
+  templateId    String?
+  status        QuoteStatus @default(DRAFT)
+  validUntil    DateTime
+  subtotalPaise Int
+  discountPaise Int         @default(0)
+  taxPaise      Int
+  totalPaise    Int
+  notes         String?
+  createdById   String
+  sentAt        DateTime?
+  acceptedAt    DateTime?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  lead      Lead             @relation(fields: [leadId], references: [id])
+  customer  Customer         @relation(fields: [customerId], references: [id])
+  survey    Survey           @relation(fields: [surveyId], references: [id])
+  template  PackageTemplate? @relation(fields: [templateId], references: [id])
+  createdBy User             @relation(fields: [createdById], references: [id])
+  lines     QuoteLine[]
+  order     Order?
+
+  @@index([leadId])
+  @@index([status])
+}
+
+model QuoteLine {
+  id             String @id @default(cuid())
+  quoteId        String
+  productId      String
+  description    String
+  quantity       Int
+  unitPricePaise Int
+  /// Snapshot of cost at quote time (never shown to technicians).
+  unitCostPaise  Int
+  gstRateBps     Int
+  lineTotalPaise Int
+  sortOrder      Int    @default(0)
+
+  quote   Quote   @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+}
+
+// ───────────────────────────── Orders & payments ─────────────────────────────
+
+model Order {
+  id            String      @id @default(cuid())
+  number        String      @unique
+  customerId    String
+  quoteId       String      @unique
+  status        OrderStatus @default(AWAITING_ADVANCE)
+  systemType    SystemType
+  capacityWatts Int
+  siteAddress   String
+  totalPaise    Int
+  confirmedAt   DateTime?
+  packedAt      DateTime?
+  dispatchedAt  DateTime?
+  deliveredAt   DateTime?
+  installedAt   DateTime?
+  handedOverAt  DateTime?
+  cancelledAt   DateTime?
+  cancelReason  String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  customer        Customer            @relation(fields: [customerId], references: [id])
+  quote           Quote               @relation(fields: [quoteId], references: [id])
+  lines           OrderLine[]
+  payments        Payment[]
+  pickList        PickList?
+  installationJob InstallationJob?
+  serialUnits     SerialUnit[]
+  stockMovements  StockMovement[]
+  invoices        Invoice[]
+  expenses        Expense[]
+  subsidy         SubsidyApplication?
+  tickets         Ticket[]
+
+  @@index([status])
+  @@index([customerId])
+  @@index([createdAt])
+}
+
+model OrderLine {
+  id             String @id @default(cuid())
+  orderId        String
+  productId      String
+  description    String
+  quantity       Int
+  unitPricePaise Int
+  unitCostPaise  Int
+  gstRateBps     Int
+  lineTotalPaise Int
+
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+
+  @@index([orderId])
+}
+
+model Payment {
+  id           String        @id @default(cuid())
+  orderId      String
+  type         PaymentType
+  method       PaymentMethod
+  amountPaise  Int
+  reference    String?
+  receivedAt   DateTime
+  recordedById String
+  notes        String?
+  createdAt    DateTime      @default(now())
+
+  order      Order @relation(fields: [orderId], references: [id])
+  recordedBy User  @relation(fields: [recordedById], references: [id])
+
+  @@index([orderId])
+  @@index([receivedAt])
+}
+
+// ───────────────────────────── Inventory ─────────────────────────────
+
+model StockLocation {
+  id     String            @id @default(cuid())
+  code   String            @unique
+  name   String
+  type   StockLocationType
+  active Boolean           @default(true)
+
+  stockLevels   StockLevel[]
+  movementsFrom StockMovement[] @relation("MovementFrom")
+  movementsTo   StockMovement[] @relation("MovementTo")
+  serialUnits   SerialUnit[]
+}
+
+/// Running balance per product per location, updated in the same transaction as each StockMovement.
+model StockLevel {
+  productId  String
+  locationId String
+  quantity   Int    @default(0)
+  reserved   Int    @default(0)
+
+  product  Product       @relation(fields: [productId], references: [id])
+  location StockLocation @relation(fields: [locationId], references: [id])
+
+  @@id([productId, locationId])
+}
+
+model StockMovement {
+  id             String            @id @default(cuid())
+  type           StockMovementType
+  productId      String
+  quantity       Int
+  fromLocationId String?
+  toLocationId   String?
+  serialUnitId   String?
+  orderId        String?
+  ticketId       String?
+  unitCostPaise  Int?
+  note           String?
+  createdById    String
+  createdAt      DateTime          @default(now())
+
+  product      Product        @relation(fields: [productId], references: [id])
+  fromLocation StockLocation? @relation("MovementFrom", fields: [fromLocationId], references: [id])
+  toLocation   StockLocation? @relation("MovementTo", fields: [toLocationId], references: [id])
+  serialUnit   SerialUnit?    @relation(fields: [serialUnitId], references: [id])
+  order        Order?         @relation(fields: [orderId], references: [id])
+  ticket       Ticket?        @relation(fields: [ticketId], references: [id])
+  createdBy    User           @relation(fields: [createdById], references: [id])
+
+  @@index([productId, createdAt])
+  @@index([orderId])
+}
+
+model SerialUnit {
+  id             String       @id @default(cuid())
+  /// Manufacturer serial. UNIQUE across the whole company.
+  serial         String       @unique
+  productId      String
+  status         SerialStatus @default(IN_STOCK)
+  locationId     String?
+  orderId        String?
+  customerId     String?
+  pickListItemId String?
+  receivedAt     DateTime     @default(now())
+  dispatchedAt   DateTime?
+  deliveredAt    DateTime?
+  /// Snapshot of the product's warranty at delivery, so later catalogue edits never change it.
+  warrantyMonths Int?
+  warrantyStart  DateTime?    @db.Date
+  warrantyEnd    DateTime?    @db.Date
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  product        Product         @relation(fields: [productId], references: [id])
+  location       StockLocation?  @relation(fields: [locationId], references: [id])
+  order          Order?          @relation(fields: [orderId], references: [id])
+  customer       Customer?       @relation(fields: [customerId], references: [id])
+  pickListItem   PickListItem?   @relation(fields: [pickListItemId], references: [id])
+  stockMovements StockMovement[]
+  tickets        Ticket[]
+  partsReplaced  TicketPart[]    @relation("ReplacedSerial")
+  partsFitted    TicketPart[]    @relation("FittedSerial")
+
+  @@index([orderId])
+  @@index([customerId])
+  @@index([productId, status])
+}
+
+model PickList {
+  id           String         @id @default(cuid())
+  number       String         @unique
+  orderId      String         @unique
+  status       PickListStatus @default(OPEN)
+  assignedToId String?
+  packedAt     DateTime?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  order      Order          @relation(fields: [orderId], references: [id])
+  assignedTo User?          @relation(fields: [assignedToId], references: [id])
+  items      PickListItem[]
+
+  @@index([status])
+}
+
+model PickListItem {
+  id               String  @id @default(cuid())
+  pickListId       String
+  productId        String
+  quantityRequired Int
+  quantityPicked   Int     @default(0)
+  requiresSerial   Boolean
+
+  pickList    PickList     @relation(fields: [pickListId], references: [id], onDelete: Cascade)
+  product     Product      @relation(fields: [productId], references: [id])
+  serialUnits SerialUnit[]
+
+  @@unique([pickListId, productId])
+}
+
+// ───────────────────────────── Field work ─────────────────────────────
+
+model InstallationJob {
+  id                     String    @id @default(cuid())
+  number                 String    @unique
+  orderId                String    @unique
+  status                 JobStatus @default(SCHEDULED)
+  scheduledDate          DateTime  @db.Date
+  crewLeadId             String?
+  startedAt              DateTime?
+  finishedAt             DateTime?
+  confirmedCapacityWatts Int?
+  generationTestPassed   Boolean?
+  notes                  String?
+  signatureKey           String?
+  signedByName           String?
+  signedAt               DateTime?
+  completedAt            DateTime?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  order      Order       @relation(fields: [orderId], references: [id])
+  crewLead   User?       @relation("CrewLead", fields: [crewLeadId], references: [id])
+  crew       JobCrew[]
+  photos     JobPhoto[]
+  timesheets Timesheet[]
+  expenses   Expense[]
+
+  @@index([scheduledDate])
+  @@index([crewLeadId, scheduledDate])
+}
+
+model JobCrew {
+  jobId  String
+  userId String
+
+  job  InstallationJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  user User            @relation(fields: [userId], references: [id])
+
+  @@id([jobId, userId])
+  @@index([userId])
+}
+
+model JobPhoto {
+  id           String    @id @default(cuid())
+  jobId        String
+  storageKey   String    @unique
+  mimeType     String
+  sizeBytes    Int
+  caption      String?
+  /// Client-generated id so retried uploads are idempotent.
+  clientId     String?   @unique
+  takenAt      DateTime?
+  uploadedById String
+  createdAt    DateTime  @default(now())
+
+  job        InstallationJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  uploadedBy User            @relation(fields: [uploadedById], references: [id])
+
+  @@index([jobId])
+}
+
+// ───────────────────────────── After-sales ─────────────────────────────
+
+model Ticket {
+  id                  String         @id @default(cuid())
+  number              String         @unique
+  customerId          String
+  orderId             String?
+  serialUnitId        String?
+  status              TicketStatus   @default(OPEN)
+  priority            TicketPriority @default(MEDIUM)
+  title               String
+  description         String
+  faultCode           String?
+  /// Warranty status captured when the ticket was opened.
+  inWarranty          Boolean
+  assignedToId        String?
+  createdById         String
+  resolutionNotes     String?
+  customerChargePaise Int            @default(0)
+  resolvedAt          DateTime?
+  confirmedAt         DateTime?
+  closedAt            DateTime?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  customer       Customer        @relation(fields: [customerId], references: [id])
+  order          Order?          @relation(fields: [orderId], references: [id])
+  serialUnit     SerialUnit?     @relation(fields: [serialUnitId], references: [id])
+  assignedTo     User?           @relation("TicketAssignee", fields: [assignedToId], references: [id])
+  createdBy      User            @relation("TicketCreator", fields: [createdById], references: [id])
+  parts          TicketPart[]
+  labour         TicketLabour[]
+  invoice        Invoice?
+  stockMovements StockMovement[]
+  timesheets     Timesheet[]
+  expenses       Expense[]
+
+  @@index([status])
+  @@index([customerId])
+  @@index([serialUnitId])
+  @@index([assignedToId, status])
+}
+
+model TicketPart {
+  id               String  @id @default(cuid())
+  ticketId         String
+  productId        String
+  quantity         Int
+  unitPricePaise   Int
+  unitCostPaise    Int
+  gstRateBps       Int
+  replacedSerialId String?
+  fittedSerialId   String?
+
+  ticket         Ticket      @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  product        Product     @relation(fields: [productId], references: [id])
+  replacedSerial SerialUnit? @relation("ReplacedSerial", fields: [replacedSerialId], references: [id])
+  fittedSerial   SerialUnit? @relation("FittedSerial", fields: [fittedSerialId], references: [id])
+
+  @@index([ticketId])
+}
+
+model TicketLabour {
+  id              String  @id @default(cuid())
+  ticketId        String
+  technicianId    String
+  minutes         Int
+  /// What the customer is charged per hour (out of warranty).
+  chargeRatePaise Int
+  /// Snapshot of the technician's cost rate per hour.
+  costRatePaise   Int
+  description     String?
+
+  ticket     Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  technician User   @relation(fields: [technicianId], references: [id])
+
+  @@index([ticketId])
+}
+
+// ───────────────────────────── Finance ─────────────────────────────
+
+model Invoice {
+  id            String        @id @default(cuid())
+  /// Financial-year series, e.g. SP/25-26/0001
+  number        String        @unique
+  type          InvoiceType
+  status        InvoiceStatus @default(ISSUED)
+  customerId    String
+  orderId       String?
+  ticketId      String?       @unique
+  issuedAt      DateTime      @default(now())
+  dueAt         DateTime?
+  subtotalPaise Int
+  taxPaise      Int
+  totalPaise    Int
+  paidPaise     Int           @default(0)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  customer Customer      @relation(fields: [customerId], references: [id])
+  order    Order?        @relation(fields: [orderId], references: [id])
+  ticket   Ticket?       @relation(fields: [ticketId], references: [id])
+  lines    InvoiceLine[]
+
+  @@index([status])
+  @@index([issuedAt])
+}
+
+model InvoiceLine {
+  id             String  @id @default(cuid())
+  invoiceId      String
+  productId      String?
+  description    String
+  quantity       Int
+  unitPricePaise Int
+  gstRateBps     Int
+  lineTotalPaise Int
+
+  invoice Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  product Product? @relation(fields: [productId], references: [id])
+
+  @@index([invoiceId])
+}
+
+model Timesheet {
+  id              String    @id @default(cuid())
+  userId          String
+  jobId           String?
+  ticketId        String?
+  workDate        DateTime  @db.Date
+  minutes         Int
+  /// Snapshot of the technician's rate when logged.
+  hourlyRatePaise Int
+  notes           String?
+  approvedById    String?
+  approvedAt      DateTime?
+  createdAt       DateTime  @default(now())
+
+  user       User             @relation("TimesheetUser", fields: [userId], references: [id])
+  approvedBy User?            @relation("TimesheetApprover", fields: [approvedById], references: [id])
+  job        InstallationJob? @relation(fields: [jobId], references: [id])
+  ticket     Ticket?          @relation(fields: [ticketId], references: [id])
+
+  @@index([userId, workDate])
+  @@index([jobId])
+}
+
+model Expense {
+  id            String          @id @default(cuid())
+  category      ExpenseCategory
+  amountPaise   Int
+  description   String
+  incurredAt    DateTime        @db.Date
+  orderId       String?
+  jobId         String?
+  ticketId      String?
+  submittedById String
+  receiptKey    String?
+  approved      Boolean         @default(false)
+  createdAt     DateTime        @default(now())
+
+  order       Order?           @relation(fields: [orderId], references: [id])
+  job         InstallationJob? @relation(fields: [jobId], references: [id])
+  ticket      Ticket?          @relation(fields: [ticketId], references: [id])
+  submittedBy User             @relation(fields: [submittedById], references: [id])
+
+  @@index([incurredAt])
+  @@index([orderId])
+}
+
+model SubsidyApplication {
+  id            String        @id @default(cuid())
+  orderId       String        @unique
+  customerId    String
+  scheme        String        @default("PM Surya Ghar Muft Bijli Yojana")
+  applicationNo String?
+  status        SubsidyStatus @default(NOT_APPLIED)
+  amountPaise   Int?
+  appliedAt     DateTime?
+  inspectionAt  DateTime?
+  approvedAt    DateTime?
+  disbursedAt   DateTime?
+  notes         String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  order    Order    @relation(fields: [orderId], references: [id])
+  customer Customer @relation(fields: [customerId], references: [id])
+
+  @@index([status])
+}
+
+// ───────────────────────────── Platform ─────────────────────────────
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  actorRole  Role?
+  action     String
+  entityType String
+  entityId   String
+  before     Json?
+  after      Json?
+  createdAt  DateTime @default(now())
+
+  actor User? @relation(fields: [actorId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@index([actorId])
+}
+
+model Notification {
+  id         String              @id @default(cuid())
+  channel    NotificationChannel
+  template   String
+  to         String
+  payload    Json
+  status     DeliveryStatus      @default(PENDING)
+  attempts   Int                 @default(0)
+  error      String?
+  customerId String?
+  userId     String?
+  sentAt     DateTime?
+  createdAt  DateTime            @default(now())
+
+  customer Customer? @relation(fields: [customerId], references: [id])
+  user     User?     @relation(fields: [userId], references: [id])
+
+  @@index([status])
+}
+
+/// Transactional outbox: events written in the same DB transaction as the state change,
+/// then delivered by the worker. Nothing is lost if the provider is down.
+model OutboxEvent {
+  id          String       @id @default(cuid())
+  type        String
+  payload     Json
+  status      OutboxStatus @default(PENDING)
+  attempts    Int          @default(0)
+  availableAt DateTime     @default(now())
+  processedAt DateTime?
+  error       String?
+  createdAt   DateTime     @default(now())
+
+  @@index([status, availableAt])
+}
+
+/// Read-only report links. Only the SHA-256 hash of the token is stored.
+model ShareLink {
+  id          String    @id @default(cuid())
+  tokenHash   String    @unique
+  scope       String
+  params      Json
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  viewCount   Int       @default(0)
+  createdById String
+  createdAt   DateTime  @default(now())
+
+  createdBy User @relation(fields: [createdById], references: [id])
+}
+
+/// Gap-free document numbering (LD-0001, Q-0001, SP/25-26/0001 …).
+model DocumentSequence {
+  key   String @id
+  value Int    @default(0)
+}
+
+/// Fixed-window rate limiting without Redis.
+model RateLimitBucket {
+  key         String   @id
+  windowStart DateTime
+  count       Int
+}
+
+model AppSetting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}

@@ -1,0 +1,32 @@
+# deps
+node_modules/
+
+# next
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+
+# env — never commit real secrets
+.env
+.env.*
+!.env.example
+
+# local file storage (photos, signatures, PDFs)
+storage/
+
+# tests
+playwright-report/
+test-results/
+coverage/
+blob-report/
+
+# os / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log
+
+# playwright saved sessions
+tests/e2e/.auth/
