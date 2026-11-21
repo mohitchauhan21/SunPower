@@ -144,3 +144,16 @@ def test_customer_sees_own_account_and_quote_pdf(client):
     assert o["orders"] and o["warranties"]
     assert client.get(o["orders"][0]["pdf_url"]).status_code == 200
     assert client.get("/api/staff/leads").status_code == 403
+
+
+def test_state_wise_subsidy_and_custom_price(client):
+    est = lambda **b: client.post("/api/sunpower/estimate", json=b, headers=H).json()
+    assert est(units=360, state="Gujarat")["subsidy"] == 78000          # general state, 3 kW
+    assert est(units=360, state="Assam")["subsidy"] == 85800            # special category (+10%)
+    assam = est(units=360, state="Assam", topup=True)                   # reported top-up only when asked
+    assert (assam["subsidy_central"], assam["subsidy_topup"], assam["subsidy"]) == (85800, 45000, 130800)
+    assert est(units=840, state="Gujarat")["subsidy"] == 78000          # central subsidy capped at 3 kW
+    custom = est(units=360, state="Uttar Pradesh", topup=True, kw=4, cost_per_kw=55000, tariff=9)
+    assert (custom["cost"], custom["subsidy"], custom["net_cost"], custom["custom"]) == (220000, 108000, 112000, True)
+    table = client.get("/api/sunpower/subsidy-states").json()
+    assert len(table["states"]) == 36 and table["average"]["3"] == 81033

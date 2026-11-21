@@ -18,7 +18,17 @@ def _float(v, cap=None):
 
 @router.post("/estimate")
 def estimate(body: dict = Body(default={})):
-    return rules.estimate(_float(body.get("units")), _float(body.get("bill"))) or {}
+    return rules.estimate(_float(body.get("units")), _float(body.get("bill")), state=body.get("state"),
+                          include_topup=bool(body.get("topup")), kw=_float(body.get("kw"), 100) or None,
+                          cost_per_kw=_float(body.get("cost_per_kw"), 1000000) or None,
+                          tariff=_float(body.get("tariff"), 100) or None) or {}
+
+
+@router.get("/subsidy-states")
+def subsidy_states():
+    """State / UT subsidy table for the Savings page and the home page averages."""
+    from ..subsidy import states_payload
+    return states_payload()
 
 
 @router.post("/enquiry")

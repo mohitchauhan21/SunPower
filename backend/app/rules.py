@@ -110,10 +110,11 @@ def frontend(db):
 # ------------------------------------------------------------ calculations
 # PM Surya Ghar subsidy for a system of `kw`: 30,000 per kW for the first 2 kW,
 # 18,000 for the 3rd kW, never more than 78,000 in total.
-def subsidy_expected(kw):
-    """PM Surya Ghar: Rs 30k/kW for the first 2 kW, Rs 18k for the 3rd, max Rs 78k."""
-    kw = kw or 0
-    return min(30000 * min(kw, 2) + 18000 * max(min(kw, 3) - 2, 0), 78000)
+def subsidy_expected(kw, state=None, include_topup=False):
+    """PM Surya Ghar subsidy for `kw` in a state (central rate by state category,
+    capped at 3 kW; reported state top-up only when asked). See subsidy.py."""
+    from .subsidy import subsidy_for
+    return subsidy_for(kw, state, include_topup)["total"]
 
 
 # Suggested system size from monthly units (or the bill / ₹8), 1 to 5 kW.
@@ -128,19 +129,30 @@ def recommended_kw(units=0, bill=0):
 # Savings estimate for the public website (Savings page): size, generation,
 # monthly/yearly saving, price, subsidy, net cost, payback years, roof area.
 # Returns None if neither units nor bill was given.
-def estimate(units=0.0, bill=0.0):
-    units = units or (bill / AVG_TARIFF_INR if bill else 0.0)
-    if not units:
+def estimate(units=0.0, bill=0.0, state=None, include_topup=False, kw=None, cost_per_kw=None, tariff=None):
+    """Website savings estimate. `state` sets the subsidy (central category and
+    optional reported top-up). Custom mode: pass your own `kw`, `cost_per_kw`
+    (Rs per kW) and/or `tariff` (Rs per unit) to replace the defaults."""
+    from .subsidy import subsidy_for
+    tariff = tariff or AVG_TARIFF_INR
+    units = units or (bill / tariff if bill else 0.0)
+    if not units and not kw:
         return None
-    kw = recommended_kw(units)
+    custom = bool(kw or cost_per_kw or (tariff != AVG_TARIFF_INR))
+    kw = round(min(max(float(kw), 0.5), 100), 1) if kw else recommended_kw(units)
+    cost_per_kw = cost_per_kw or COST_PER_KW_INR
     generation = kw * UNITS_PER_KW_MONTH
-    monthly_saving = min(generation, units) * AVG_TARIFF_INR
-    cost = kw * COST_PER_KW_INR
-    subsidy = subsidy_expected(kw)
-    net = cost - subsidy
+    used = min(generation, units) if units else generation
+    monthly_saving = used * tariff
+    cost = kw * cost_per_kw
+    sub = subsidy_for(kw, state, include_topup)
+    net = max(cost - sub["total"], 0)
     return {"units": round(units), "kw": kw, "system_type": "on_grid", "generation": round(generation),
             "monthly_saving": round(monthly_saving), "yearly_saving": round(monthly_saving * 12),
-            "cost": round(cost), "subsidy": round(subsidy), "net_cost": round(net),
+            "cost": round(cost), "subsidy": sub["total"], "subsidy_central": sub["central"],
+            "subsidy_topup": sub["topup"], "topup_available": sub["topup_available"],
+            "state": sub["state"], "category": sub["category"], "net_cost": round(net),
+            "cost_per_kw": round(cost_per_kw), "tariff": tariff, "custom": custom,
             "payback_years": round(net / (monthly_saving * 12), 1) if monthly_saving else 0,
             "roof_sqft": round(kw * ROOF_SQFT_PER_KW)}
 

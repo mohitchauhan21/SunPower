@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api, inr, num } from '../api.js';
-import { estimateLocal } from '../solar.js';
+import { estimateLocal, RULES } from '../solar.js';
+import { DEFAULT_STATE, saveState, savedState, useSubsidyTable } from '../subsidy.js';
 import Tabs from '../components/ui/Tabs.jsx';
 import ElasticSlider from '../components/ui/ElasticSlider.jsx';
 import Switch from '../components/ui/Switch.jsx';
@@ -16,7 +17,12 @@ export default function Estimate() {
   const [mode, setMode] = useState(params.get('bill') ? 'bill' : 'units');
   const [units, setUnits] = useState(Number(params.get('units')) || 360);
   const [bill, setBill] = useState(Number(params.get('bill')) || 2800);
-  const [est, setEst] = useState(() => estimateLocal(units, 0));
+  const table = useSubsidyTable();
+  const [state, setState] = useState(() => params.get('state') || savedState());
+  const [topup, setTopup] = useState(false);
+  const [custom, setCustom] = useState(false);
+  const [c, setC] = useState({ kw: '', costPerKw: String(RULES.costPerKw), tariff: String(RULES.tariff) });
+  const [est, setEst] = useState(() => estimateLocal(units, 0, { state }));
   const [scanning, setScanning] = useState(false);
   const [scanMsg, setScanMsg] = useState('');
   const fileRef = useRef(null);
@@ -28,16 +34,30 @@ export default function Estimate() {
   const value = mode === 'units' ? units : bill;
   const setValue = mode === 'units' ? setUnits : setBill;
 
-  // Instant local figures, then the engine's authoritative estimate (debounced).
+  const stateRow = table?.states.find((x) => x.name === state);
+  const customOpts = custom ? {
+    kw: Number(c.kw) || undefined, costPerKw: Number(c.costPerKw) || undefined, tariff: Number(c.tariff) || undefined
+  } : {};
+  const customErr = custom && (
+    (c.kw && !(Number(c.kw) >= 0.5 && Number(c.kw) <= 100) && 'System size must be between 0.5 and 100 kW.') ||
+    (c.costPerKw && !(Number(c.costPerKw) >= 10000 && Number(c.costPerKw) <= 500000) && 'Price per kW must be between ₹10,000 and ₹5,00,000.') ||
+    (c.tariff && !(Number(c.tariff) >= 1 && Number(c.tariff) <= 50) && 'Electricity rate must be between ₹1 and ₹50 per unit.'));
+
+  const pickState = (name) => { setState(name); saveState(name); setTopup(false); };
+
+  // Instant local figures, then the server's authoritative estimate (debounced).
   useEffect(() => {
+    if (customErr) return undefined;
     const u = mode === 'units' ? units : 0;
     const b = mode === 'bill' ? bill : 0;
-    setEst(estimateLocal(u, b));
+    setEst(estimateLocal(u, b, { state, topup, table, ...customOpts }));
     const t = setTimeout(() => {
-      api.estimate({ units: u, bill: b }).then((r) => r && r.kw && setEst(r)).catch(() => {});
+      api.estimate({ units: u, bill: b, state, topup, kw: customOpts.kw, cost_per_kw: customOpts.costPerKw, tariff: customOpts.tariff })
+        .then((r) => r && r.kw && setEst(r)).catch(() => {});
     }, 300);
     return () => clearTimeout(t);
-  }, [mode, units, bill]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, units, bill, state, topup, table, custom, c.kw, c.costPerKw, c.tariff]);
 
   const onBill = async (e) => {
     const file = e.target.files?.[0];
@@ -76,7 +96,8 @@ export default function Estimate() {
         system_kw: est.kw,
         system_type: 'on_grid',
         monthly_bill: mode === 'bill' ? bill : Math.round(est.units * 8),
-        notes: `Website estimate: ${est.units} units/month → ${est.kw} kW On-Grid`
+        notes: `Website estimate (${est.state}): ${est.units} units/month → ${est.kw} kW On-Grid, subsidy ${inr(est.subsidy)}` +
+          (custom ? `, custom price ${inr(est.cost_per_kw)}/kW at ₹${est.tariff}/unit` : '')
       });
       if (!res?.ok) throw new Error(res?.error || 'Request failed');
       setDone({ ...res, phone: form.phone });
@@ -147,16 +168,65 @@ export default function Estimate() {
             </button>
           </div>
           {scanMsg && <p className="status" role="status">{scanMsg}</p>}
+
+          <div className="field" style={{ marginTop: 20 }}>
+            <label className="label" htmlFor="state">Your state</label>
+            <select id="state" className="select" value={state} onChange={(e) => pickState(e.target.value)}>
+              {(table?.states || [{ name: DEFAULT_STATE }]).map((s) => <option key={s.name} value={s.name}>{s.name}</option>)}
+            </select>
+            <span className="form-hint">
+              {stateRow?.category === 'special'
+                ? 'Special-category state: 10% higher central subsidy (up to ₹85,800).'
+                : 'Central subsidy: ₹30,000/kW for 2 kW + ₹18,000 for the 3rd kW (up to ₹78,000).'}
+            </span>
+          </div>
+          {stateRow?.topup && (
+            <div className="est__topup">
+              <Switch checked={topup} onChange={setTopup}>Add the reported {state} top-up</Switch>
+              <span className="form-hint">{stateRow.note}. Not yet confirmed officially, so check with your DISCOM before relying on it.</span>
+            </div>
+          )}
+
+          <div className="est__custom">
+            <Switch checked={custom} onChange={setCustom}>Custom price calculation</Switch>
+            {custom && (
+              <>
+                <div className="form-row">
+                  <div className="field">
+                    <label className="label" htmlFor="c-kw">System size (kW)</label>
+                    <input id="c-kw" className="input" type="number" min="0.5" max="100" step="0.5" inputMode="decimal"
+                           placeholder={`${est?.kw || 3} (recommended)`} value={c.kw} onChange={(e) => setC({ ...c, kw: e.target.value })} />
+                  </div>
+                  <div className="field">
+                    <label className="label" htmlFor="c-price">Price per kW (₹)</label>
+                    <input id="c-price" className="input" type="number" min="10000" step="1000" inputMode="numeric"
+                           value={c.costPerKw} onChange={(e) => setC({ ...c, costPerKw: e.target.value })} />
+                  </div>
+                  <div className="field field--full">
+                    <label className="label" htmlFor="c-tariff">Your electricity rate (₹ per unit)</label>
+                    <input id="c-tariff" className="input" type="number" min="1" max="50" step="0.5" inputMode="decimal"
+                           value={c.tariff} onChange={(e) => setC({ ...c, tariff: e.target.value })} />
+                  </div>
+                </div>
+                {customErr
+                  ? <p className="field-error" role="alert">{customErr}</p>
+                  : <span className="form-hint">Use a price from another quote, or your own tariff, to compare. The subsidy still follows the rules for {state} (capped at 3 kW).</span>}
+                <button type="button" className="link link--btn" style={{ justifySelf: 'start' }}
+                        onClick={() => setC({ kw: '', costPerKw: String(RULES.costPerKw), tariff: String(RULES.tariff) })}>Reset to SunPower prices</button>
+              </>
+            )}
+          </div>
         </div>
 
         {/* RESULT */}
         <div className="card card--outline est__result" aria-live="polite">
           {est ? (
             <>
-              <span className="label">Recommended system</span>
+              <span className="label">{custom && c.kw ? 'Your system' : 'Recommended system'}</span>
               <div className="est__kw tabular" style={{ marginTop: 8 }}>{est.kw}<span>kW On-Grid</span></div>
+              {custom && <span className="pill pill--warn" style={{ marginTop: 6 }}>Custom calculation</span>}
               <p className="muted small" style={{ marginTop: 10 }}>
-                Based on {num(est.units)} units a month. Needs about {num(est.roof_sqft)} sq ft of shadow-free roof.
+                {est.units ? `Based on ${num(est.units)} units a month. ` : ''}Needs about {num(est.roof_sqft)} sq ft of shadow-free roof.
               </p>
               <div className="metrics">
                 <div className="metric"><div className="metric__label">Monthly saving</div><div className="metric__value good tabular">{inr(est.monthly_saving)}</div></div>
@@ -165,8 +235,9 @@ export default function Estimate() {
                 <div className="metric"><div className="metric__label">Payback</div><div className="metric__value tabular">{est.payback_years} <span className="small muted">years</span></div></div>
               </div>
               <div className="rows tabular">
-                <div><span className="muted">Indicative system price</span><span>{inr(est.cost)}</span></div>
-                <div><span className="muted">PM Surya Ghar subsidy</span><span className="good">− {inr(est.subsidy)}</span></div>
+                <div><span className="muted">{custom ? `System price (${est.kw} kW × ${inr(est.cost_per_kw)})` : 'Indicative system price'}</span><span>{inr(est.cost)}</span></div>
+                <div><span className="muted">PM Surya Ghar subsidy · {est.state}</span><span className="good">− {inr(est.subsidy_central ?? est.subsidy)}</span></div>
+                {est.subsidy_topup > 0 && <div><span className="muted">{est.state} top-up (reported)</span><span className="good">− {inr(est.subsidy_topup)}</span></div>}
                 <div className="total"><span>You pay, approximately</span><span>{inr(est.net_cost)}</span></div>
               </div>
             </>

@@ -2,8 +2,10 @@ import { Link } from 'react-router-dom';
 import MaskedHeading from '../components/reactbits/MaskedHeading.jsx';
 import ScrollStack, { ScrollStackItem } from '../components/reactbits/ScrollStack.jsx';
 import AccordionGallery from '../components/reactbits/AccordionGallery.jsx';
+import PixelCard from '../components/reactbits/PixelCard.jsx';
 import Reveal from '../components/ui/Reveal.jsx';
-import { PACKAGES } from '../solar.js';
+import { packagesWith } from '../solar.js';
+import { useSubsidyTable } from '../subsidy.js';
 import { inr } from '../api.js';
 
 const STATS = [
@@ -44,6 +46,8 @@ const GALLERY = [
 ];
 
 export default function Home() {
+  const subsidyTable = useSubsidyTable();
+  const packages = packagesWith(subsidyTable?.average);
   return (
     <>
       {/* HERO */}
@@ -77,15 +81,15 @@ export default function Home() {
       </section>
 
       {/* FEATURES */}
-      <section className="section section--alt">
+      <section className="section section--dark">
         <div className="wrap">
-          <div className="section__head">
+          <div className="section__head section__head--lg">
             <MaskedHeading
               text="Made for Indian rooftops."
               src="/img/panel-closeup.jpg"
               tag="h2"
-              weight={700}
-              textScale={0.075}
+              weight={800}
+              textScale={0.115}
               reveal="rise"
             />
             <p className="lead">Everything from the first call to the last service visit, done properly.</p>
@@ -133,21 +137,39 @@ export default function Home() {
         <div className="wrap">
           <div className="section__head">
             <span className="eyebrow">Packages</span>
-            <h2 className="headline">Which size fits your home?</h2>
-            <p className="lead">One kilowatt of panels makes about 120 units a month.</p>
+            <h2 className="headline">Pricing</h2>
+            <p className="lead">One kilowatt of panels makes about 120 units a month. Subsidy shown is the PM Surya Ghar average across all states; see your state's exact figure on the savings page.</p>
           </div>
           <div className="grid grid--4">
-            {PACKAGES.map((p, i) => (
-              <Reveal key={p.kw} className="card pack" delay={i * 80}>
-                <div className="pack__kw">{p.kw} kW</div>
-                <div className="pack__units">{p.units} / month</div>
-                <p className="pack__desc">{p.desc}</p>
-                <div className="pack__rows">
-                  <div><span className="muted">Price</span><span>{inr(p.cost)}</span></div>
-                  <div><span className="muted">Subsidy</span><span className="good">− {inr(p.subsidy)}</span></div>
-                  <div className="pack__net"><span>You pay</span><span>{inr(p.net)}</span></div>
-                </div>
-                <Link to={`/estimate?units=${p.kw * 120}`} className="link">See savings</Link>
+            {packages.map((p, i) => (
+              <Reveal key={p.kw} delay={i * 80} style={{ display: 'flex' }}>
+                <PixelCard
+                  colors={['#e8740c', '#f5a623', '#fbbf24', '#fde047']}
+                  glowColor="#f5a623"
+                  theme="light"
+                  radius={28}
+                  gap={6}
+                  speed={28}
+                  pixelSize={2.5}
+                  glow={0.5}
+                  opacity={0.4}
+                  fade={0.3}
+                  trigger="hover"
+                  clickPulse
+                  intro
+                  introDelay={i * 120}
+                  className="pack"
+                >
+                  <div className="pack__kw">{p.kw} kW</div>
+                  <div className="pack__units">{p.units} / month</div>
+                  <p className="pack__desc">{p.desc}</p>
+                  <div className="pack__rows">
+                    <div><span className="muted">Price</span><span>{inr(p.cost)}</span></div>
+                    <div><span className="muted">Subsidy (avg.)</span><span className="good">− {inr(p.subsidy)}</span></div>
+                    <div className="pack__net"><span>You pay, about</span><span>{inr(p.net)}</span></div>
+                  </div>
+                  <Link to={`/estimate?units=${p.kw * 120}`} className="link">See savings</Link>
+                </PixelCard>
               </Reveal>
             ))}
           </div>

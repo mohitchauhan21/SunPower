@@ -748,10 +748,19 @@ const GooeyNav = ({
           {item.label && <span className="gooey-nav__label">{item.label}</span>}
         </>
       );
+      const Tag = item.href ? 'a' : 'button';
       if (!interactive) {
         return (
-          <li key={index} className="gooey-nav__item">
-            <span className="gooey-nav__link">{content}</span>
+          <li key={index} className="gooey-nav__item" aria-hidden="true">
+            <Tag
+              type={Tag === 'button' ? 'button' : undefined}
+              className="gooey-nav__link"
+              tabIndex={-1}
+              aria-hidden="true"
+              style={{ pointerEvents: 'none' }}
+            >
+              {content}
+            </Tag>
           </li>
         );
       }

@@ -84,6 +84,7 @@
 .gooey-nav__link {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
   padding: var(--gn-y) var(--gn-x);
   border: none;
@@ -92,6 +93,8 @@
   color: var(--gn-muted);
   font: inherit;
   font-weight: 500;
+  line-height: 1.2;
+  margin: 0;
   text-decoration: none;
   white-space: nowrap;
   cursor: pointer;
@@ -103,8 +106,8 @@
   color: inherit;
 }
 
-.gooey-nav__item[data-active] .gooey-nav__link {
-  color: var(--gn-ink);
+.gooey-nav__list:not(.gooey-nav__list--active) .gooey-nav__item[data-active] .gooey-nav__link {
+  color: transparent;
 }
 
 .gooey-nav__link:focus-visible {

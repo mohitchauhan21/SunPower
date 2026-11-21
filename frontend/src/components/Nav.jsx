@@ -1,5 +1,6 @@
-import { NavLink, Link, useNavigate } from 'react-router-dom';
+import { NavLink, Link, useNavigate, useLocation } from 'react-router-dom';
 import { ROLE_LABELS, useAuth } from '../auth.jsx';
+import GooeyNav from './reactbits/GooeyNav.jsx';
 import BubbleMenu from './reactbits/BubbleMenu.jsx';
 import Logo from './Logo.jsx';
 
@@ -18,10 +19,16 @@ const ROLE_ITEMS = {
 export default function Nav() {
   const { me, signOut } = useAuth();
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   const signedIn = !!me?.authenticated;
   const items = [...NAV_ITEMS, ...(ROLE_ITEMS[me?.role] || [])];
   const out = async () => { await signOut(); navigate('/'); };
   const mine = me?.role === 'customer' ? '/account?tab=profile' : '/app/me';
+
+  const activeIndex = items.findIndex((i) =>
+    i.path === '/' ? pathname === '/' : pathname.startsWith(i.path)
+  );
+
   const mobileItems = [...items, ...(signedIn
     ? [{ label: 'Sign out', path: '/logout' }]
     : [{ label: 'Sign in', path: '/login' }, { label: 'Get started', path: '/estimate' }])];
@@ -30,13 +37,18 @@ export default function Nav() {
       <header className="nav">
         <div className="wrap nav__inner">
           <Link to="/" aria-label="SunPower home"><Logo /></Link>
-          <nav className="nav__links" aria-label="Main">
-            {items.map((i) => (
-              <NavLink key={i.path} to={i.path} end={i.path === '/'} className={({ isActive }) => `nav__link${isActive ? ' is-active' : ''}`}>
-                {i.label}
-              </NavLink>
-            ))}
-          </nav>
+          <GooeyNav
+            items={items.map((i) => ({ label: i.label }))}
+            activeIndex={activeIndex >= 0 ? activeIndex : 0}
+            onChange={(index) => {
+              if (items[index]) navigate(items[index].path);
+            }}
+            theme="light"
+            size="sm"
+            color="#000000"
+            activeTextColor="#ffffff"
+            particleCount={12}
+          />
           <div className="nav__actions">
             {signedIn ? (
               <>
