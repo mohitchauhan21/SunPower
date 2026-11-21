@@ -3,10 +3,10 @@
     <menuitem id="menu_sunpower_root" name="SunPower" sequence="1"
               web_icon="sunpower_solar,static/description/icon.png"/>
 
-    <menuitem id="menu_sp_dashboard" name="Dashboard" parent="menu_sunpower_root"
+    <menuitem id="menu_sp_dashboard" groups="sales_team.group_sale_manager" name="Dashboard" parent="menu_sunpower_root"
               action="action_solar_dashboard" sequence="1"/>
 
-    <menuitem id="menu_sp_sales" name="Sales" parent="menu_sunpower_root" sequence="10"/>
+    <menuitem id="menu_sp_sales" groups="sales_team.group_sale_salesman" name="Sales" parent="menu_sunpower_root" sequence="10"/>
     <menuitem id="menu_sp_pipeline" name="Enquiry Pipeline" parent="menu_sp_sales"
               action="crm.crm_lead_action_pipeline" sequence="1"/>
     <menuitem id="menu_sp_log_enquiry" name="Log WhatsApp / Call" parent="menu_sp_sales"
@@ -19,13 +19,13 @@
               action="action_solar_subsidy" sequence="5"/>
 
     <menuitem id="menu_sp_ops" name="Operations" parent="menu_sunpower_root" sequence="20"/>
-    <menuitem id="menu_sp_deliveries" name="Dispatch (Deliveries)" parent="menu_sp_ops"
+    <menuitem id="menu_sp_deliveries" groups="stock.group_stock_user" name="Dispatch (Deliveries)" parent="menu_sp_ops"
               action="stock.action_picking_tree_outgoing" sequence="1"/>
     <menuitem id="menu_sp_jobs" name="Installation Schedule" parent="menu_sp_ops"
               action="action_installation_jobs" sequence="2"/>
     <menuitem id="menu_sp_my_jobs" name="My Jobs (Crew)" parent="menu_sp_ops"
-              action="action_my_installation_jobs" sequence="3"/>
-    <menuitem id="menu_sp_stock" name="Components &amp; Stock" parent="menu_sp_ops"
+              action="action_my_installation_jobs" sequence="0"/>
+    <menuitem id="menu_sp_stock" groups="stock.group_stock_user" name="Components &amp; Stock" parent="menu_sp_ops"
               action="action_solar_components" sequence="4"/>
     <menuitem id="menu_sp_serials" name="Serial Numbers" parent="menu_sp_ops"
               action="action_solar_serials" sequence="5"/>
@@ -38,7 +38,7 @@
     <menuitem id="menu_sp_warranty" name="Warranty Register" parent="menu_sp_service"
               action="action_solar_warranty" sequence="3"/>
 
-    <menuitem id="menu_sp_reports" name="Reports" parent="menu_sunpower_root" sequence="40"/>
+    <menuitem id="menu_sp_reports" groups="sales_team.group_sale_manager" name="Reports" parent="menu_sunpower_root" sequence="40"/>
     <menuitem id="menu_sp_profit" name="Job Profitability" parent="menu_sp_reports"
               action="action_solar_jobs" sequence="1"/>
     <menuitem id="menu_sp_hours" name="Technician Hours &amp; Pay" parent="menu_sp_reports"
@@ -48,7 +48,7 @@
     <menuitem id="menu_sp_share" name="Share Report" parent="menu_sp_reports"
               action="action_solar_director_report" sequence="4"/>
 
-    <menuitem id="menu_sp_config" name="Configuration" parent="menu_sunpower_root" sequence="90"/>
+    <menuitem id="menu_sp_config" groups="base.group_system" name="Configuration" parent="menu_sunpower_root" sequence="90"/>
     <menuitem id="menu_sp_packages" name="Solar Packages" parent="menu_sp_config"
               action="action_solar_packages" sequence="1"/>
     <menuitem id="menu_sp_templates" name="Quotation Templates" parent="menu_sp_config"

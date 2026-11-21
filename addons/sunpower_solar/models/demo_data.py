@@ -72,6 +72,8 @@ class SolarDemoData(models.AbstractModel):
                 {"name": name, "user_id": user.id})
             emp.hourly_cost = 220 + (i % 5) * 40
             techs |= user
+        # technicians open straight on their own jobs, never the director's dashboard
+        techs.write({"action_id": self.env.ref("sunpower_solar.action_my_installation_jobs").id})
         return techs
 
     def _receive_stock(self):

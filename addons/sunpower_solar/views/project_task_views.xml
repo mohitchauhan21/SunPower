@@ -136,6 +136,10 @@
         <field name="res_model">project.task</field>
         <field name="view_mode">kanban,form</field>
         <field name="domain">[('is_installation', '=', True), ('user_ids', 'in', uid), ('installation_state', '!=', 'done')]</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">No installation jobs assigned to you right now</p>
+            <p>When the office books you on a job, it appears here with the customer, address, system size and time.</p>
+        </field>
         <field name="view_ids" eval="[(5, 0, 0),
             (0, 0, {'view_mode': 'kanban', 'view_id': ref('view_installation_task_kanban')}),
             (0, 0, {'view_mode': 'form', 'view_id': ref('view_installation_task_form')})]"/>
