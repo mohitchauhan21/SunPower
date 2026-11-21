@@ -9,8 +9,9 @@ export const NAV_ITEMS = [
   { label: 'Quote', path: '/quote' }
 ];
 // Role links (the pages themselves are also role-guarded)
+const STAFF_ITEMS = [{ label: 'Workspace', path: '/app' }];
 const ROLE_ITEMS = {
-  director: [{ label: 'Console', path: '/console' }],
+  director: STAFF_ITEMS, sales: STAFF_ITEMS, warehouse: STAFF_ITEMS, technician: STAFF_ITEMS, support: STAFF_ITEMS,
   customer: [{ label: 'My account', path: '/account' }]
 };
 
@@ -18,9 +19,8 @@ export default function Nav() {
   const { me, signOut } = useAuth();
   const navigate = useNavigate();
   const items = [...NAV_ITEMS, ...(ROLE_ITEMS[me?.role] || [])];
-  const staffHome = me?.authenticated && me.home && !me.home.startsWith('/') ? me.home : null;
   const out = async () => { await signOut(); navigate('/'); };
-  const mobileItems = [...items, ...(staffHome ? [{ label: 'My screen', path: staffHome }] : []),
+  const mobileItems = [...items,
     me?.authenticated ? { label: 'Sign out', path: '/logout' } : { label: 'Sign in', path: '/login' }];
   return (
     <>
@@ -37,7 +37,6 @@ export default function Nav() {
           <div className="nav__actions">
             {me?.authenticated ? (
               <>
-                {staffHome && <a className="nav__link" href={staffHome}>My screen</a>}
                 <span className="nav__user" title={me.login}>{me.name?.split(' ')[0]}</span>
                 <button type="button" className="nav__link nav__btn" onClick={out}>Sign out</button>
               </>

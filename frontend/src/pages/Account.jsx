@@ -71,7 +71,9 @@ function Overview({ data }) {
             {o.subsidy && <div><span className="muted">Subsidy</span><strong>{o.subsidy.state}</strong></div>}
           </div>
           <div className="actions actions--left">
-            {o.quote_pending && <a className="btn btn--primary btn--sm" href={o.review_url} target="_blank" rel="noreferrer">Review &amp; accept quote</a>}
+            {o.quote_pending && <Link className="btn btn--primary btn--sm" to={o.review_url}>Review &amp; accept quote</Link>}
+            {!o.quote_pending && o.due > 0.5 && <Link className="btn btn--primary btn--sm" to={o.review_url}>{o.advance_due > 0 ? 'Pay advance' : 'Pay balance'}</Link>}
+            {o.certificate_url && <a className="btn btn--secondary btn--sm" href={o.certificate_url} target="_blank" rel="noreferrer">Installation certificate</a>}
             <a className="btn btn--secondary btn--sm" href={o.pdf_url} target="_blank" rel="noreferrer">Download PDF</a>
           </div>
         </article>

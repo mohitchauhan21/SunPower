@@ -1,6 +1,6 @@
 """SunPower AI microservice.
 
-FastAPI app that Odoo calls over HTTP (default http://localhost:8000).
+FastAPI app the SunPower website calls over HTTP (default http://localhost:8000, proxied as /ai).
 
 Models are tried in this order:
   1. Hugging Face Inference Providers (remote): only if HF_TOKEN has credits; optional.
@@ -11,7 +11,7 @@ Every endpoint returns JSON. If nothing can produce an answer, the response is a
 status with body:
     {"ok": false, "error": {"code": "...", "message": "...", "model": "..."},
      "fallback": "manual_entry"}
-so Odoo can fall back to manual data entry.
+so the website can fall back to manual data entry.
 """
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ ASR_MODEL = "openai/whisper-large-v3"
 EMBED_MODELS = ["BAAI/bge-m3", "sentence-transformers/all-MiniLM-L6-v2"]
 DEFECT_REPO = "Swarmdrones/convnext-solar-panel-defect-classifier-v1"
 CLIP_MODEL = "openai/clip-vit-base-patch32"
-# Display labels (title case, as Odoo expects)
+# Display labels (title case, as the website shows them)
 DEFECT_LABELS = ["Bird-drop", "Clean", "Dusty", "Electrical-damage", "Physical-damage", "Snow-covered"]
 
 log = logging.getLogger("sunpower_ai")
@@ -191,7 +191,7 @@ async def call_local(name: str, fn: Callable[[], Any], timeout: float = TIMEOUT_
 app = FastAPI(title="SunPower AI Service", version="2.0.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8069", "http://127.0.0.1:8069"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:4173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

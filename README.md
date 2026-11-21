@@ -1,94 +1,77 @@
 # SunPower: Solar Installation Management System
 
-Everything a rooftop-solar company needs to run, from the first customer enquiry to the 20-year panel warranty. It is built on **Odoo 18**, with a **FastAPI AI service** and a **React website**.
+Everything a rooftop-solar company needs, from the first customer enquiry to the 20-year panel warranty: a public website, a customer account, and one workspace for every role in the company (Director, Sales, Warehouse, Technicians, Service desk).
 
 ```
- Customer ──► React website (frontend/, :5173) ──┐
-                                                   ├──► Odoo 18 engine (addons/, :8069) ──► PostgreSQL
- Staff / crew ──► Odoo backend + /technician ─────┘            │
-                                                                └──► AI service (ai_service/, :8000)
+ Visitors & customers ─┐
+                       ├─► Website (React, :5173) ──/api, /print──► Back end (FastAPI + SQLite, :8001)
+ Staff (every role) ───┘                          ──/ai──────────► AI service (FastAPI, :8000, optional)
 ```
+
+No Odoo, no database server: the back end keeps everything in one SQLite file and fills it with realistic demo data on first start.
 
 ---
 
 ## How to run
 
-### macOS (quickest)
+You need **Python 3.11–3.13** and **Node 18+**. Run each part in its own terminal.
+
+### macOS
 
 ```bash
 git clone https://github.com/mohitchauhan21/SunPower.git && cd SunPower
-./scripts/setup_mac.sh                        # Homebrew tools, PostgreSQL, Odoo 18 in ~/odoo18, odoo.conf, npm install
-~/odoo18/venv/bin/python scripts/rebuild_db.py   # database "sunpower" + demo data (drops it if it exists)
-./run_odoo.sh                                 # http://localhost:8069   (--update after changing module code)
-cd frontend && npm run dev                    # http://localhost:5173   (second terminal)
-./ai_service/run.sh                           # optional AI service on :8000 (third terminal)
+./scripts/setup_mac.sh             # one time: Python, Node, back-end venv, npm install
+./backend/run.sh                   # 1st terminal: API on http://localhost:8001
+cd frontend && npm run dev         # 2nd terminal: website on http://localhost:5173
 ```
-The setup script needs [Homebrew](https://brew.sh). Odoo goes in `~/odoo18`; set `ODOO_HOME` to put it somewhere else. The one manual step is **wkhtmltopdf**, which Odoo needs for PDFs. The script prints the download link, and on Apple Silicon it also needs Rosetta. Disk space: about 1.5 GB without the AI service, about 7 GB with it (the AI models alone are about 2.2 GB). RAM: 8 GB is enough without the AI service; 16 GB is recommended with it.
 
-### Windows
-
-You need **Python 3.11–3.13**, **Node 18+**, **PostgreSQL 14+** and **Odoo 18 Community** (installed from source or with the Windows installer). The steps below are written for Windows; the macOS scripts above do the same things.
-
-### 1. Odoo engine (required)
-
-1. In your `odoo.conf`, add this repo's `addons` folder to `addons_path`:
-   ```ini
-   addons_path = <odoo>\odoo\addons,<odoo>\addons,<this repo>\addons
-   ```
-2. Create the database. This installs all three modules and loads realistic demo data:
-   ```powershell
-   & "<odoo venv>\Scripts\python.exe" scripts\rebuild_db.py        # add --no-demo for an empty company
-   ```
-   Or, from the Odoo UI: create a database (country **India**) → Apps → install **SunPower Solar Operations**, then **SunPower Website** and **SunPower AI Helpers** → *SunPower → Configuration → Load Demo Data*.
-3. Start Odoo and open **http://localhost:8069**:
-   ```powershell
-   .\run_odoo.ps1             # add -Update after changing module code
-   ```
-   `run_odoo.ps1` and `scripts\rebuild_db.py` expect Odoo in `%USERPROFILE%\odoo18` (with `odoo\`, `venv\` and `odoo.conf` inside). Set `ODOO_HOME` if yours is somewhere else.
-
-**Demo logins** (password `sunpower`): `director@`, `sales@`, `warehouse@`, `support@`, `tech01@` … `tech15@`, `customer01@sunpower.demo`; `admin` / `admin` is also a director.
-
-The full user journey, page list, routes, role access, design rules and project tracker are in [docs/WORKFLOW.md](docs/WORKFLOW.md).
-
-### 2. React website (optional, the public site and staff console)
+### Windows (PowerShell)
 
 ```powershell
-cd frontend
-npm install
-npm run dev                 # http://localhost:5173
+git clone https://github.com/mohitchauhan21/SunPower.git; cd SunPower
+powershell -ExecutionPolicy Bypass -File .\backend\run.ps1     # 1st terminal: creates .venv on first run, API on :8001
+cd frontend; npm install; npm run dev                         # 2nd terminal: website on :5173
 ```
-The dev server forwards `/api` and `/web` to Odoo on `:8069` and `/ai` to the AI service on `:8000`. Override these with the `SUNPOWER_ENGINE` and `SUNPOWER_AI` environment variables. Use `npm run build` and then `npm run preview` (:4173) for a production build; it forwards requests the same way.
 
-### 3. AI service (optional, used for bill reading, voice/WhatsApp intake, fault diagnosis and photo checks)
+Open **http://localhost:5173** and sign in. The password for every demo account is **`sunpower`**:
 
-```powershell
-cd ai_service
-powershell -ExecutionPolicy Bypass -File .\run.ps1      # creates .venv, installs, serves :8000
+| Role | Login | Lands on |
+|---|---|---|
+| Director | `director@sunpower.demo` | Dashboard: profit per job, cash, installs, repairs, subsidy |
+| Sales | `sales@sunpower.demo` | Enquiries → surveys → quotes → payments |
+| Warehouse | `warehouse@sunpower.demo` | Dispatch (serial scanning) and stock |
+| Service desk | `support@sunpower.demo` | Service requests |
+| Technician | `tech01@sunpower.demo` … `tech15@sunpower.demo` | My installation jobs, my surveys, my repairs |
+| Customer | `customer@sunpower.demo` | My account: installation tracker, warranties, service, quotes & payments |
+
+**Optional AI helpers** (bill reading, "fill from WhatsApp text", fault diagnosis, panel-photo check), in a 3rd terminal:
+
+```bash
+./ai_service/run.sh                                               # macOS
+powershell -ExecutionPolicy Bypass -File .\ai_service\run.ps1      # Windows
 ```
-It runs for free on CPU. The first start downloads about 2 GB of models. `HF_TOKEN` in a root `.env` file is optional. Everything still works when the service is off: users just fill fields in by hand. See [ai_service/README.md](ai_service/README.md).
+The first start downloads about 2.2 GB of free models. Without the AI service everything still works; the AI buttons just ask you to fill the details in by hand. See [ai_service/README.md](ai_service/README.md).
 
-### 4. Checks
-
-```powershell
-# Odoo unit tests
-& "<odoo venv>\Scripts\python.exe" "<odoo>\odoo-bin" -c odoo.conf -d sunpower --test-tags sunpower -u sunpower_solar --stop-after-init
-# End-to-end phase checks (roll back their own data)
-Get-Content scripts\phase_checks.py | & "<odoo venv>\Scripts\python.exe" "<odoo>\odoo-bin" shell -c odoo.conf -d sunpower
-```
+**Useful extras**
+- Fresh demo data: `./backend/run.sh --reset` (Windows: `run.ps1 -Reset`).
+- Empty company (no demo data): set `SUNPOWER_DEMO=0` before the first start.
+- API documentation: http://localhost:8001/api/docs
+- Tests: `cd backend && .venv/bin/python -m pytest -q` (Windows: `.venv\Scripts\python -m pytest -q`).
+- Production build of the website: `cd frontend && npm run build && npm run preview` (:4173, same proxy).
 
 ---
 
 ## The business flow
 
-1. **Enquiry.** It comes from the website, WhatsApp or a phone call. A lead is created, the least-busy salesperson is assigned, and a "call within 2 hours" task is set.
-2. **Phone screening.** Roof area, bill and grid suitability are recorded. A suggested system size is worked out from the bill (units ÷ 120).
-3. **Roof survey.** It is scheduled, visited and then approved. **No quote can be made before the survey is approved.**
-4. **Quote.** The matching package (1–5 kW, On-Grid or Off-Grid) is picked automatically. GST is added: 12% on goods, 18% on installation. A PVGIS generation and payback estimate goes on the PDF.
-5. **Order confirmed.** This creates the warehouse delivery, a crew installation job and a PM Surya Ghar subsidy file.
-6. **Dispatch.** It is blocked until a **30% advance** is paid. Serial and lot numbers are scanned, and **warranties start automatically** for each serial (panels 20 years; inverter, battery and controller 2 years).
-7. **Installation.** The crew completes a checklist, uploads photos, confirms the kW and gets the customer's signature. Hours are logged against the job and a certificate PDF is emailed to the customer.
-8. **Service tickets.** Tickets can be found by phone number or serial number. Repairs under warranty are free; outside warranty they are invoiced automatically. The customer confirms the fix on the portal.
-9. **Director dashboard.** Shows profit per job (revenue − material − labour − repairs), collections, subsidies, stock and overdue repairs. The report can be downloaded or emailed as a PDF.
+1. **Enquiry.** It comes from the website, a call or WhatsApp (Sales can paste the message and let the AI fill the form). It is assigned to the least-busy salesperson with a "call within 2 hours" reminder.
+2. **Phone screening.** Roof area, bill or units, and grid suitability. The system suggests a size (units ÷ 120, 1–5 kW).
+3. **Roof survey.** Sales books a technician. The technician records the measurements and marks it visited; **only Sales or the Director can approve it**. No quote before approval.
+4. **Quote.** The matching package (1–5 kW, On-Grid or Off-Grid) is picked automatically. GST is added: 12% on goods, 18% on installation. There is a PVGIS generation estimate, and discounts above 10% need the Director.
+5. **Order.** The customer accepts online and pays the advance (test card or Razorpay), or Sales confirms and records the payment. Confirming creates the **delivery**, the **installation job** and the **subsidy file**, and invites the customer to their account.
+6. **Dispatch.** It is blocked until the **30% advance** is paid (the Director can override). Every serial and batch is scanned, which **starts its warranty** (panels 20 years; inverter, battery and controller 2 years).
+7. **Installation.** The technician starts on site, ticks the checklist, adds roof photos (AI-checked), confirms the kW and the generation reading, and gets the customer's on-screen signature. Hours are logged, and the certificate is emailed and printable.
+8. **Service.** Requests are found by phone, name or serial. AI suggests the cause and safe steps. Warranty repairs are free; outside warranty an invoice is created automatically. The customer confirms the fix in their account.
+9. **Money.** Profit per job = revenue − material − labour − warranty repairs. The Director sees the dashboard, technician pay, unpaid invoices, and a printable report that can also be emailed.
 
 ---
 
@@ -96,40 +79,37 @@ Get-Content scripts\phase_checks.py | & "<odoo venv>\Scripts\python.exe" "<odoo>
 
 | Path | What it is |
 |---|---|
-| **`addons/sunpower_solar/`** | **The core Odoo module.** Contains all the business logic above. |
-| `├─ hooks.py` | Install-time setup: company, GST taxes and HSN codes, product categories with warranty terms, components, 10 kits as phantom BoMs, quotation templates and the project template |
-| `├─ models/crm_lead.py` | Enquiry intake (`solar_create_enquiry`), screening, survey gating, automatic template choice |
-| `├─ models/site_survey.py` | `solar.site.survey`: roof measurements and the approval flow |
-| `├─ models/sale_order.py` | Survey gate, actions after confirmation, PVGIS estimate, job profitability, job stage |
-| `├─ models/stock.py` | Advance-payment check before dispatch; warranty creation for each delivered serial |
-| `├─ models/warranty.py` | `solar.warranty`: register of warranties per serial |
-| `├─ models/project_task.py` | Crew installation job: checklist, signature, timesheets, certificate |
-| `├─ models/service_ticket.py` | `solar.service.ticket`: repair flow, free vs billable, automatic invoice, portal confirmation |
-| `├─ models/subsidy.py` | `solar.subsidy.application`: PM Surya Ghar pipeline and expected amount |
-| `├─ models/dashboard.py` | Director dashboard data plus the shareable PDF/email report |
-| `├─ models/demo_data.py` | One-click realistic demo: about 40 jobs, 15 technicians, tickets and subsidies |
-| `├─ wizards/enquiry_wizard.py` | "Log WhatsApp / Call" wizard, for both enquiries and complaints |
-| `├─ controllers/main.py` | `/solar-quote` web form and the `/my/solar-ticket` portal confirmation |
-| `├─ static/src/dashboard/` | OWL director dashboard (JS, XML template, SCSS) |
-| `├─ report/` | Installation certificate, director report, solar box added to the quote PDF |
-| `├─ views/`, `data/`, `security/` | Backend screens and menus, sequences, cron, email template, access rights |
-| `└─ tests/test_solar_flow.py` | Unit tests for the main flow |
-| **`addons/sunpower_ai/`** | Connects Odoo to the AI service: buttons that read a bill, fill an enquiry from text or voice, diagnose a fault and check install photos. They fall back to manual entry when the service is off. The service URL is the system parameter `sunpower_ai.url`. |
-| **`addons/sunpower_website/`** | Odoo website pages: home page, `/solar/estimate`, the `/my/solar` customer portal, the `/technician` crew page, branding. Also holds **the JSON API used by the React site**: `/api/sunpower/estimate` and `/api/sunpower/enquiry`. |
-| **`ai_service/`** | FastAPI service: `/bill/parse`, `/lead/parse`, `/fault/diagnose`, `/photo/check`, `/health`. It tries remote Hugging Face first, then local CPU models (Qwen2.5, Whisper, MiniLM, RapidOCR, ConvNeXt), then regex or the knowledge base. `kb/fault_codes.json` has 31 inverter faults. |
-| **`frontend/`** | React 18 + Vite website in a minimalist light design. |
-| `├─ src/pages/` | `Home`, `Estimate` (live calculator, bill upload, survey booking), `Quote`, `NotFound` |
-| `├─ src/console/Console.jsx` | Staff login and live director dashboard (uses the Odoo session) |
-| `├─ src/components/ui/` | Arc UI-style components written for this app: `Tabs`, `ElasticSlider`, `Switch`, `Toast`, `Reveal` |
-| `├─ src/components/reactbits/` | ReactBits components: MaskedHeading, ScrollStack, AccordionGallery, BubbleMenu, FuzzyText and others |
-| `├─ src/api.js`, `src/solar.js` | Client for the engine and AI service; the estimate rules shared with the backend |
-| `└─ vite.config.js` | Proxy settings: `/api`, `/web` → Odoo, `/ai` → AI service |
-| **`scripts/`** | `setup_mac.sh` (one-time macOS setup), `rebuild_db.py` (fresh database plus demo data), `phase_checks.py` (end-to-end checks) |
-| **`docs/`** | Final report (`sunpower_report.html`) and sample PDFs: quote, certificate, director report |
-| `run_odoo.ps1` / `run_odoo.sh` | Starts PostgreSQL and Odoo (Windows / macOS) |
-| `ai_service/run.ps1` / `ai_service/run.sh` | Creates the AI venv, installs packages and starts the service (Windows / macOS) |
-| `HANDOFF.md` | Current state, known issues and next steps for whoever picks this up |
+| **`backend/`** | **The back end** (FastAPI + SQLite). All business rules and permissions live here. |
+| `├─ app/main.py` | App setup, CSRF guard (`X-SunPower` header), startup seeding and mail worker |
+| `├─ app/rules.py` | **The business rules**: enquiries, surveys, quotes, payments, dispatch and warranties, jobs, tickets, profit |
+| `├─ app/db.py` | SQLite schema and small query helpers (database at `backend/data/sunpower.db`) |
+| `├─ app/security.py` | Passwords (scrypt), session cookies, one-time links, roles, rate limits |
+| `├─ app/access.py` | **Who can open what**: one table of role → module → read / write / own records |
+| `├─ app/catalog.py` | Components, the 10 packages and their parts lists, GST rates, default settings |
+| `├─ app/seed.py` | Demo data: about 40 jobs over 3 months, 15 technicians, every role, tickets, subsidies |
+| `├─ app/mailer.py` | Email queue and SMTP sender (off until the Director turns it on in Settings) |
+| `├─ app/routers/public.py` | `/api/sunpower/estimate` and `/enquiry` (the public website) |
+| `├─ app/routers/auth.py` | Sign in and out, sign-up, password reset, Google sign-in |
+| `├─ app/routers/account.py` | `/api/my/*`: the customer's account, quotes, online payments, service requests |
+| `├─ app/routers/staff_sales.py` | Enquiries, surveys, orders, customers, subsidy files |
+| `├─ app/routers/staff_ops.py` | Stock and serials, dispatch, installation jobs and photos, service tickets, warranties |
+| `├─ app/routers/staff_admin.py` | Dashboard, per-role summary, reports, settings, staff accounts, prices |
+| `├─ app/routers/printing.py` | Printable quotation, installation certificate and Director report (save as PDF from the browser) |
+| `├─ tests/test_api.py` | End-to-end API tests on a fresh demo database |
+| `└─ run.sh`, `run.ps1` | Create the venv, install and start the back end |
+| **`frontend/`** | **The website** (React 18 + Vite), minimalist Apple-style design |
+| `├─ src/pages/` | Public pages (`Home`, `Estimate`, `Quote`), sign-in pages, customer `Account` and `QuoteReview` |
+| `├─ src/staff/` | **The staff workspace `/app`**: `Layout` (role-based sidebar), `Overview` (Director dashboard or per-role to-do list), `Sales` (enquiries, surveys, orders, customers, subsidy), `Ops` (dispatch, stock, installations, service, warranties), `Admin` (reports, settings), `ui.jsx` (shared table, form and notes components) |
+| `├─ src/components/ui/` | Arc UI-style components: `Tabs`, `ElasticSlider`, `Switch`, `Toast`, `Reveal` |
+| `├─ src/components/reactbits/` | ReactBits components (MaskedHeading, ScrollStack, AccordionGallery, BubbleMenu…) |
+| `├─ src/api.js`, `src/auth.jsx` | API client (back end + AI service) and who-is-signed-in |
+| `└─ vite.config.js` | Proxy: `/api`, `/print` → back end :8001; `/ai` → AI service :8000 |
+| **`ai_service/`** | Optional AI helpers (FastAPI): `/bill/parse`, `/lead/parse`, `/fault/diagnose`, `/photo/check`. Remote Hugging Face first, then free local CPU models, then regex or the knowledge base |
+| **`scripts/setup_mac.sh`** | One-time macOS setup |
+| `HANDOFF.md` | Current state, known issues and next steps |
+
+The previous Odoo 18 version of this project is kept on the **`legacy-odoo`** branch.
 
 ## Tech stack
 
-Odoo 18 Community (Python, OWL, QWeb) · PostgreSQL · FastAPI + Transformers/TensorFlow/RapidOCR · React 18 + Vite + GSAP · PVGIS (EU JRC) for generation estimates.
+FastAPI · SQLite · React 18 + Vite + GSAP · Transformers / TensorFlow / RapidOCR (AI service) · PVGIS (EU JRC) for generation estimates.

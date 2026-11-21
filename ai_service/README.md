@@ -1,6 +1,6 @@
 # SunPower AI Service
 
-A standalone FastAPI microservice that Odoo calls at `http://localhost:8000`. It runs natively on Windows in a Python venv (no Docker), and **everything works for free on CPU**: no API credits are needed.
+A standalone FastAPI microservice on `http://localhost:8000`. The SunPower website reaches it through its dev-server proxy at `/ai/...`. It runs in a Python venv on Windows or macOS (no Docker), and **everything works for free on CPU**: no API credits are needed.
 
 ## Run
 
@@ -28,7 +28,7 @@ On startup the service **warms up** the local models in a background thread; set
 | `LOCAL_LLM` | `Qwen/Qwen2.5-0.5B-Instruct` | Set `Qwen/Qwen2.5-1.5B-Instruct` for better extraction (~3 GB, slower). |
 | `LOCAL_THREADS` | half the CPU threads | Torch threads used for local inference. |
 
-- **CORS:** allowed from `http://localhost:8069` and `http://127.0.0.1:8069`.
+- **CORS:** the website calls it through the Vite proxy (same origin); direct calls are allowed from `http://localhost:5173` and `:4173`.
 - **Model storage:** local models live in the standard Hugging Face cache (`%USERPROFILE%\.cache\huggingface`) and the RapidOCR models inside `.venv`, both outside git.
 
 ## How each endpoint works
@@ -42,7 +42,7 @@ The order of attempts is: remote (only when HF credits exist) → free local CPU
 | `POST /fault/diagnose` | **all-MiniLM-L6-v2** embeddings blended with keyword and fault-code alias matching give the top-3 KB entries. **Qwen2.5-0.5B** writes the answer. | Best KB entry as is (`source: "kb_only"`). |
 | `POST /photo/check` | ConvNeXt defect classifier (TensorFlow, CPU). | Remote CLIP, only if remote is enabled. |
 
-## Contract (for Odoo)
+## Contract (for the website)
 
 Every response is JSON. A success has `"ok": true` plus the fields below (and sometimes a `warning`). A failure has a non-2xx status and this body:
 
@@ -61,7 +61,7 @@ Every response is JSON. A success has `"ok": true` plus the fields below (and so
 | 402/502 | Remote only; with local models these are normally absorbed by fallbacks |
 | 500 | Unexpected error |
 
-**Odoo rule:** if `ok` is not `true`, show the manual-entry form. Use a client timeout of at least 65 s.
+**Website rule:** if `ok` is not `true`, show the manual-entry form. Use a client timeout of at least 65 s.
 
 | Endpoint | Input | Output fields |
 |---|---|---|
@@ -119,7 +119,7 @@ Measured on this laptop (Ryzen 7 7435HS, 8 cores, 24 GB RAM, CPU only):
 **Quality notes for the 0.5B model.** It is small, so the service adds guardrails:
 - **Intent:** keyword rules win when they fire.
 - **Numbers:** phone, email, kW and bill are range-checked and backed by regex.
-- **Names and addresses:** for Latin-script text, `name`/`street`/`city` are dropped unless they actually appear in the message. For Hindi text the model transliterates, and `street` can be invented (e.g. "Lakhawat"), so Odoo should treat `street` from Hindi input as a suggestion.
+- **Names and addresses:** for Latin-script text, `name`/`street`/`city` are dropped unless they actually appear in the message. For Hindi text the model transliterates, and `street` can be invented (e.g. "Lakhawat"), so treat `street` from Hindi input as a suggestion.
 - **Fault answers:** a safety isolation step is forced first, and `needs_site_visit`/`likely_parts` never fall below the matched KB entry.
 - **Confidence:** capped at 0.8 for local answers.
 - **Summary:** when the model omits it, a one-line English summary is built from the extracted fields.

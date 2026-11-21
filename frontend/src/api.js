@@ -1,68 +1,129 @@
-// Talks to the SunPower back office (/api + /web) and the AI service (/ai)
-// through the dev-server proxy, so the browser only ever sees one origin.
-async function rpc(url, params = {}) {
-  const res = await fetch(url, {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ jsonrpc: '2.0', method: 'call', params })
-  });
-  if (!res.ok) {
-    throw new Error(res.status >= 500
-      ? 'We can’t reach SunPower right now. Please try again in a minute.'
-      : `Something went wrong (${res.status}). Please try again.`);
+// Talks to the SunPower back end (FastAPI, /api and /print) and the AI service
+// (/ai) through the dev-server proxy, so the browser only ever sees one origin.
+// Every state-changing call carries X-SunPower: 1 (the server's CSRF guard).
+
+async function call(method, url, body, isForm = false) {
+  let res;
+  try {
+    res = await fetch(url, {
+      method,
+      credentials: 'same-origin',
+      headers: isForm ? { 'X-SunPower': '1' } : { 'X-SunPower': '1', 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : isForm ? body : JSON.stringify(body)
+    });
+  } catch {
+    throw new Error('We can’t reach SunPower right now. Check your connection and try again.');
   }
-  const data = await res.json();
-  if (data.error) throw new Error(data.error.data?.message || data.error.message || 'Request failed');
-  return data.result;
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    const detail = typeof data?.detail === 'string' ? data.detail : null;
+    const err = new Error(detail || (res.status >= 500
+      ? 'We can’t reach SunPower right now. Please try again in a minute.'
+      : `Something went wrong (${res.status}). Please try again.`));
+    err.status = res.status;
+    throw err;
+  }
+  return data;
 }
 
-export const DB = 'sunpower';
+const qs = (params = {}) => {
+  const s = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== '' && v !== undefined && v !== null)).toString();
+  return s ? `?${s}` : '';
+};
+
+export const get = (url, params) => call('GET', url + qs(params));
+export const post = (url, body = {}) => call('POST', url, body);
+export const patch = (url, body = {}) => call('PATCH', url, body);
+export const put = (url, body = {}) => call('PUT', url, body);
+export const upload = (url, form) => call('POST', url, form, true);
+
+/** Calls that return {ok:false,error} turn into thrown errors. */
+async function ok(promise) {
+  const r = await promise;
+  if (r && r.ok === false) {
+    const err = new Error(r.error || 'Please try again.');
+    err.field = r.field;
+    throw err;
+  }
+  return r;
+}
 
 export const api = {
-  submitEnquiry: (values) => rpc('/api/sunpower/enquiry', values),
-  estimate: (values) => rpc('/api/sunpower/estimate', values),
-  login: (login, password) => rpc('/web/session/authenticate', { db: DB, login, password }),
-  session: () => rpc('/web/session/get_session_info'),
-  logout: () => rpc('/web/session/destroy'),
-  me: () => rpc('/api/sunpower/me'),
-  providers: () => rpc('/api/sunpower/auth/providers'),
-  requestReset: (email) => rpc('/api/sunpower/auth/reset', { email }),
-  checkReset: (token) => rpc('/api/sunpower/auth/reset/check', { token }),
-  confirmReset: (token, password) => rpc('/api/sunpower/auth/reset/confirm', { token, password }),
-  signup: (values) => rpc('/api/sunpower/auth/signup', values),
-  myOverview: () => rpc('/api/sunpower/my/overview'),
-  myComplaint: (values) => rpc('/api/sunpower/my/complaint', values),
-  confirmFix: (ticket_id) => rpc('/api/sunpower/my/ticket/confirm', { ticket_id }),
-  reopenTicket: (ticket_id, note) => rpc('/api/sunpower/my/ticket/reopen', { ticket_id, note }),
-  myProfile: (values) => rpc('/api/sunpower/my/profile', values),
-  myPassword: (old, next) => rpc('/api/sunpower/my/password', { old, new: next }),
-  dashboard: (period) =>
-    rpc('/web/dataset/call_kw/solar.dashboard/get_data', {
-      model: 'solar.dashboard', method: 'get_data', args: [period], kwargs: {}
-    }),
+  // public
+  submitEnquiry: (values) => post('/api/sunpower/enquiry', values),
+  estimate: (values) => post('/api/sunpower/estimate', values),
+  // auth
+  me: () => get('/api/auth/me'),
+  login: (login, password) => ok(post('/api/auth/login', { login, password })),
+  logout: () => post('/api/auth/logout'),
+  providers: () => get('/api/auth/providers'),
+  signup: (values) => post('/api/auth/signup', values),
+  requestReset: (email) => post('/api/auth/reset', { email }),
+  checkReset: (token) => post('/api/auth/reset/check', { token }),
+  confirmReset: (token, password) => post('/api/auth/reset/confirm', { token, password }),
+  // My Account (customers)
+  myOverview: () => get('/api/my/overview'),
+  myQuote: (id) => get(`/api/my/quote/${id}`),
+  acceptQuote: (id, name) => post(`/api/my/quote/${id}/accept`, { name }),
+  payOrder: (order_id, kind) => post('/api/my/order/pay', { order_id, kind }),
+  confirmTestPayment: (payment_id, card) => post('/api/my/payment/test/confirm', { payment_id, card }),
+  verifyRazorpay: (values) => post('/api/my/payment/razorpay/verify', values),
+  myComplaint: (values) => post('/api/my/complaint', values),
+  confirmFix: (ticket_id) => post('/api/my/ticket/confirm', { ticket_id }),
+  reopenTicket: (ticket_id, note) => post('/api/my/ticket/reopen', { ticket_id, note }),
+  myProfile: (values) => post('/api/my/profile', values),
+  myPassword: (old, next) => post('/api/my/password', { old, new: next }),
+  // staff
+  dashboard: (period) => get('/api/staff/dashboard', { period }),
+  summary: () => get('/api/staff/summary'),
 
   /** Reads an electricity bill with the AI service. Resolves to the parsed body or throws. */
-  async parseBill(file) {
-    const body = new FormData();
-    body.append('file', file);
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 65000);
-    try {
-      const res = await fetch('/ai/bill/parse', { method: 'POST', body, signal: ctrl.signal });
-      const data = await res.json().catch(() => ({}));
-      if (data.ok !== true) throw new Error(data.error?.message || 'The bill could not be read');
-      return data;
-    } finally {
-      clearTimeout(timer);
-    }
-  }
+  parseBill: (file) => aiUpload('/ai/bill/parse', file),
+  parseLead: (text) => ai('/ai/lead/parse', (() => { const f = new FormData(); f.append('text', text); return f; })()),
+  diagnose: (values) => ai('/ai/fault/diagnose', JSON.stringify(values), { 'Content-Type': 'application/json' }),
+  checkPhoto: (file) => aiUpload('/ai/photo/check', file)
 };
 
+async function ai(url, body, headers = {}) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 65000);
+  try {
+    const res = await fetch(url, { method: 'POST', body, headers, signal: ctrl.signal });
+    const data = await res.json().catch(() => ({}));
+    if (data.ok !== true) throw new Error(data.error?.message || 'The AI assistant couldn’t help with this one. Please fill it in by hand.');
+    return data;
+  } catch (err) {
+    throw new Error(err.name === 'AbortError' || /fetch/i.test(err.message)
+      ? 'The AI assistant isn’t available right now. Please fill it in by hand.' : err.message);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function aiUpload(url, file) {
+  const body = new FormData();
+  body.append('file', file);
+  return ai(url, body);
+}
+
 export const inr = (v) => '₹' + new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(v || 0);
+export const num = (v) => new Intl.NumberFormat('en-IN', { maximumFractionDigits: 1 }).format(v || 0);
+/** Appointment times (survey visits, installation slots) are stored as local time. */
+export const fmtLocal = (v, withTime = true) => {
+  if (!v) return '';
+  const d = new Date(String(v).replace(' ', 'T'));
+  if (Number.isNaN(d.getTime())) return String(v);
+  return d.toLocaleString('en-IN', withTime
+    ? { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }
+    : { day: 'numeric', month: 'short', year: 'numeric' });
+};
 export const fmtDate = (v, withTime = false) => {
   if (!v) return '';
-  const d = new Date(v.replace(' ', 'T') + (v.length > 10 ? 'Z' : ''));
-  return d.toLocaleDateString('en-IN', withTime ? { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' } : { day: 'numeric', month: 'short', year: 'numeric' });
+  const s = String(v);
+  // Server times are UTC ("YYYY-MM-DD HH:MM:SS"); plain dates are local days.
+  const d = s.length > 10 ? new Date(s.replace(' ', 'T') + 'Z') : new Date(s + 'T00:00:00');
+  if (Number.isNaN(d.getTime())) return s;
+  return d.toLocaleDateString('en-IN', withTime
+    ? { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }
+    : { day: 'numeric', month: 'short', year: 'numeric' });
 };
-export const num = (v) => new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(v || 0);

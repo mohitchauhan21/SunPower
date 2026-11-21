@@ -4,7 +4,8 @@ import { api } from '../api.js';
 import { goHome, useAuth } from '../auth.jsx';
 
 // Pages a ?next= may send a user back to, by role
-const NEXT_ROLES = { '/console': ['director'], '/account': ['customer'] };
+const STAFF = ['director', 'sales', 'warehouse', 'technician', 'support'];
+const NEXT_ROLES = { '/app': STAFF, '/account': ['customer'] };
 
 export const GoogleMark = () => (
   <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
@@ -30,7 +31,8 @@ export default function Login() {
 
   // Already signed in? Go straight to your own screen.
   useEffect(() => {
-    if (me?.authenticated) goHome(navigate, next && next.startsWith('/') && !next.startsWith('//') && NEXT_ROLES[next]?.includes(me.role) ? next : me.home);
+    const area = next && next.startsWith('/') && !next.startsWith('//') ? '/' + next.split('/')[1] : null;
+    if (me?.authenticated) goHome(navigate, area && NEXT_ROLES[area]?.includes(me.role) ? next : me.home);
   }, [me, next, navigate]);
 
   const submit = async (e) => {
@@ -38,13 +40,10 @@ export default function Login() {
     setBusy(true);
     setError('');
     try {
-      const res = await api.login(login.trim(), password);
-      if (!res?.uid) throw new Error('wrong login');
+      await api.login(login.trim(), password);
       await refresh();
     } catch (err) {
-      setError(/access denied|wrong login|credentials/i.test(err.message)
-        ? 'That email and password don’t match. Try again or reset your password.'
-        : /too many/i.test(err.message) ? 'Too many attempts. Wait a minute and try again.' : err.message);
+      setError(err.message);
     } finally {
       setBusy(false);
     }

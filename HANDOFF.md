@@ -6,39 +6,40 @@
 
 | Part | Status |
 |---|---|
-| Odoo modules (`sunpower_solar`, `sunpower_website`, `sunpower_ai`) | **Working.** Phases 1–10 are done. Unit tests and `scripts/phase_checks.py` pass (see `docs/sunpower_report.html`). |
-| AI service | **Working locally on CPU.** Remote Hugging Face models return 402 (no credits), so the local models are used. |
-| React frontend | **New.** Redesigned in a minimalist light style and connected to Odoo. Enquiries, the estimate and the console were tested in a browser against a live Odoo. **Bill upload through `/ai` has not been tested end to end** (the AI service wasn't running at the time). |
-| Odoo website (`/`, `/solar/estimate`, `/my/solar`, `/technician`) | Working. The customer portal and crew page still live only in Odoo; the React site links to them. |
+| Back end (`backend/`, FastAPI + SQLite) | **Working.** It replaces Odoo and covers the whole flow (enquiry → survey → quote → advance → dispatch and warranties → installation → service → profit), with roles and permissions, sign-in, password reset, Google sign-in (needs keys), online payments (test mode now, Razorpay once keys are set), email queue, and printable documents. 8 API tests pass. |
+| Website (`frontend/`) | **Working.** The public site, customer account and quote/payment page, and the staff workspace `/app` for all five staff roles. Every list and detail screen was opened in a browser against the live back end. A full scenario was run: sales → technician survey → approval → quote → customer accepts and pays (declined test card, then success) → warehouse dispatch → technician installation with checklist, photo, signature and certificate. |
+| AI service (`ai_service/`) | Unchanged and optional. **Not re-tested in this round**: the AI buttons (fill enquiry from text, AI diagnose, photo check, bill upload) were only checked to fall back cleanly when the service is off. |
+| Odoo version | Removed from this branch; kept on the **`legacy-odoo`** branch. |
 
 ## How the pieces connect
 
-- The React site talks to **one origin**. Vite forwards `/api/*` and `/web/*` to Odoo (:8069) and `/ai/*` to the AI service (:8000), with the `/ai` prefix stripped.
-- `POST /api/sunpower/enquiry` (JSON-RPC, public) calls `crm.lead.solar_create_enquiry`, the same function the Odoo web form uses. It returns `{ok, id, contact}` or `{ok: false, error}`.
-- `POST /api/sunpower/estimate` (JSON-RPC, public) returns `solar_estimate(units, bill)` from `sunpower_website/controllers/main.py`. `frontend/src/solar.js` repeats the same formula so the page updates instantly. **If you change one, change the other.**
-- The console signs in with `/web/session/authenticate` (database `sunpower`, set in `frontend/src/api.js`) and calls `solar.dashboard.get_data`.
+- The browser only talks to the website's origin. Vite forwards `/api/*` and `/print/*` to the back end (:8001) and `/ai/*` to the AI service (:8000).
+- **Sign-in:** an httpOnly session cookie (`sp_session`, 14 days). Every state-changing call must send `X-SunPower: 1`, which a cross-site form can't send.
+- **Permissions:** `backend/app/access.py` is the single table of role × module (`rw` / `r` / `own`). The server enforces it, and the sidebar is built from the same table (`me.modules`).
+- **Estimate rules:** they exist twice, in `backend/app/rules.py` (`estimate`) and `frontend/src/solar.js` (so the page updates instantly). **Change both together.**
+- **Times:** event times (created, paid, dispatched, on site) are stored in UTC. Appointment times (`scheduled_at`, `survey_date`) are stored as local time.
 
 ## Known issues and risks
 
-1. **Creating an enquiry takes about 8 seconds** inside Odoo, and the existing `/solar-quote` form is just as slow. This probably comes from the activity or notification sending in `solar_create_enquiry` (it may be trying to send email through an unconfigured mail server). It needs profiling.
-2. **No production setup for the React site.** The proxy only exists in `vite`/`vite preview`. In production you need a reverse proxy (nginx/IIS) that routes `/api`, `/web` and `/ai` the same way. Otherwise you have to add CORS to Odoo and the AI service.
-3. **Public enquiry endpoint has no rate limit or captcha.** It is protected against CSRF because it requires a JSON body, but bots could still fill the CRM with spam.
-4. **macOS scripts are untested on a real Mac.** `scripts/setup_mac.sh`, `run_odoo.sh` and `ai_service/run.sh` were written on Windows and only syntax-checked. Odoo is expected in `~/odoo18` (override with `ODOO_HOME`), with Homebrew `postgresql@16` on port 5432. wkhtmltopdf has to be installed by hand (and needs Rosetta on Apple Silicon).
-5. **Links in the React site are hard-coded** to `http://localhost:8069`: the My Solar link, the crew app link and the console's "Open in Odoo" link.
-6. **AI quality.** The 0.5B model can make up street names for Hindi input. The photo classifier gives mixed results on real photos, so treat its flag as a hint only.
-7. The quote's `est_payback_years` uses the total *including* GST, while the website estimate uses the price before GST.
+1. **No production deployment yet.** The proxy only exists in `vite`/`vite preview`. In production, put the built website and the back end behind one reverse proxy (nginx/Caddy) with the same `/api`, `/print` and `/ai` routes, run uvicorn without `--reload`, and back up `backend/data/sunpower.db`.
+2. **SQLite** is fine for one company and a few dozen users. For many simultaneous users, move to PostgreSQL. The SQL in `db.py` and `rules.py` is plain SQL, so the move is contained.
+3. **Payments:** test mode is on by default (`Settings → Email, payments & sign-in`). Switch it off before going live and enter Razorpay keys. Razorpay webhooks are not implemented; payment confirmation relies on the browser callback.
+4. **Email** is queued but not sent until the Director turns on SMTP in Settings.
+5. **Photos and signatures** are stored inside the database file. With many jobs, move them to disk or object storage.
+6. **The AI service** wasn't re-tested against the new website (see above).
+7. **Odoo-only features not carried over:** full double-entry accounting (journals, ledgers, GST returns), multi-warehouse stock and Odoo's report designer. Invoices here are simple records (number, amount, tax, paid).
+8. An empty `addons/` folder may linger on the original Windows machine (it was locked by another program during removal). It isn't in git; delete it when convenient.
 
 ## Suggested next steps
 
-1. Profile and fix the slow `solar_create_enquiry` (issue 1).
-2. Put a reverse proxy in front of the React build, and move the hard-coded `localhost:8069` links into an environment variable such as `VITE_ENGINE_URL`.
-3. Add rate limiting or a honeypot field to `/api/sunpower/enquiry`.
-4. Bring the customer portal (`/my/solar`) and the crew page into React using the same JSON-RPC pattern.
-5. Add a Playwright smoke test for the React flows (estimate → book survey, quote, console login).
+1. Re-test the AI helpers end to end with the AI service running (bill upload, fill from text, AI diagnose, photo check).
+2. Production setup: reverse proxy, HTTPS, nightly copy of `sunpower.db`, `SUNPOWER_DEMO=0` for a clean company.
+3. Razorpay webhook endpoint for reliable payment confirmation.
+4. A Playwright smoke test of the main screens per role.
+5. Optional: GST invoice PDF (`/print/invoice/{id}`) using the same print layout.
 
-## Repository history note
+## Repository history
 
-Before this push, `main` on GitHub held a separate **Next.js/Prisma prototype** (3 commits, tag `phase-0a-approved`). Its files were removed from the working tree by a normal merge commit, *without* a force push. Its history and the tag are still in the repository. To look at that code:
-```powershell
-git checkout phase-0a-approved
-```
+- `main` on GitHub: the Odoo version as first pushed (Next.js prototype before that, tag `phase-0a-approved`).
+- `native-backend`: the new FastAPI back end and staff workspace (this work).
+- `legacy-odoo`: the last Odoo version, including the sign-in, roles and customer-account work built on Odoo.

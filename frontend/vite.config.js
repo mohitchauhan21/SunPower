@@ -1,15 +1,15 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// The SunPower engine (Odoo) runs on :8069 and the AI service on :8000. The React app
-// proxies both (in `vite` and `vite preview`), so the browser sees one origin: the staff
-// session cookie works and the AI service needs no extra CORS entry.
-const ENGINE = process.env.SUNPOWER_ENGINE || 'http://localhost:8069';
+// The SunPower back end (FastAPI) runs on :8001 and the AI service on :8000.
+// The React app proxies both (in `vite` and `vite preview`), so the browser sees
+// one origin: the session cookie works and neither server needs CORS.
+const BACKEND = process.env.SUNPOWER_BACKEND || 'http://localhost:8001';
 const AI = process.env.SUNPOWER_AI || 'http://localhost:8000';
 
 const proxy = {
-  '/api': { target: ENGINE, changeOrigin: true },
-  '/web': { target: ENGINE, changeOrigin: true },
+  '/api': { target: BACKEND, changeOrigin: true },
+  '/print': { target: BACKEND, changeOrigin: true },
   '/ai': { target: AI, changeOrigin: true, rewrite: (p) => p.replace(/^\/ai/, '') }
 };
 
