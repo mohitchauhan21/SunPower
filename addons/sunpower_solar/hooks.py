@@ -52,6 +52,11 @@ def enable_settings(env):
         "group_stock_tracking_lot": False,
         "group_sale_order_template": True,
     }).execute()
+    # No "send an SMS?" pop-up on every dispatch (SMS isn't configured)
+    company = env.company
+    if "stock_move_sms_validation" in company._fields:
+        company.write({"stock_move_sms_validation": False,
+                       "has_received_warning_stock_sms": True})
 
 
 HSN = {"panel": "85414300", "inverter": "85044010", "battery": "85072000",

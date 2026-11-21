@@ -5,7 +5,7 @@ Run inside the Odoo shell, e.g. for phase 1:
       "C:\\Users\\Ankit Kumar\\odoo18\\odoo\\odoo-bin" shell -c "C:\\Users\\Ankit Kumar\\odoo18\\odoo.conf" -d sunpower
 Set PHASES below to choose which phases to run.
 """
-PHASES = [1, 2, 3]
+PHASES = [1, 2, 3, 4]
 
 results = []
 
@@ -103,6 +103,7 @@ def phase2(env):
               tmpl.solar_system_type == "on_grid", tmpl.name)
         check(2, "Quotation templates switched on (so template applies)",
               env.user.has_group("sale_management.group_sale_order_template"))
+        env.flush_all()
         sp.rollback()
 
 
@@ -175,7 +176,92 @@ def phase3(env):
             check(3, "Dispatch allowed after advance paid", True)
         except UserError:
             check(3, "Dispatch allowed after advance paid", False)
+        env.flush_all()
         sp.rollback()
+    env.invalidate_all()
+
+
+def _confirmed_job(env, kw=3, system_type="on_grid"):
+    """Helper: a confirmed solar order with an approved survey (inside caller's savepoint)."""
+    partner = env["res.partner"].create({
+        "name": "Check Customer %s" % kw, "phone": "+91 90000 0000%s" % kw,
+        "state_id": env.ref("base.state_in_gj").id, "country_id": env.ref("base.in").id})
+    lead = env["crm.lead"].create({
+        "name": "check", "partner_id": partner.id, "type": "opportunity",
+        "requested_kw": kw, "system_type": system_type})
+    survey = env["solar.site.survey"].create({
+        "lead_id": lead.id, "roof_direction": "S", "usable_area_sqft": 500,
+        "recommended_kw": kw})
+    survey.action_mark_done()
+    survey.action_approve()
+    so = env["sale.order"].create({
+        "partner_id": partner.id, "opportunity_id": lead.id, "survey_id": survey.id,
+        "sale_order_template_id": lead._solar_quotation_template().id})
+    so._onchange_sale_order_template_id()
+    so.action_confirm()
+    return so
+
+
+def _dispatch(so):
+    pick = so.picking_ids.filtered(lambda p: p.state not in ("done", "cancel"))
+    pick.action_assign()
+    for m in pick.move_ids:
+        m.quantity = m.product_uom_qty
+        m.picked = True
+    return pick, pick.with_context(skip_backorder=True, cancel_backorder=True,
+                                   solar_skip_advance_check=True).button_validate()
+
+
+def phase4(env):
+    """Serial scanning at dispatch + automatic warranties. Savepoint + rollback."""
+    from dateutil.relativedelta import relativedelta
+    from odoo import fields
+    from odoo.exceptions import UserError
+    check(4, "No SMS pop-up on dispatch", not env.company.stock_move_sms_validation)
+    with env.cr.savepoint(flush=False) as sp:
+        so = _confirmed_job(env, 2, "off_grid")
+        pick = so.picking_ids
+        pick.action_assign()
+        for ml in pick.move_line_ids.filtered(lambda l: l.product_id.tracking != "none"):
+            ml.lot_id = False
+        for m in pick.move_ids:
+            m.quantity = m.product_uom_qty
+            m.picked = True
+        try:
+            pick.with_context(skip_backorder=True, solar_skip_advance_check=True).button_validate()
+            check(4, "Dispatch refused without scanned serials", False)
+        except UserError:
+            check(4, "Dispatch refused without scanned serials", True)
+        env.flush_all()
+        sp.rollback()
+    env.invalidate_all()
+    with env.cr.savepoint(flush=False) as sp:
+        so = _confirmed_job(env, 2, "off_grid")
+        pick, res = _dispatch(so)
+        check(4, "Dispatch completes in one click (no extra pop-up)", res is True and pick.state == "done",
+              pick.state)
+        today = fields.Date.context_today(pick)
+        ws = so.warranty_ids
+        serial_lines = pick.move_line_ids.filtered("lot_id")
+        check(4, "One warranty per scanned serial/batch", len(ws) == len(serial_lines.mapped("lot_id")),
+              "%s warranties" % len(ws))
+        batts = ws.filtered(lambda w: w.product_id.default_code == "BAT-150")
+        check(4, "Off-Grid 2 kW: 4 batteries each with own warranty", len(batts) == 4, len(batts))
+        inv = ws.filtered(lambda w: w.product_id.default_code.startswith("INV"))
+        check(4, "Inverter warranty = 2 years from delivery",
+              inv and inv.end_date == today + relativedelta(months=24), inv.end_date)
+        pnl = ws.filtered(lambda w: w.product_id.default_code == "PNL-540")
+        check(4, "Panel warranty = 20 years from delivery",
+              pnl and pnl.end_date == today + relativedelta(months=240), pnl.end_date)
+        lot = env["stock.lot"].search([("name", "=", inv.serial)])
+        check(4, "Serial number finds the customer", lot.solar_partner_id == so.partner_id,
+              lot.solar_partner_id.name)
+        check(4, "Job moves to 'Dispatched'", (so._solar_refresh_job_financials() or True)
+              and so.job_stage == "dispatched", so.job_stage)
+        check(4, "Material cost counted on the job", so.job_material_cost > 0, so.job_material_cost)
+        env.flush_all()
+        sp.rollback()
+    env.invalidate_all()
 
 
 for p in PHASES:
