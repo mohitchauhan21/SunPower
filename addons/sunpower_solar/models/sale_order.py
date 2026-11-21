@@ -107,6 +107,7 @@ class SaleOrder(models.Model):
         for order in self.filtered("is_solar_job"):
             # crew schedule: flag the tasks created by sale_project
             tasks = order.tasks_ids
+            order._solar_name_job()
             tasks.write({
                 "is_installation": True,
                 "installation_kw_planned": order.solar_kw,
@@ -126,6 +127,16 @@ class SaleOrder(models.Model):
                 "%(t)s installation job(s) put on the crew schedule.",
                 p=len(pickings), t=len(tasks)))
         self._solar_refresh_job_financials()
+
+    def _solar_name_job(self):
+        """Readable names on the crew calendar: 'Install 3 kW On-Grid – Meera Joshi'."""
+        for order in self.filtered("is_solar_job"):
+            label = dict(order._fields["solar_system_type"].selection).get(
+                order.solar_system_type, "")
+            kw = ("%g" % order.solar_kw)
+            customer = order.partner_id.name
+            order.tasks_ids.write({"name": "Install %s kW %s – %s" % (kw, label, customer)})
+            order.project_ids.write({"name": "%s – %s (%s kW)" % (order.name, customer, kw)})
 
     # ----------------------------------------------------------- PVGIS estimate
     def action_compute_generation(self):

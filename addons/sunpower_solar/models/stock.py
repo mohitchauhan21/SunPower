@@ -1,4 +1,5 @@
 from odoo import _, api, fields, models
+from odoo.exceptions import UserError
 
 
 class StockLot(models.Model):
@@ -26,6 +27,32 @@ class StockPicking(models.Model):
     def _compute_warranty_count(self):
         for p in self:
             p.warranty_count = len(p.warranty_ids)
+
+    def button_validate(self):
+        self._solar_check_advance()
+        return super().button_validate()
+
+    def _solar_check_advance(self):
+        """No dispatch of a solar kit until the minimum advance is paid."""
+        if self.env.context.get("solar_skip_advance_check"):
+            return
+        for picking in self.filtered(lambda p: p.picking_type_code == "outgoing"
+                                     and p.sale_id.is_solar_job):
+            order = picking.sale_id
+            pct = order.company_id.solar_min_advance_pct
+            if not pct:
+                continue
+            invoices = order.invoice_ids.filtered(
+                lambda m: m.state == "posted" and m.move_type == "out_invoice")
+            paid = sum(m.amount_total - m.amount_residual for m in invoices)
+            needed = order.amount_total * pct / 100.0
+            if paid + 0.5 < needed:
+                raise UserError(_(
+                    "%(so)s cannot be dispatched yet: %(pct)s%% advance (%(need)s) is "
+                    "required, %(paid)s received so far.",
+                    so=order.name, pct=int(pct),
+                    need=order.currency_id.format(needed),
+                    paid=order.currency_id.format(paid)))
 
     def _action_done(self):
         res = super()._action_done()

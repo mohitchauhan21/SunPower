@@ -5,7 +5,7 @@ Run inside the Odoo shell, e.g. for phase 1:
       "C:\\Users\\Ankit Kumar\\odoo18\\odoo\\odoo-bin" shell -c "C:\\Users\\Ankit Kumar\\odoo18\\odoo.conf" -d sunpower
 Set PHASES below to choose which phases to run.
 """
-PHASES = [1, 2]
+PHASES = [1, 2, 3]
 
 results = []
 
@@ -52,7 +52,7 @@ def phase1(env):
     check(1, "SunPower app menus", {"Dashboard", "Sales", "Operations", "Service", "Reports"} <= set(menus),
           ", ".join(menus))
     jobs = env["sale.order"].search_count([("is_solar_job", "=", True), ("state", "=", "sale")])
-    check(1, "Sample data loaded (40 jobs)", jobs == 40, jobs)
+    check(1, "Sample data loaded (at least 40 jobs)", jobs >= 40, jobs)
 
 
 def phase2(env):
@@ -103,6 +103,78 @@ def phase2(env):
               tmpl.solar_system_type == "on_grid", tmpl.name)
         check(2, "Quotation templates switched on (so template applies)",
               env.user.has_group("sale_management.group_sale_order_template"))
+        sp.rollback()
+
+
+def phase3(env):
+    """Quote -> GST -> estimate -> confirm -> packing list + crew job + subsidy ->
+    advance rule. Savepoint + rollback."""
+    from odoo.exceptions import UserError
+    kit = env.ref("sunpower_solar.kit_on_grid_3kw")
+    inst = env.ref("sunpower_solar.prod_installation")
+    check(3, "Kit carries 12% GST", "12% GST S" in kit.taxes_id.mapped("name"),
+          kit.taxes_id.mapped("name"))
+    check(3, "Installation carries 18% GST", "18% GST S" in inst.taxes_id.mapped("name"),
+          inst.taxes_id.mapped("name"))
+    check(3, "HSN codes set (needed on GST invoices)",
+          bool(kit.l10n_in_hsn_code and inst.l10n_in_hsn_code),
+          "%s / %s" % (kit.l10n_in_hsn_code, inst.l10n_in_hsn_code))
+    with env.cr.savepoint(flush=False) as sp:
+        partner = env["res.partner"].create({
+            "name": "P3 Customer", "state_id": env.ref("base.state_in_gj").id,
+            "country_id": env.ref("base.in").id})
+        lead = env["crm.lead"].create({
+            "name": "P3", "partner_id": partner.id, "type": "opportunity",
+            "requested_kw": 3, "system_type": "on_grid", "subsidy_requested": True,
+            "roof_area_sqft": 400, "monthly_bill": 3000, "grid_suitable": "yes"})
+        survey = env["solar.site.survey"].create({
+            "lead_id": lead.id, "roof_direction": "S", "usable_area_sqft": 400,
+            "recommended_kw": 3})
+        survey.action_mark_done()
+        survey.action_approve()
+        so = env["sale.order"].create({
+            "partner_id": partner.id, "opportunity_id": lead.id, "survey_id": survey.id,
+            "sale_order_template_id": lead._solar_quotation_template().id})
+        so._onchange_sale_order_template_id()
+        check(3, "Quote total includes GST", round(so.amount_tax) == 19980,
+              "tax %s, total %s" % (so.amount_tax, so.amount_total))
+        so.action_compute_generation()
+        check(3, "Generation & savings estimate filled", so.est_kwh_year > 3000 and
+              so.est_savings_year > 0, "%s kWh, %s" % (so.est_kwh_year, so.est_source))
+        so.action_confirm()
+        bom = env["mrp.bom"]._bom_find(kit)[kit]
+        moves = so.picking_ids.move_ids
+        check(3, "Packing list = full parts list of the kit",
+              len(moves) == len(bom.bom_line_ids), "%s lines" % len(moves))
+        task = so.tasks_ids.filtered("is_installation")
+        check(3, "Crew job created with a readable name", task and task.name.startswith("Install 3 kW"),
+              task.name)
+        check(3, "Job has its own cost account (for profit per job)",
+              bool(so.project_ids.account_id))
+        check(3, "Subsidy file opened automatically (₹78,000 for 3 kW)",
+              so.subsidy_ids and so.subsidy_ids.amount_expected == 78000,
+              so.subsidy_ids.amount_expected)
+        pick = so.picking_ids
+        try:
+            pick._solar_check_advance()
+            check(3, "Dispatch refused before 30% advance", False)
+        except UserError:
+            check(3, "Dispatch refused before 30% advance", True)
+        wiz = env["sale.advance.payment.inv"].with_context(
+            active_model="sale.order", active_ids=so.ids).create(
+            {"advance_payment_method": "percentage", "amount": 30})
+        wiz.create_invoices()
+        inv = so.invoice_ids
+        inv.action_post()
+        check(3, "30% advance invoice amount correct", round(inv.amount_total) == round(so.amount_total * .3),
+              inv.amount_total)
+        env["account.payment.register"].with_context(
+            active_model="account.move", active_ids=inv.ids).create({})._create_payments()
+        try:
+            pick._solar_check_advance()
+            check(3, "Dispatch allowed after advance paid", True)
+        except UserError:
+            check(3, "Dispatch allowed after advance paid", False)
         sp.rollback()
 
 

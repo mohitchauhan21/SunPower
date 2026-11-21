@@ -54,6 +54,37 @@ def enable_settings(env):
     }).execute()
 
 
+HSN = {"panel": "85414300", "inverter": "85044010", "battery": "85072000",
+       "controller": "85044090", "bos": "85371000", "kit": "85414300", "service": "995461"}
+
+
+def apply_gst(env):
+    """12% GST on solar goods (kits & components), 18% on installation services.
+    Uses the intra-state group taxes (CGST+SGST); Odoo's fiscal positions switch
+    to IGST automatically for customers in other states."""
+    company = env.company
+    Tax = env["account.tax"].with_context(active_test=True)
+
+    def tax(name):
+        return Tax.search([("name", "=", name), ("type_tax_use", "=", "sale"),
+                           ("company_id", "=", company.id)], limit=1)
+    goods, service = tax("12% GST S"), tax("18% GST S")
+    if not goods or not service:
+        return False
+    Tmpl = env["product.template"]
+    has_hsn = "l10n_in_hsn_code" in Tmpl._fields
+    for key, _name, _m in CATEGORIES:
+        cat = _ref(env, "categ_%s" % key)
+        if not cat:
+            continue
+        products = Tmpl.search([("categ_id", "=", cat.id)])
+        vals = {"taxes_id": [(6, 0, (service if key == "service" else goods).ids)]}
+        if has_hsn:
+            vals["l10n_in_hsn_code"] = HSN[key]
+        products.write(vals)
+    return True
+
+
 def post_init_hook(env):
     company = env.company
     if company.name in ("My Company", "YourCompany"):
@@ -164,3 +195,4 @@ def post_init_hook(env):
                 ],
             })
             _xmlid(env, qt, "qt_%s_%skw" % (system_type, kw))
+    apply_gst(env)

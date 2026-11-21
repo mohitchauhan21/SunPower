@@ -3,6 +3,15 @@ from odoo import api, fields, models
 SYSTEM_TYPES = [("on_grid", "On-Grid"), ("off_grid", "Off-Grid")]
 
 
+class ResCompany(models.Model):
+    _inherit = "res.company"
+
+    solar_min_advance_pct = fields.Float(
+        "Minimum Advance before Dispatch (%)", default=30.0,
+        help="Solar kits are only dispatched once this share of the order value "
+             "has been paid. 0 = no check.")
+
+
 class ProductCategory(models.Model):
     _inherit = "product.category"
 

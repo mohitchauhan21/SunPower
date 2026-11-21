@@ -104,7 +104,7 @@ class SolarDemoData(models.AbstractModel):
                     move.quantity = move.product_uom_qty
                 move.picked = True
             picking.with_context(skip_backorder=True, cancel_backorder=True,
-                                 skip_sms=True).button_validate()
+                                 skip_sms=True, solar_skip_advance_check=True).button_validate()
             picking.date_done = when
             picking.warranty_ids.write({"start_date": when.date()})
 

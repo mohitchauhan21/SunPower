@@ -55,6 +55,16 @@ class TestSolarFlow(TransactionCase):
         s.action_approve()
         return s
 
+    def _deliver(self, so):
+        picking = so.picking_ids[0]
+        picking.action_assign()
+        for m in picking.move_ids:
+            m.quantity = m.product_uom_qty
+            m.picked = True
+        picking.with_context(skip_backorder=True, cancel_backorder=True,
+                             solar_skip_advance_check=True).button_validate()
+        return picking
+
     def test_01_kit_template_has_parts(self):
         so = self._order()
         self.assertTrue(so.is_solar_job)
@@ -74,12 +84,7 @@ class TestSolarFlow(TransactionCase):
         so.action_confirm()
         self.assertTrue(so.picking_ids, "warehouse gets a delivery order")
         self.assertTrue(so.tasks_ids.filtered("is_installation"), "crew gets a job")
-        picking = so.picking_ids[0]
-        picking.action_assign()
-        for m in picking.move_ids:
-            m.quantity = m.product_uom_qty
-            m.picked = True
-        picking.with_context(skip_backorder=True, cancel_backorder=True).button_validate()
+        picking = self._deliver(so)
         self.assertEqual(picking.state, "done")
         ws = so.warranty_ids
         self.assertTrue(ws)
@@ -93,12 +98,7 @@ class TestSolarFlow(TransactionCase):
         survey = self._approved_survey()
         so = self._order(survey)
         so.action_confirm()
-        picking = so.picking_ids[0]
-        picking.action_assign()
-        for m in picking.move_ids:
-            m.quantity = m.product_uom_qty
-            m.picked = True
-        picking.with_context(skip_backorder=True, cancel_backorder=True).button_validate()
+        self._deliver(so)
         w = so.warranty_ids.filtered(lambda w: w.months == 24)[:1]
 
         free = self.env["solar.service.ticket"].create({
@@ -119,3 +119,26 @@ class TestSolarFlow(TransactionCase):
         paid.action_resolve()
         self.assertTrue(paid.invoice_id)
         self.assertEqual(paid.invoice_id.state, "posted")
+
+    def test_05_no_dispatch_before_advance(self):
+        self.env.company.solar_min_advance_pct = 30
+        survey = self._approved_survey()
+        so = self._order(survey)
+        so.action_confirm()
+        picking = so.picking_ids[0]
+        picking.action_assign()
+        for m in picking.move_ids:
+            m.quantity = m.product_uom_qty
+            m.picked = True
+        with self.assertRaises(UserError):
+            picking.with_context(skip_backorder=True).button_validate()
+        wiz = self.env["sale.advance.payment.inv"].with_context(
+            active_model="sale.order", active_ids=so.ids).create(
+            {"advance_payment_method": "percentage", "amount": 30})
+        wiz.create_invoices()
+        inv = so.invoice_ids
+        inv.action_post()
+        self.env["account.payment.register"].with_context(
+            active_model="account.move", active_ids=inv.ids).create({})._create_payments()
+        picking.with_context(skip_backorder=True, cancel_backorder=True).button_validate()
+        self.assertEqual(picking.state, "done")
