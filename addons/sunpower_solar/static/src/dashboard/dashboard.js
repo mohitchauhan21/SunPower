@@ -18,9 +18,10 @@ export class SolarDashboard extends Component {
         onWillStart(() => this.load());
     }
 
-    async load() {
+    async load(refresh = false) {
         this.state.loading = true;
-        this.state.data = await this.orm.call("solar.dashboard", "get_data", [this.state.period]);
+        this.state.data = await this.orm.call("solar.dashboard", "get_data",
+            [this.state.period, refresh]);
         this.state.loading = false;
     }
 

@@ -94,7 +94,7 @@ class SolarDemoData(models.AbstractModel):
                     lot = Lot.create({"name": "PNL-2026-%s" % batch, "product_id": p.id})
                     Quant._update_available_quantity(p, loc, 400, lot_id=lot)
             else:
-                Quant._update_available_quantity(p, loc, 2000)
+                Quant._update_available_quantity(p, loc, 300 if p.uom_id.name != "m" else 3000)
 
     def _deliver(self, order, when):
         for picking in order.picking_ids.filtered(lambda p: p.state not in ("done", "cancel")):

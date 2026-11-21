@@ -21,7 +21,7 @@ class SolarDashboard(models.AbstractModel):
         return start, today
 
     @api.model
-    def get_data(self, period="month"):
+    def get_data(self, period="month", refresh=False):
         start, end = self._period_bounds(period)
         dt_start = datetime.combine(start, time.min)
         dt_end = datetime.combine(end, time.max)
@@ -33,7 +33,8 @@ class SolarDashboard(models.AbstractModel):
             ("date_order", ">=", dt_start), ("date_order", "<=", dt_end)])
         all_jobs = env["sale.order"].search([("is_solar_job", "=", True),
                                              ("state", "=", "sale")])
-        all_jobs._solar_refresh_job_financials()
+        if refresh:
+            all_jobs._solar_refresh_job_financials()
 
         invoices = env["account.move"].search([
             ("move_type", "in", ("out_invoice", "out_refund")), ("state", "=", "posted"),
@@ -55,7 +56,9 @@ class SolarDashboard(models.AbstractModel):
             [("state", "not in", ("disbursed", "rejected"))])
         leads_new = env["crm.lead"].search_count([("create_date", ">=", dt_start),
                                                   ("create_date", "<=", dt_end)])
-        quants = env["stock.quant"].search([("location_id.usage", "=", "internal")])
+        stock_groups = env["stock.quant"]._read_group(
+            [("location_id.usage", "=", "internal")], ["product_id"], ["quantity:sum"])
+        stock_value = sum(p.standard_price * qty for p, qty in stock_groups)
 
         period_jobs = orders_won
         jobs = []
@@ -99,7 +102,7 @@ class SolarDashboard(models.AbstractModel):
                 "tickets_overdue": len(open_tickets.filtered(lambda t: t.days_open > 3)),
                 "subsidy_pending": len(subsidies),
                 "subsidy_amount": sum(subsidies.mapped("amount_expected")),
-                "stock_value": sum(quants.mapped("value")),
+                "stock_value": stock_value,
             },
             "jobs": jobs,
             "tickets": [{

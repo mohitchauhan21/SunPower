@@ -18,6 +18,7 @@
         <field name="url">/technician</field>
         <field name="parent_id" ref="website.main_menu"/>
         <field name="sequence">40</field>
-        <field name="group_ids" eval="[(6, 0, [ref('base.group_user')])]"/>
+        <!-- website.menu.write() only accepts 2-tuple (LINK/UNLINK, id) commands -->
+        <field name="group_ids" eval="[(4, ref('base.group_user'))]"/>
     </record>
 </odoo>

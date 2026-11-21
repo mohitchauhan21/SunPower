@@ -55,24 +55,24 @@
                                         <p class="sp-muted mb-0">Enter your monthly units or bill to see the system size and savings.</p>
                                     </div>
                                     <div id="sp_result_body" t-att-class="'' if est else 'd-none'">
-                                        <div class="sp-kw-big"><span data-sp="kw" t-out="est and est['kw']"/> kW
+                                        <div class="sp-kw-big"><span data-sp="kw" t-out="(est or {}).get('kw', '')"/> kW
                                             <span class="sp-kw-type">On-Grid</span></div>
-                                        <p class="sp-muted">Based on <span data-sp="units" t-out="est and est['units']"/> units/month.
-                                            Needs about <span data-sp="roof_sqft" t-out="est and est['roof_sqft']"/> sq ft of shadow-free roof.</p>
+                                        <p class="sp-muted">Based on <span data-sp="units" t-out="(est or {}).get('units', '')"/> units/month.
+                                            Needs about <span data-sp="roof_sqft" t-out="(est or {}).get('roof_sqft', '')"/> sq ft of shadow-free roof.</p>
                                         <div class="sp-metrics">
                                             <div><span class="sp-metric-label">Monthly saving</span>
-                                                <span class="sp-metric">₹<span data-sp="monthly_saving" t-out="est and est['monthly_saving']"/></span></div>
+                                                <span class="sp-metric">₹<span data-sp="monthly_saving" t-out="(est or {}).get('monthly_saving', '')"/></span></div>
                                             <div><span class="sp-metric-label">Yearly saving</span>
-                                                <span class="sp-metric">₹<span data-sp="yearly_saving" t-out="est and est['yearly_saving']"/></span></div>
+                                                <span class="sp-metric">₹<span data-sp="yearly_saving" t-out="(est or {}).get('yearly_saving', '')"/></span></div>
                                             <div><span class="sp-metric-label">Generation</span>
-                                                <span class="sp-metric"><span data-sp="generation" t-out="est and est['generation']"/> units/mo</span></div>
+                                                <span class="sp-metric"><span data-sp="generation" t-out="(est or {}).get('generation', '')"/> units/mo</span></div>
                                             <div><span class="sp-metric-label">Payback</span>
-                                                <span class="sp-metric"><span data-sp="payback_years" t-out="est and est['payback_years']"/> yrs</span></div>
+                                                <span class="sp-metric"><span data-sp="payback_years" t-out="(est or {}).get('payback_years', '')"/> yrs</span></div>
                                         </div>
                                         <table class="sp-cost-table">
-                                            <tr><td>Indicative system cost</td><td>₹<span data-sp="cost" t-out="est and est['cost']"/></td></tr>
-                                            <tr><td>PM Surya Ghar subsidy</td><td class="text-success">− ₹<span data-sp="subsidy" t-out="est and est['subsidy']"/></td></tr>
-                                            <tr class="sp-total"><td>You pay (approx.)</td><td>₹<span data-sp="net_cost" t-out="est and est['net_cost']"/></td></tr>
+                                            <tr><td>Indicative system cost</td><td>₹<span data-sp="cost" t-out="(est or {}).get('cost', '')"/></td></tr>
+                                            <tr><td>PM Surya Ghar subsidy</td><td class="text-success">− ₹<span data-sp="subsidy" t-out="(est or {}).get('subsidy', '')"/></td></tr>
+                                            <tr class="sp-total"><td>You pay (approx.)</td><td>₹<span data-sp="net_cost" t-out="(est or {}).get('net_cost', '')"/></td></tr>
                                         </table>
                                         <p class="sp-note mb-0">Indicative only. Your final price is fixed after the free site survey.
                                             Sizes are 1–5 kW (rounded from units ÷ 120).</p>

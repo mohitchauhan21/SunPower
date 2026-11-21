@@ -14,7 +14,7 @@
                                     t-on-click="() => this.setPeriod(p[0])" t-esc="p[1]"/>
                         </t>
                     </div>
-                    <button class="btn btn-sm btn-secondary" t-on-click="() => this.load()"><i class="fa fa-refresh"/></button>
+                    <button class="btn btn-sm btn-secondary" t-on-click="() => this.load(true)" title="Recalculate job profits"><i t-attf-class="fa fa-refresh #{state.loading ? 'fa-spin' : ''}"/></button>
                     <button class="btn btn-sm btn-warning" t-on-click="() => this.share()"><i class="fa fa-share-alt"/> Share</button>
                 </div>
             </div>
