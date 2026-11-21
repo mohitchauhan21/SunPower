@@ -3,7 +3,7 @@
 # Usage:  .\run_odoo.ps1                 -> run server on http://localhost:8069
 #         .\run_odoo.ps1 -Update         -> upgrade sunpower_solar first
 param([switch]$Update, [string]$Db = "sunpower")
-$root = "C:\Users\Ankit Kumar\odoo18"
+$root = if ($env:ODOO_HOME) { $env:ODOO_HOME } else { Join-Path $HOME "odoo18" }
 $pgctl = "C:\Program Files\PostgreSQL\18\bin\pg_ctl.exe"
 & $pgctl -D "$root\pgdata" status *> $null
 if ($LASTEXITCODE -ne 0) {

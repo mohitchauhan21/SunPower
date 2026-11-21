@@ -1,4 +1,4 @@
-"""Pre-download the free local models (run once; ~2 GB). Usage: .venv\Scripts\python download_models.py [--big]"""
+"""Pre-download the free local models (run once; ~2 GB). Usage: .venv\\Scripts\\python download_models.py [--big]   (macOS: .venv/bin/python)"""
 import os
 import sys
 import time

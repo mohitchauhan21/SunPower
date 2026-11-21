@@ -1,15 +1,23 @@
 """Recreate the SunPower database from scratch: India company (INR + GST chart),
 install sunpower_solar (+ sunpower_website if present) and load demo data.
 
-Run with the Odoo venv:
-  & "C:\\Users\\Ankit Kumar\\odoo18\\venv\\Scripts\\python.exe" scripts\\rebuild_db.py [--no-demo]
+WARNING: drops the database first if it already exists.
+
+Run with Odoo's own Python:
+  Windows:  & "$env:ODOO_HOME\\venv\\Scripts\\python.exe" scripts\\rebuild_db.py [--no-demo]
+  macOS:    ~/odoo18/venv/bin/python scripts/rebuild_db.py [--no-demo]
+
+Settings (environment variables):
+  ODOO_HOME    folder holding odoo/ (source) and odoo.conf; default ~/odoo18
+  ODOO_CONF    config file; default $ODOO_HOME/odoo.conf
+  SUNPOWER_DB  database name; default sunpower
 """
 import os
 import sys
 
-ODOO_ROOT = r"C:\Users\Ankit Kumar\odoo18"
-CONF = os.path.join(ODOO_ROOT, "odoo.conf")
-DB = "sunpower"
+ODOO_ROOT = os.path.expanduser(os.environ.get("ODOO_HOME") or os.path.join("~", "odoo18"))
+CONF = os.environ.get("ODOO_CONF") or os.path.join(ODOO_ROOT, "odoo.conf")
+DB = os.environ.get("SUNPOWER_DB") or "sunpower"
 sys.path.insert(0, os.path.join(ODOO_ROOT, "odoo"))
 
 import odoo  # noqa: E402

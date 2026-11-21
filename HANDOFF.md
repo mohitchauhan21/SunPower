@@ -23,7 +23,7 @@
 1. **Creating an enquiry takes about 8 seconds** inside Odoo, and the existing `/solar-quote` form is just as slow. This probably comes from the activity or notification sending in `solar_create_enquiry` (it may be trying to send email through an unconfigured mail server). It needs profiling.
 2. **No production setup for the React site.** The proxy only exists in `vite`/`vite preview`. In production you need a reverse proxy (nginx/IIS) that routes `/api`, `/web` and `/ai` the same way. Otherwise you have to add CORS to Odoo and the AI service.
 3. **Public enquiry endpoint has no rate limit or captcha.** It is protected against CSRF because it requires a JSON body, but bots could still fill the CRM with spam.
-4. **Hard-coded paths** in `run_odoo.ps1` and `scripts/rebuild_db.py` point at the original developer's machine.
+4. **macOS scripts are untested on a real Mac.** `scripts/setup_mac.sh`, `run_odoo.sh` and `ai_service/run.sh` were written on Windows and only syntax-checked. Odoo is expected in `~/odoo18` (override with `ODOO_HOME`), with Homebrew `postgresql@16` on port 5432. wkhtmltopdf has to be installed by hand (and needs Rosetta on Apple Silicon).
 5. **Links in the React site are hard-coded** to `http://localhost:8069`: the My Solar link, the crew app link and the console's "Open in Odoo" link.
 6. **AI quality.** The 0.5B model can make up street names for Hindi input. The photo classifier gives mixed results on real photos, so treat its flag as a hint only.
 7. The quote's `est_payback_years` uses the total *including* GST, while the website estimate uses the price before GST.

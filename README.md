@@ -13,7 +13,21 @@ Everything a rooftop-solar company needs to run, from the first customer enquiry
 
 ## How to run
 
-You need **Windows**, **Python 3.11–3.13**, **Node 18+**, **PostgreSQL 14+** and **Odoo 18 Community** (installed from source or with the Windows installer).
+### macOS (quickest)
+
+```bash
+git clone https://github.com/mohitchauhan21/SunPower.git && cd SunPower
+./scripts/setup_mac.sh                        # Homebrew tools, PostgreSQL, Odoo 18 in ~/odoo18, odoo.conf, npm install
+~/odoo18/venv/bin/python scripts/rebuild_db.py   # database "sunpower" + demo data (drops it if it exists)
+./run_odoo.sh                                 # http://localhost:8069   (--update after changing module code)
+cd frontend && npm run dev                    # http://localhost:5173   (second terminal)
+./ai_service/run.sh                           # optional AI service on :8000 (third terminal)
+```
+The setup script needs [Homebrew](https://brew.sh). Odoo goes in `~/odoo18`; set `ODOO_HOME` to put it somewhere else. The one manual step is **wkhtmltopdf**, which Odoo needs for PDFs. The script prints the download link, and on Apple Silicon it also needs Rosetta. Disk space: about 1.5 GB without the AI service, about 7 GB with it (the AI models alone are about 2.2 GB). RAM: 8 GB is enough without the AI service; 16 GB is recommended with it.
+
+### Windows
+
+You need **Python 3.11–3.13**, **Node 18+**, **PostgreSQL 14+** and **Odoo 18 Community** (installed from source or with the Windows installer). The steps below are written for Windows; the macOS scripts above do the same things.
 
 ### 1. Odoo engine (required)
 
@@ -30,7 +44,7 @@ You need **Windows**, **Python 3.11–3.13**, **Node 18+**, **PostgreSQL 14+** a
    ```powershell
    .\run_odoo.ps1             # add -Update after changing module code
    ```
-   `run_odoo.ps1` and `scripts\rebuild_db.py` have the original developer's paths written into them (`C:\Users\...\odoo18`). Change `$root` / `ODOO_ROOT` to match your machine.
+   `run_odoo.ps1` and `scripts\rebuild_db.py` expect Odoo in `%USERPROFILE%\odoo18` (with `odoo\`, `venv\` and `odoo.conf` inside). Set `ODOO_HOME` if yours is somewhere else.
 
 **Demo logins:** `admin` / `admin` (director); technicians `tech01@sunpower.demo` … `tech15@sunpower.demo` / `sunpower`.
 
@@ -108,9 +122,10 @@ Get-Content scripts\phase_checks.py | & "<odoo venv>\Scripts\python.exe" "<odoo>
 | `├─ src/components/reactbits/` | ReactBits components: MaskedHeading, ScrollStack, AccordionGallery, BubbleMenu, FuzzyText and others |
 | `├─ src/api.js`, `src/solar.js` | Client for the engine and AI service; the estimate rules shared with the backend |
 | `└─ vite.config.js` | Proxy settings: `/api`, `/web` → Odoo, `/ai` → AI service |
-| **`scripts/`** | `rebuild_db.py` (fresh database plus demo data), `phase_checks.py` (end-to-end checks) |
+| **`scripts/`** | `setup_mac.sh` (one-time macOS setup), `rebuild_db.py` (fresh database plus demo data), `phase_checks.py` (end-to-end checks) |
 | **`docs/`** | Final report (`sunpower_report.html`) and sample PDFs: quote, certificate, director report |
-| `run_odoo.ps1` | Starts the local PostgreSQL and Odoo |
+| `run_odoo.ps1` / `run_odoo.sh` | Starts PostgreSQL and Odoo (Windows / macOS) |
+| `ai_service/run.ps1` / `ai_service/run.sh` | Creates the AI venv, installs packages and starts the service (Windows / macOS) |
 | `HANDOFF.md` | Current state, known issues and next steps for whoever picks this up |
 
 ## Tech stack

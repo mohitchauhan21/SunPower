@@ -1,6 +1,6 @@
 """Tiny smoke test of every Hugging Face model the service uses (primaries AND fallbacks).
 
-Usage:  .venv\\Scripts\\python smoke_test.py
+Usage:  .venv\\Scripts\\python smoke_test.py   (macOS: .venv/bin/python smoke_test.py)
 Prints OK/FAIL per model. Never prints the token. Model lists come from main.py,
 so this always matches what the service will actually try.
 """

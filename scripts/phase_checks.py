@@ -1,8 +1,10 @@
 """Phase-by-phase health checks for the SunPower system.
 
-Run inside the Odoo shell, e.g. for phase 1:
-  Get-Content scripts\\phase_checks.py | & "C:\\Users\\Ankit Kumar\\odoo18\\venv\\Scripts\\python.exe" `
-      "C:\\Users\\Ankit Kumar\\odoo18\\odoo\\odoo-bin" shell -c "C:\\Users\\Ankit Kumar\\odoo18\\odoo.conf" -d sunpower
+Run inside the Odoo shell ($ODOO_HOME = folder with odoo/, venv/ and odoo.conf):
+  Windows:  Get-Content scripts\\phase_checks.py | & "$env:ODOO_HOME\\venv\\Scripts\\python.exe" `
+                "$env:ODOO_HOME\\odoo\\odoo-bin" shell -c "$env:ODOO_HOME\\odoo.conf" -d sunpower
+  macOS:    ~/odoo18/venv/bin/python ~/odoo18/odoo/odoo-bin shell -c ~/odoo18/odoo.conf -d sunpower \\
+                < scripts/phase_checks.py
 Set PHASES below to choose which phases to run.
 """
 PHASES = [1, 2, 3, 4, 5, 6, 7, 8]

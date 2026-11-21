@@ -1,4 +1,4 @@
-"""Download (first run) and time every local model. Usage: .venv\\Scripts\\python bench_local.py [llm|asr|emb|ocr ...]"""
+"""Download (first run) and time every local model. Usage: .venv\\Scripts\\python bench_local.py [llm|asr|emb|ocr ...]   (macOS: .venv/bin/python)"""
 import os
 import sys
 import time
