@@ -8,7 +8,7 @@ from ..security import staff_only
 
 router = APIRouter(prefix="/api/staff")
 
-LEAD_FIELDS = ("contact_name", "phone", "email", "street", "city", "requested_kw", "system_type", "subsidy_requested",
+LEAD_FIELDS = ("contact_name", "phone", "email", "street", "city", "state", "requested_kw", "system_type", "subsidy_requested",
                "monthly_bill", "monthly_units", "roof_area_sqft", "grid_suitable", "discom", "consumer_no", "notes",
                "salesperson_id", "next_action", "next_action_due")
 SURVEY_FIELDS = ("technician_id", "survey_date", "roof_type", "roof_direction", "roof_tilt", "usable_area_sqft",
@@ -56,7 +56,16 @@ def add_note(body: dict = Body(default={}), user=Depends(staff_only), db=Depends
             "ticket": "tickets", "subsidy": "subsidies"}.get(model)
     if not area or not text:
         raise HTTPException(400, "Write a note first.")
-    need(user, area)
+    lvl = need(user, area)
+    table = {"lead": "leads", "survey": "surveys", "order": "orders", "delivery": "deliveries", "job": "jobs",
+             "ticket": "tickets", "subsidy": "subsidies"}[model]
+    row = found(db.get(table, res_id), "Record not found.")
+    if lvl == "own":  # technicians: only their own surveys, jobs and repairs
+        mine = {"survey": row.get("technician_id") == user["id"],
+                "ticket": row.get("technician_id") == user["id"],
+                "job": bool(db.val("SELECT COUNT(*) FROM job_techs WHERE job_id = ? AND user_id = ?", res_id, user["id"]))}
+        if not mine.get(model):
+            raise HTTPException(404, "Record not found.")
     db.note(model, res_id, text[:2000], user["id"], kind="note")
     return {"ok": True}
 
@@ -123,6 +132,19 @@ def update_lead(lid: int, body: dict = Body(default={}), user=Depends(staff_only
     vals = clean(body, LEAD_FIELDS + ("stage",))
     if "stage" in vals and vals["stage"] not in dict(rules.LEAD_STAGES):
         raise HTTPException(400, "Unknown stage.")
+    if vals.get("stage") == "won":
+        raise HTTPException(400, "An enquiry is won when its order is confirmed, not by hand.")
+    if vals.get("salesperson_id") and not rules.is_active_role(db, vals["salesperson_id"], ("sales", "director")):
+        raise HTTPException(400, "Choose an active salesperson.")
+    for k in ("requested_kw", "monthly_bill", "monthly_units", "roof_area_sqft"):
+        if vals.get(k) is not None:
+            try:
+                vals[k] = float(vals[k])
+                assert 0 <= vals[k] <= 10000000
+            except (TypeError, ValueError, AssertionError):
+                raise HTTPException(400, "%s must be a positive number." % k.replace("_", " "))
+    if vals.get("grid_suitable") and vals["grid_suitable"] not in ("yes", "no", "unknown"):
+        raise HTTPException(400, "Grid connection must be yes, no or unknown.")
     if "contact_name" in vals and not vals["contact_name"]:
         raise HTTPException(400, "The customer's name can't be empty.")
     if l["stage"] == "new" and "stage" not in vals:
@@ -202,7 +224,17 @@ def update_survey(sid: int, body: dict = Body(default={}), user=Depends(staff_on
     if s["state"] in ("approved", "rejected"):
         raise HTTPException(400, "This survey is closed. Reset it to make changes.")
     fields = SURVEY_FIELDS if lvl == "rw" else tuple(f for f in SURVEY_FIELDS if f != "technician_id")
-    db.update("surveys", sid, clean(body, fields))
+    vals = clean(body, fields)
+    if vals.get("technician_id") and not rules.is_active_role(db, vals["technician_id"], ("technician",)):
+        raise HTTPException(400, "Choose an active technician.")
+    for k in ("roof_tilt", "usable_area_sqft", "cable_distance_m", "recommended_kw"):
+        if vals.get(k) is not None:
+            try:
+                vals[k] = float(vals[k])
+                assert 0 <= vals[k] <= (90 if k == "roof_tilt" else 100000)
+            except (TypeError, ValueError, AssertionError):
+                raise HTTPException(400, "%s must be a sensible positive number." % k.replace("_", " "))
+    db.update("surveys", sid, vals)
     return {"ok": True}
 
 
@@ -217,6 +249,9 @@ def survey_action(sid: int, action: str, body: dict = Body(default={}), user=Dep
     elif action in ("reject", "reset"):
         if user["role"] not in ("sales", "director"):
             raise HTTPException(403, "Only Sales or the Director can do this.")
+        used = db.one("SELECT ref FROM orders WHERE survey_id = ? AND state != 'cancel'", sid)
+        if used:
+            raise HTTPException(400, "Quotation %s is based on this survey. Cancel or delete it first." % used["ref"])
         if action == "reject":
             db.update("surveys", sid, {"state": "rejected", "rejection_reason": (body.get("reason") or "")[:300] or None})
             db.note("survey", sid, "Survey rejected: %s" % (body.get("reason") or "no reason given"), user["id"])
@@ -294,7 +329,9 @@ def order_lines(oid: int, body: dict = Body(default={}), user=Depends(staff_only
         row = db.one("SELECT * FROM order_lines WHERE id = ? AND order_id = ?", int(l.get("id") or 0), oid)
         if not row:
             continue
-        qty = max(float(l.get("qty", row["qty"]) or 0), 0)
+        qty = float(l.get("qty", row["qty"]) or 0)
+        if qty <= 0:
+            raise HTTPException(400, "Quantities must be above zero (delete a line to remove it).")
         disc = min(max(float(l.get("discount", row["discount"]) or 0), 0), 100)
         if user["role"] != "director" and disc > 10:
             raise HTTPException(400, "Discounts above 10% need the Director.")
@@ -317,6 +354,10 @@ def order_action(oid: int, action: str, body: dict = Body(default={}), user=Depe
         if user["role"] not in ("sales", "director"):
             raise HTTPException(403, "Only Sales or the Director can record payments.")
         method = body.get("method") if body.get("method") in ("cash", "bank", "upi", "cheque") else "bank"
+        if db.val("SELECT COUNT(*) FROM payments WHERE order_id = ? AND amount = ? AND method = ? AND state = 'done' "
+                  "AND created_by = ? AND date >= datetime('now', '-2 minutes')", oid, rules.r2(float(body.get("amount") or 0)),
+                  method, user["id"]):
+            raise HTTPException(400, "This payment was just recorded. Refresh to see it before adding it again.")
         rules.record_payment(db, o, float(body.get("amount") or 0), method, user["id"],
                              provider_ref=(body.get("reference") or "")[:80] or None,
                              purpose="advance" if o["state"] != "sale" or rules.advance_due(db, o) else "balance")
@@ -403,14 +444,26 @@ def subsidy(sid: int, user=Depends(staff_only), db=Depends(get_db)):
 @router.patch("/subsidies/{sid}")
 def update_subsidy(sid: int, body: dict = Body(default={}), user=Depends(staff_only), db=Depends(get_db)):
     need(user, "subsidies", write=True)
-    db.update("subsidies", sid, clean(body, ("application_no", "amount_received", "doc_id_proof", "doc_bill", "doc_bank",
-                                            "doc_photo", "doc_net_meter")))
+    s = found(db.get("subsidies", sid), "Subsidy file not found.")
+    if s["state"] in ("disbursed", "rejected"):
+        raise HTTPException(400, "This subsidy file is closed.")
+    vals = clean(body, ("application_no", "amount_received", "doc_id_proof", "doc_bill", "doc_bank", "doc_photo", "doc_net_meter"))
+    for k in ("doc_id_proof", "doc_bill", "doc_bank", "doc_photo", "doc_net_meter"):
+        if k in vals:
+            vals[k] = 1 if vals[k] else 0
+    if vals.get("amount_received") is not None:
+        try:
+            vals["amount_received"] = float(vals["amount_received"])
+            assert 0 <= vals["amount_received"] <= 200000
+        except (TypeError, ValueError, AssertionError):
+            raise HTTPException(400, "Amount received must be a number up to ₹2,00,000.")
+    db.update("subsidies", sid, vals)
     return {"ok": True}
 
 
 SUBSIDY_FLOW = {"apply": ("draft", "applied", "applied_on"), "inspection": ("applied", "inspection", "inspection_on"),
                 "approve": ("inspection", "approved", None), "disburse": ("approved", "disbursed", "disbursed_on"),
-                "reject": (None, "rejected", None)}
+                "reject": ("*open*", "rejected", None)}
 
 
 @router.post("/subsidies/{sid}/{action}")
@@ -420,7 +473,10 @@ def subsidy_action(sid: int, action: str, user=Depends(staff_only), db=Depends(g
     if action not in SUBSIDY_FLOW:
         raise HTTPException(404, "Unknown action.")
     frm, to, date_field = SUBSIDY_FLOW[action]
-    if frm and s["state"] != frm:
+    if frm == "*open*":
+        if s["state"] in ("disbursed", "rejected"):
+            raise HTTPException(400, "This file is %s." % rules.label(rules.SUBSIDY_STATES, s["state"]).lower())
+    elif frm and s["state"] != frm:
         raise HTTPException(400, "This file is %s." % rules.label(rules.SUBSIDY_STATES, s["state"]).lower())
     if action == "apply" and not all(s[f] for f in ("doc_id_proof", "doc_bill", "doc_bank")):
         raise HTTPException(400, "Collect the ID proof, electricity bill and bank details before applying.")

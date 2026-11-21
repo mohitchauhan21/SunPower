@@ -13,7 +13,8 @@ them on, and the website labels them "reported, verify with your DISCOM".
 
 RATES = {"general": (30000, 18000), "special": (33000, 19800)}   # per kW for kW 1-2, for the 3rd kW
 CENTRAL_CAP_KW = 3
-DEFAULT_STATE = "Gujarat"
+DEFAULT_STATE = None            # no state assumed: the visitor picks theirs
+ALL_INDIA = ("All India", "general", None, "Standard central rate (most states and UTs)")
 SHEET_DATE = "22 Nov 2026"
 
 # name, category, top-up rule (or None), top-up note from the sheet
@@ -60,7 +61,8 @@ BY_NAME = {s[0].lower(): s for s in STATES}
 
 
 def state_row(state):
-    return BY_NAME.get((state or DEFAULT_STATE).strip().lower()) or BY_NAME[DEFAULT_STATE.lower()]
+    """The state's row, or the standard all-India (general) rate when none / unknown is given."""
+    return BY_NAME.get((state or "").strip().lower()) or ALL_INDIA
 
 
 def central(kw, category="general"):

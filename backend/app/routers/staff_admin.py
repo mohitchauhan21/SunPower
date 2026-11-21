@@ -483,6 +483,33 @@ def void_payment(pid: int, body: dict = Body(default={}), user=Depends(director_
     return {"ok": True}
 
 
+@router.post("/invoices/{iid}/payment")
+def pay_service_invoice(iid: int, body: dict = Body(default={}), user=Depends(staff_only), db=Depends(get_db)):
+    """Record money received for a repair (service) invoice: Director, Sales or Service desk."""
+    if user["role"] not in ("director", "sales", "support"):
+        raise HTTPException(403, "You don't have access to this.")
+    inv = found(db.get("invoices", iid), "Invoice not found.")
+    if inv["kind"] != "service" or inv["state"] != "posted":
+        raise HTTPException(400, "Only unpaid repair invoices are paid here; order payments go on the order.")
+    try:
+        amount = rules.r2(float(body.get("amount") or 0))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Enter the amount received.")
+    due = rules.r2(inv["amount_total"] - inv["amount_paid"])
+    if not 0 < amount <= due + 0.5:
+        raise HTTPException(400, "Enter an amount between ₹1 and %s." % rules.money(due))
+    method = body.get("method") if body.get("method") in ("cash", "bank", "upi", "cheque") else "cash"
+    db.insert("payments", {"ref": db.next_ref("payment", "PAY-"), "invoice_id": iid, "customer_id": inv["customer_id"],
+                           "amount": amount, "method": method, "state": "done", "purpose": "service", "date": now(),
+                           "created_by": user["id"]})
+    paid = rules.r2(inv["amount_paid"] + amount)
+    db.update("invoices", iid, {"amount_paid": paid, "state": "paid" if paid + 0.5 >= inv["amount_total"] else "posted"})
+    if inv["ticket_id"]:
+        db.note("ticket", inv["ticket_id"], "Payment of %s received for invoice %s (%s)." % (rules.money(amount), inv["ref"], method),
+                user["id"])
+    return {"ok": True}
+
+
 @router.post("/invoices/{iid}/cancel")
 def cancel_invoice(iid: int, body: dict = Body(default={}), user=Depends(director_only), db=Depends(get_db)):
     """Cancel an invoice that hasn't been paid yet (Director)."""

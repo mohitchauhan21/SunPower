@@ -72,7 +72,7 @@ DEFAULT_SETTINGS = {
     "smtp_user": "", "smtp_password": "", "smtp_from": "",
     "google_client_id": "", "google_client_secret": "",                         # Google sign-in
     "razorpay_key_id": "", "razorpay_key_secret": "",                           # online payments
-    "test_payments": "1",                                                       # allow test cards
+    "test_payments": "0",   # fake test cards: only for demos (the demo data switches it on)                                                       # allow test cards
     "ai_url": "http://localhost:8000",
 }
 

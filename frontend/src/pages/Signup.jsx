@@ -4,7 +4,7 @@ import { api } from '../api.js';
 import { goHome, useAuth } from '../auth.jsx';
 import { codeProblem, passwordProblem } from '../password.js';
 import { CodeField, ConfirmField, PasswordField } from '../components/ui/Secret.jsx';
-import { GoogleMark } from './Login.jsx';
+import GoogleButton from '../components/GoogleButton.jsx';
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
@@ -16,9 +16,7 @@ export default function Signup() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState('');
-  const [providers, setProviders] = useState([]);
 
-  useEffect(() => { api.providers().then((p) => setProviders(p || [])).catch(() => {}); }, []);
   useEffect(() => { if (me?.authenticated) goHome(navigate, me.home); }, [me, navigate]);
 
   const set = (k) => (v) => { setF((s) => ({ ...s, [k]: v })); setErrors((s) => ({ ...s, [k]: '' })); };
@@ -74,12 +72,7 @@ export default function Signup() {
         <h1 className="headline">Create account</h1>
         <p className="lead">Follow your installation, warranties and repairs in one place.</p>
 
-        {providers.map((p) => (
-          <a key={p.id} className="btn btn--secondary btn--block btn--google" href={p.url}>
-            <GoogleMark /> Sign up with Google
-          </a>
-        ))}
-        {providers.length > 0 && <div className="auth__or"><span>or</span></div>}
+        <GoogleButton mode="signup" portal="customer" onError={setError} />
 
         <form className="form" onSubmit={submit} noValidate>
           {error && <div className="form-error" role="alert">{error}</div>}

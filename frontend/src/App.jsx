@@ -19,6 +19,7 @@ import { AuthProvider } from './auth.jsx';
 import StaffLayout from './staff/Layout.jsx';
 import Today, { Insights, StaffMe } from './staff/Overview.jsx';
 import Onboarding from './components/Onboarding.jsx';
+import ErrorBoundary from './components/ErrorBoundary.jsx';
 import { Customer, Customers, Enquiries, Enquiry, Order, Orders, Subsidies, Subsidy, Survey, Surveys } from './staff/Sales.jsx';
 import { Deliveries, Delivery, Job, Jobs, Stock, Ticket, Tickets, Warranties } from './staff/Ops.jsx';
 import { Reports, Settings } from './staff/Admin.jsx';
@@ -47,6 +48,7 @@ export default function App() {
       <ToastProvider>
         <Nav />
         <main>
+          <ErrorBoundary resetKey={pathname}>
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/quote" element={<Quote />} />
@@ -86,6 +88,7 @@ export default function App() {
             </Route>
             <Route path="*" element={<NotFound />} />
           </Routes>
+          </ErrorBoundary>
         </main>
         {!inApp && <Footer />}
         <Onboarding />

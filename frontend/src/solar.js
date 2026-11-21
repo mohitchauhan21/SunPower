@@ -2,7 +2,7 @@
 // Used for instant feedback while the authoritative figures load from /api/sunpower/estimate.
 import { avgSubsidy, subsidyFor } from './subsidy.js';
 
-export const RULES = { unitsPerKw: 120, tariff: 8, minKw: 1, maxKw: 5, costPerKw: 65000, roofPerKw: 100 };
+export const RULES = { unitsPerKw: 120, tariff: 8, minKw: 1, maxKw: 10, costPerKw: 65000, roofPerKw: 100, offGridBatteryPerKw: 28000 };
 
 /**
  * opts: { state, topup, table } for the state subsidy;
@@ -17,13 +17,16 @@ export function estimateLocal(units = 0, bill = 0, opts = {}) {
   const costPerKw = opts.costPerKw || RULES.costPerKw;
   const generation = kw * RULES.unitsPerKw;
   const monthly = (u ? Math.min(generation, u) : generation) * tariff;
-  const cost = kw * costPerKw;
-  const sub = subsidyFor(kw, opts.state, opts.topup, opts.table);
+  const offGrid = opts.systemType === 'off_grid';
+  const cost = kw * (costPerKw + (offGrid ? RULES.offGridBatteryPerKw : 0));
+  const sub = offGrid // PM Surya Ghar covers grid-connected systems only
+    ? { ...subsidyFor(kw, opts.state, false, opts.table), central: 0, topup: 0, available: 0, total: 0 }
+    : subsidyFor(kw, opts.state, opts.topup, opts.table);
   const net = Math.max(cost - sub.total, 0);
   return {
     units: Math.round(u),
     kw,
-    system_type: 'on_grid',
+    system_type: offGrid ? 'off_grid' : 'on_grid',
     generation: Math.round(generation),
     monthly_saving: Math.round(monthly),
     yearly_saving: Math.round(monthly * 12),
@@ -38,7 +41,8 @@ export function estimateLocal(units = 0, bill = 0, opts = {}) {
     cost_per_kw: costPerKw,
     tariff,
     payback_years: monthly ? Math.round((net / (monthly * 12)) * 10) / 10 : 0,
-    roof_sqft: Math.round(kw * RULES.roofPerKw)
+    roof_sqft: Math.round(kw * RULES.roofPerKw),
+    coverage: u ? Math.round(Math.min(generation / u, 1) * 100) : 100
   };
 }
 

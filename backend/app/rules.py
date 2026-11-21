@@ -39,7 +39,7 @@ UNITS_PER_KW_MONTH = 120.0
 AVG_TARIFF_INR = 8.0
 COST_PER_KW_INR = 65000.0
 ROOF_SQFT_PER_KW = 100.0
-MIN_KW, MAX_KW = 1, 5
+MIN_KW, MAX_KW = 1, 10        # household rooftop sizes the estimator recommends
 FALLBACK_KWH_PER_KW = 1450.0
 
 # Each status list is [(stored value, label shown to people), ...].
@@ -65,6 +65,31 @@ CHECKLIST = [("chk_stands", "Mounting stands fixed"), ("chk_panels", "Panels lai
 
 # Label for a stored status, e.g. label(LEAD_STAGES, "won") -> "Won".
 # dict(options) turns the list of pairs into a lookup table.
+def is_active_role(db, user_id, roles):
+    """True if `user_id` is an active user with one of `roles` (for assignment pickers)."""
+    marks = ",".join("?" for _ in roles)
+    return bool(user_id) and bool(db.val("SELECT COUNT(*) FROM users WHERE id = ? AND active = 1 AND role IN (%s)" % marks,
+                                         int(user_id), *roles))
+
+
+def claim(db, table, rid, from_states, to_state):
+    """Move a record to `to_state` only if it is still in one of `from_states`; True if this
+    request won. Two clicks (or two people) at once can't both act on the same record:
+    SQLite lets one write at a time, so the second sees the new state and gets False."""
+    marks = ",".join("?" for _ in from_states)
+    cur = db.exec("UPDATE %s SET state = ? WHERE id = ? AND state IN (%s)" % (table, marks), to_state, rid, *from_states)
+    return cur.rowcount == 1
+
+
+def lead_state(db, order):
+    """The customer's state for an order (sets the subsidy rate), if known."""
+    if order.get("lead_id"):
+        st = db.val("SELECT state FROM leads WHERE id = ?", order["lead_id"])
+        if st:
+            return st
+    return db.val("SELECT state FROM customers WHERE id = ?", order["customer_id"])
+
+
 def label(options, key):
     return dict(options).get(key, key or "")
 
@@ -129,7 +154,24 @@ def recommended_kw(units=0, bill=0):
 # Savings estimate for the public website (Savings page): size, generation,
 # monthly/yearly saving, price, subsidy, net cost, payback years, roof area.
 # Returns None if neither units nor bill was given.
-def estimate(units=0.0, bill=0.0, state=None, include_topup=False, kw=None, cost_per_kw=None, tariff=None):
+OFF_GRID_BATTERY_PER_KW = 28000   # 2 x 150 Ah batteries per kW (catalogue price), off-grid only
+
+
+def normalize_phone(raw):
+    """Indian mobile number as +91XXXXXXXXXX, or None if it isn't one.
+    Accepts spaces, dashes, a leading 0, 91 or +91."""
+    digits = "".join(ch for ch in str(raw or "") if ch.isdigit())
+    if len(digits) == 12 and digits.startswith("91"):
+        digits = digits[2:]
+    elif len(digits) == 11 and digits.startswith("0"):
+        digits = digits[1:]
+    if len(digits) != 10 or digits[0] not in "6789":
+        return None
+    return "+91" + digits
+
+
+def estimate(units=0.0, bill=0.0, state=None, include_topup=False, kw=None, cost_per_kw=None, tariff=None,
+             system_type="on_grid"):
     """Website savings estimate. `state` sets the subsidy (central category and
     optional reported top-up). Custom mode: pass your own `kw`, `cost_per_kw`
     (Rs per kW) and/or `tariff` (Rs per unit) to replace the defaults."""
@@ -144,15 +186,20 @@ def estimate(units=0.0, bill=0.0, state=None, include_topup=False, kw=None, cost
     generation = kw * UNITS_PER_KW_MONTH
     used = min(generation, units) if units else generation
     monthly_saving = used * tariff
-    cost = kw * cost_per_kw
+    off_grid = system_type == "off_grid"
+    cost = kw * (cost_per_kw + (OFF_GRID_BATTERY_PER_KW if off_grid else 0))
     sub = subsidy_for(kw, state, include_topup)
+    if off_grid:  # PM Surya Ghar covers grid-connected rooftop systems only
+        sub = dict(sub, central=0, topup=0, total=0)
     net = max(cost - sub["total"], 0)
-    return {"units": round(units), "kw": kw, "system_type": "on_grid", "generation": round(generation),
+    return {"units": round(units), "kw": kw, "system_type": "off_grid" if off_grid else "on_grid",
+            "generation": round(generation),
             "monthly_saving": round(monthly_saving), "yearly_saving": round(monthly_saving * 12),
             "cost": round(cost), "subsidy": sub["total"], "subsidy_central": sub["central"],
             "subsidy_topup": sub["topup"], "topup_available": sub["topup_available"],
             "state": sub["state"], "category": sub["category"], "net_cost": round(net),
             "cost_per_kw": round(cost_per_kw), "tariff": tariff, "custom": custom,
+            "coverage": round(min(generation / units, 1) * 100) if units else 100,
             "payback_years": round(net / (monthly_saving * 12), 1) if monthly_saving else 0,
             "roof_sqft": round(kw * ROOF_SQFT_PER_KW)}
 
@@ -239,7 +286,7 @@ def create_enquiry(db, vals, channel="web", customer_id=None, actor_id=None):
     if not name or not (vals.get("phone") or "").strip():
         raise RuleError("Please enter the customer's name and phone number.")
     data = {k: vals.get(k) for k in ("contact_name", "phone", "email", "street", "city", "requested_kw",
-                                     "system_type", "subsidy_requested", "monthly_bill", "monthly_units",
+                                     "system_type", "subsidy_requested", "monthly_bill", "monthly_units", "state",
                                      "roof_area_sqft", "notes", "discom", "consumer_no") if vals.get(k) is not None}
     data.update({"channel": channel, "stage": "new", "customer_id": customer_id,
                  "salesperson_id": vals.get("salesperson_id") or pick_salesperson(db),
@@ -276,6 +323,8 @@ def schedule_survey(db, lead, technician_id, survey_date, actor_id):
                         "units, and a suitable grid connection.")
     if not technician_id:
         raise RuleError("Choose the technician who will visit.")
+    if not is_active_role(db, technician_id, ("technician",)):
+        raise RuleError("Choose an active technician for the visit.")
     sid = db.insert("surveys", {
         "ref": db.next_ref("survey", "SRV-"), "lead_id": lead["id"], "technician_id": technician_id,
         "survey_date": survey_date, "state": "scheduled",
@@ -399,9 +448,17 @@ def quote_link(db, order):
 
 
 # Mark a quote as sent and email it (also creating the customer's login if needed).
+def check_quote_lines(db, order):
+    if db.val("SELECT COUNT(*) FROM order_lines WHERE order_id = ? AND qty <= 0", order["id"]):
+        raise RuleError("Every line needs a quantity above zero.")
+    if (order["amount_total"] or 0) <= 0:
+        raise RuleError("The quotation total is zero. Add the package before sending or confirming.")
+
+
 def send_quote(db, order, actor_id):
     if order["state"] not in ("draft", "sent"):
         raise RuleError("Only quotations can be sent.")
+    check_quote_lines(db, order)
     if not approved_survey(db, order["lead_id"]) and order["lead_id"]:
         raise RuleError("The customer can only receive a quote after the roof survey is approved.")
     cust = db.get("customers", order["customer_id"])
@@ -444,6 +501,9 @@ def confirm_order(db, order, actor_id=None, invite=True, accepted_by=None):
         raise RuleError("This order is already %s." % label(ORDER_STATES, order["state"]).lower())
     if order["lead_id"] and not approved_survey(db, order["lead_id"]):
         raise RuleError("The roof survey must be approved before the order is confirmed.")
+    check_quote_lines(db, order)
+    if not claim(db, "orders", order["id"], ("draft", "sent"), "sale"):
+        raise RuleError("This order was just confirmed by someone else.")
     data = {"state": "sale", "confirmed_at": now()}
     if accepted_by:
         data.update({"accepted_by": accepted_by, "accepted_at": now()})
@@ -471,10 +531,10 @@ def confirm_order(db, order, actor_id=None, invite=True, accepted_by=None):
                              "notes": "Install %g kW %s – %s" % (order["kw"], label_type, cust["name"])})
     # subsidy paperwork
     lead = db.get("leads", order["lead_id"]) if order["lead_id"] else None
-    if lead and lead["subsidy_requested"]:
+    if lead and lead["subsidy_requested"] and order["system_type"] == "on_grid":  # PM Surya Ghar: grid-connected only
         db.insert("subsidies", {"ref": db.next_ref("subsidy", "SUB-"), "order_id": order["id"],
                                 "customer_id": order["customer_id"], "kw": order["kw"],
-                                "amount_expected": subsidy_expected(order["kw"])})
+                                "amount_expected": subsidy_expected(order["kw"], lead_state(db, order))})
     if lead:
         db.update("leads", lead["id"], {"stage": "won"})
     refresh_delivery_state(db, order["id"])
@@ -490,10 +550,27 @@ def confirm_order(db, order, actor_id=None, invite=True, accepted_by=None):
 def cancel_order(db, order, actor_id):
     if order["state"] == "sale" and db.val("SELECT COUNT(*) FROM deliveries WHERE order_id = ? AND state = 'done'", order["id"]):
         raise RuleError("A dispatched order can't be cancelled.")
+    if order["state"] == "cancel":
+        raise RuleError("This order is already cancelled.")
+    if db.val("SELECT COUNT(*) FROM jobs WHERE order_id = ? AND state != 'planned'", order["id"]):
+        raise RuleError("The crew has already started this installation, so it can't be cancelled here.")
     db.update("orders", order["id"], {"state": "cancel"})
+    db.exec("DELETE FROM delivery_lines WHERE delivery_id IN (SELECT id FROM deliveries WHERE order_id = ? AND state != 'done')", order["id"])
     db.exec("DELETE FROM deliveries WHERE order_id = ? AND state != 'done'", order["id"])
+    db.exec("DELETE FROM job_techs WHERE job_id IN (SELECT id FROM jobs WHERE order_id = ? AND state = 'planned')", order["id"])
     db.exec("DELETE FROM jobs WHERE order_id = ? AND state = 'planned'", order["id"])
-    db.note("order", order["id"], "Order cancelled.", actor_id)
+    db.exec("UPDATE subsidies SET state = 'rejected' WHERE order_id = ? AND state NOT IN ('disbursed', 'rejected')", order["id"])
+    if order["lead_id"]:
+        if order["state"] == "sale":   # a confirmed order was cancelled: the sale is lost
+            db.exec("UPDATE leads SET stage = 'lost', lost_reason = 'Order cancelled' WHERE id = ?", order["lead_id"])
+        elif not db.val("SELECT COUNT(*) FROM orders WHERE lead_id = ? AND state != 'cancel'", order["lead_id"]):
+            # only a quotation was withdrawn: the enquiry goes back to "survey done", ready for a new quote
+            db.exec("UPDATE leads SET stage = 'survey' WHERE id = ? AND stage = 'quoted'", order["lead_id"])
+    paid = order_paid(db, order["id"])
+    msg = "Order cancelled."
+    if paid > 0:
+        msg += " %s was received: arrange the refund, then void the payment(s)." % money(paid)
+    db.note("order", order["id"], msg, actor_id)
 
 
 # ---------------------------------------------------------- money: invoices
@@ -532,8 +609,8 @@ def create_invoice(db, order, kind, amount):
 def final_invoice(db, order, actor_id):
     if order["state"] != "sale":
         raise RuleError("Only confirmed orders can be invoiced.")
-    billed = r2(db.val("SELECT COALESCE(SUM(amount_total), 0) FROM invoices WHERE order_id = ? AND state != 'cancel'",
-                       order["id"]))
+    billed = r2(db.val("SELECT COALESCE(SUM(amount_total), 0) FROM invoices WHERE order_id = ? AND state != 'cancel' "
+                       "AND kind != 'service'", order["id"]))
     rest = r2(order["amount_total"] - billed)
     if rest <= 0.5:
         raise RuleError("The full order value is already invoiced.")
@@ -548,7 +625,8 @@ def final_invoice(db, order, actor_id):
 def allocate_payments(db, order_id):
     """Spread the order's received money over its invoices, oldest first."""
     pool = order_paid(db, order_id)
-    for inv in db.q("SELECT * FROM invoices WHERE order_id = ? AND state != 'cancel' ORDER BY id", order_id):
+    for inv in db.q("SELECT * FROM invoices WHERE order_id = ? AND state != 'cancel' AND kind != 'service' ORDER BY id",
+                    order_id):
         paid = min(pool, inv["amount_total"])
         pool = r2(pool - paid)
         db.update("invoices", inv["id"], {"amount_paid": r2(paid),
@@ -557,7 +635,7 @@ def allocate_payments(db, order_id):
 
 # Record money received for an order (cash, bank, UPI, online...).
 # Creates an advance invoice if needed, and confirms a quotation automatically once the advance is paid.
-def record_payment(db, order, amount, method, actor_id=None, provider_ref=None, purpose="advance"):
+def record_payment(db, order, amount, method, actor_id=None, provider_ref=None, purpose="advance", cap=True):
     """Money received for an order. A payment without an open invoice gets an
     advance invoice (marked paid). An online payment of the advance on a sent
     quotation confirms the order."""
@@ -567,8 +645,11 @@ def record_payment(db, order, amount, method, actor_id=None, provider_ref=None, 
     if order["state"] == "cancel":
         raise RuleError("This order is cancelled.")
     was_due = advance_due(db, order) > 0 or order["state"] != "sale"  # remember: was the advance still missing before this payment?
+    balance = r2(order["amount_total"] - order_paid(db, order["id"]))
+    if cap and amount > balance + 1:   # staff typing an amount; online payments already happened at the bank
+        raise RuleError("That's more than the %s still owed on %s." % (money(max(balance, 0)), order["ref"]))
     open_amount = r2(db.val("SELECT COALESCE(SUM(amount_total - amount_paid), 0) FROM invoices "
-                            "WHERE order_id = ? AND state = 'posted'", order["id"]))
+                            "WHERE order_id = ? AND state = 'posted' AND kind != 'service'", order["id"]))
     pid = db.insert("payments", {"ref": db.next_ref("payment", "PAY-"), "order_id": order["id"],
                                  "customer_id": order["customer_id"], "amount": amount, "method": method,
                                  "provider_ref": provider_ref, "state": "done", "purpose": purpose,
@@ -624,6 +705,10 @@ def validate_delivery(db, delivery, serials_by_line, actor, override=False):
     if delivery["state"] == "done":
         raise RuleError("Already dispatched.")
     order = db.get("orders", delivery["order_id"])
+    if order["state"] != "sale":
+        raise RuleError("%s is not a confirmed order." % order["ref"])
+    if not claim(db, "deliveries", delivery["id"], ("waiting", "ready"), "done"):
+        raise RuleError("This kit was just dispatched by someone else.")
     due = advance_due(db, order)
     if due > 0 and not (override and actor["role"] == "director"):  # only the Director may dispatch without the advance
         raise RuleError("%s cannot be dispatched yet: %s%% advance (%s) is required, %s received so far." % (
@@ -682,6 +767,8 @@ def validate_delivery(db, delivery, serials_by_line, actor, override=False):
 def job_start(db, job, actor_id):
     if job["state"] == "done":
         raise RuleError("This job is already completed.")
+    if db.val("SELECT state FROM orders WHERE id = ?", job["order_id"]) != "sale":
+        raise RuleError("This order is not active, so the job can't start.")
     db.update("jobs", job["id"], {"state": "in_progress", "site_start": job["site_start"] or now()})
     db.note("job", job["id"], "Work started on site.", actor_id)
 
@@ -701,6 +788,8 @@ def job_finish(db, job, actor):
         raise RuleError("The homeowner must sign to accept the work.")
     if not db.val("SELECT COUNT(*) FROM deliveries WHERE order_id = ? AND state = 'done'", job["order_id"]):
         raise RuleError("The kit hasn't been dispatched yet.")
+    if not claim(db, "jobs", job["id"], ("planned", "in_progress"), "done"):
+        raise RuleError("This job was just completed.")
     end = now()
     start = job["site_start"] or end
     hours = max((parse_dt(end) - parse_dt(start)).total_seconds() / 3600.0, 0.25)  # time on site in hours, at least a quarter hour
@@ -736,6 +825,8 @@ def create_ticket(db, customer_id, description, actor_id=None, serial_id=None, f
     description = (description or "").strip()
     if len(description) < 10:
         raise RuleError("Please describe the problem in a few words (at least 10 characters).")
+    if technician_id and not is_active_role(db, technician_id, ("technician",)):
+        raise RuleError("Choose an active technician.")
     data = {"ref": db.next_ref("ticket", "TKT-"), "customer_id": customer_id, "description": description,
             "fault_code": (fault_code or "").strip() or None, "reported_on": now(), "stage": "new",
             "channel": channel, "technician_id": technician_id,
@@ -919,10 +1010,13 @@ def start_online_payment(db, order, amount, purpose, user_id):
 def complete_online_payment(db, payment, provider_ref=None, actor_id=None):
     if payment["state"] == "done":
         return payment["id"]
+    # Claim it first: if the bank confirmation arrives twice (double click, two tabs, a retry),
+    # only one request may turn this pending payment into money received.
+    if db.exec("DELETE FROM payments WHERE id = ? AND state = 'pending'", payment["id"]).rowcount != 1:
+        raise RuleError("This payment was already completed.")
     order = db.get("orders", payment["order_id"])
-    db.exec("DELETE FROM payments WHERE id = ?", payment["id"])  # re-recorded as a completed payment
     return record_payment(db, order, payment["amount"], payment["method"], actor_id,
-                          provider_ref=provider_ref or payment["provider_ref"], purpose=payment["purpose"])
+                          provider_ref=provider_ref or payment["provider_ref"], purpose=payment["purpose"], cap=False)
 
 
 # Check that a payment confirmation really came from Razorpay: Razorpay signs
@@ -933,3 +1027,39 @@ def verify_razorpay_signature(db, razorpay_order_id, razorpay_payment_id, signat
     secret = (db.setting("razorpay_key_secret") or "").encode()
     expected = hmac.new(secret, ("%s|%s" % (razorpay_order_id, razorpay_payment_id)).encode(), hashlib.sha256).hexdigest()
     return bool(secret) and hmac.compare_digest(expected, signature or "")
+
+
+
+# ------------------------------------------------------- customer tracker
+def enquiry_progress(lead, survey):
+    """What a customer sees for an enquiry: an honest status, the next step and
+    dated milestones. Only marks a step done when it really happened."""
+    stage = lead["stage"]
+    sstate = survey["state"] if survey else None
+    contacted = stage != "new" or bool(survey)
+    booked = bool(survey) and sstate in ("scheduled", "done", "approved")
+    visited = sstate in ("done", "approved")
+    when = survey["survey_date"] if survey else None
+    if stage == "lost":
+        status, nxt = "Closed", "This enquiry is closed. Book a new survey any time."
+    elif sstate == "rejected":
+        status, nxt = "Roof not suitable", "Our team found the roof unsuitable. An advisor will call to explain the options."
+    elif sstate == "approved":
+        status, nxt = "Preparing your quotation", "Your quotation will appear here once it is ready."
+    elif sstate == "done":
+        status, nxt = "Survey completed", "We are reviewing the survey before preparing your quotation."
+    elif sstate == "scheduled":
+        status = "Survey booked" + (" · %s" % when[:10] if when else "")
+        nxt = "A technician will visit to measure your roof" + (" on %s." % when[:10] if when else ". We'll confirm the date.")
+    elif contacted:
+        status, nxt = "Survey to be booked", "An advisor has spoken to you and will book your free roof survey."
+    else:
+        status, nxt = "Awaiting advisor call", "An advisor will call you within two working hours (Mon–Sat, 9am–7pm)."
+    steps = [
+        {"label": "Enquiry received", "done": True, "date": lead["created_at"]},
+        {"label": "Advisor call", "done": contacted},
+        {"label": "Survey booked", "done": booked, "date": when if booked else None},
+        {"label": "Survey done", "done": visited},
+        {"label": "Quotation", "done": False},
+    ]
+    return {"status": status, "next": nxt, "steps": steps, "closed": stage == "lost" or sstate == "rejected"}

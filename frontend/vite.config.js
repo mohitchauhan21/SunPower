@@ -8,8 +8,8 @@ const BACKEND = process.env.SUNPOWER_BACKEND || 'http://localhost:8001';
 const AI = process.env.SUNPOWER_AI || 'http://localhost:8000';
 
 const proxy = {
-  '/api': { target: BACKEND, changeOrigin: true },
-  '/print': { target: BACKEND, changeOrigin: true },
+  '/api': { target: BACKEND, changeOrigin: true, xfwd: true },
+  '/print': { target: BACKEND, changeOrigin: true, xfwd: true },
   '/ai': { target: AI, changeOrigin: true, rewrite: (p) => p.replace(/^\/ai/, '') }
 };
 

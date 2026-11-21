@@ -2,19 +2,19 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api.js';
 import { goHome, useAuth } from '../auth.jsx';
+import GoogleButton from '../components/GoogleButton.jsx';
+import Tabs from '../components/ui/Tabs.jsx';
+
+const GOOGLE_ERRORS = {
+  google: 'Google sign-in didn’t complete. Please try again or use your email.',
+  google_off: 'Google sign-in is being set up. Please use your email for now.',
+  inactive: 'This account is switched off. Please contact SunPower.'
+};
 
 // Pages a ?next= may send a user back to, by role
 const STAFF = ['director', 'sales', 'warehouse', 'technician', 'support'];
 const NEXT_ROLES = { '/app': STAFF, '/account': ['customer'] };
 
-export const GoogleMark = () => (
-  <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
-    <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/>
-    <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/>
-    <path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.5 39.6 16.2 44 24 44z"/>
-    <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/>
-  </svg>
-);
 
 export default function Login() {
   const { me, refresh } = useAuth();
@@ -25,9 +25,9 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [providers, setProviders] = useState([]);
-
-  useEffect(() => { api.providers().then((p) => setProviders(p || [])).catch(() => {}); }, []);
+  // Which door: customers vs the SunPower team. Staff links (?next=/app…) open on the team side.
+  const [portal, setPortal] = useState(() => (next && next.startsWith('/app') ? 'team' : 'customer'));
+  const googleError = GOOGLE_ERRORS[params.get('error')] || '';
 
   // Already signed in? Go straight to your own screen.
   useEffect(() => {
@@ -40,7 +40,7 @@ export default function Login() {
     setBusy(true);
     setError('');
     try {
-      await api.login(login.trim(), password);
+      await api.login(login.trim(), password, portal);
       await refresh();
     } catch (err) {
       setError(err.message);
@@ -55,15 +55,18 @@ export default function Login() {
         <h1 className="headline">Sign in</h1>
         <p className="lead">to your SunPower account.</p>
 
-        {providers.map((p) => (
-          <a key={p.id} className="btn btn--secondary btn--block btn--google" href={p.url}>
-            <GoogleMark /> Continue with Google
-          </a>
-        ))}
-        {providers.length > 0 && <div className="auth__or"><span>or</span></div>}
+        <div className="portal-pick">
+          <Tabs label="Sign in as" value={portal} onChange={(v) => { setPortal(v); setError(''); }}
+                items={[{ value: 'customer', label: 'Customer' }, { value: 'team', label: 'SunPower team' }]} />
+          <span className="form-hint">{portal === 'customer'
+            ? 'Track your solar system, payments, warranties and repairs.'
+            : 'Director, sales, warehouse, technicians and service desk. You open on the screens for your role.'}</span>
+        </div>
+
+        <GoogleButton portal={portal} onError={setError} />
 
         <form className="form" onSubmit={submit} noValidate>
-          {error && <div className="form-error" role="alert">{error}</div>}
+          {(error || googleError) && <div className="form-error" role="alert">{error || googleError}</div>}
           <div className="field">
             <label className="label" htmlFor="l-login">Email</label>
             <input id="l-login" className="input" type="email" required autoComplete="username"
@@ -81,7 +84,9 @@ export default function Login() {
             {busy ? 'Signing in…' : 'Sign in'}
           </button>
         </form>
-        <p className="auth__foot muted">New to SunPower? <Link to="/signup" className="auth__small">Create an account</Link></p>
+        {portal === 'customer'
+          ? <p className="auth__foot muted">New to SunPower? <Link to="/signup" className="auth__small">Create an account</Link></p>
+          : <p className="auth__foot muted">Team accounts are created by the Director. Ask them if you can't sign in.</p>}
       </div>
     </section>
   );

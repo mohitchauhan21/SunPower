@@ -16,6 +16,18 @@ router = APIRouter(prefix="/api/staff")
 MAX_PHOTO = 8 * 1024 * 1024
 
 
+def _image_type(data):
+    """The real image type from the file's first bytes (the browser's label can't be trusted;
+    an SVG or HTML file posing as a photo could run scripts when opened)."""
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
 # ------------------------------------------------------------------ stock
 @router.get("/products")
 def products(q: str = "", category: str = "", user=Depends(staff_only), db=Depends(get_db)):
@@ -195,10 +207,11 @@ def update_job(jid: int, body: dict = Body(default={}), user=Depends(staff_only)
 async def job_photo(jid: int, file: UploadFile = File(...), note: str = Form(""), user=Depends(staff_only),
                     db=Depends(get_db)):
     j, _techs, _lvl = _job(db, user, jid, write=True)
-    data = await file.read()
-    if not (file.content_type or "").startswith("image/") or len(data) > MAX_PHOTO:
-        raise HTTPException(400, "Upload a photo (JPG or PNG, up to 8 MB).")
-    aid = db.insert("attachments", {"owner_type": "job", "owner_id": jid, "filename": file.filename[:120], "mime": file.content_type,
+    data = await file.read(MAX_PHOTO + 1)
+    mime = _image_type(data)
+    if not mime or len(data) > MAX_PHOTO:
+        raise HTTPException(400, "Upload a photo (JPG, PNG or WebP, up to 8 MB).")
+    aid = db.insert("attachments", {"owner_type": "job", "owner_id": jid, "filename": (file.filename or "photo")[:120], "mime": mime,
                                     "data": data, "note": note[:200] or None, "created_at": now()})
     if note:
         db.update("jobs", jid, {"photo_check": note[:200]})
@@ -223,8 +236,10 @@ def attachment(aid: int, user=Depends(staff_only), db=Depends(get_db)):
     a = found(db.get("attachments", aid), "Not found.")
     if a["owner_type"] == "job":
         _job(db, user, a["owner_id"])
-    return Response(a["data"], media_type=a["mime"] or "application/octet-stream",
-                    headers={"Cache-Control": "private, max-age=3600"})
+    safe = a["mime"] if a["mime"] in ("image/jpeg", "image/png", "image/webp") else "application/octet-stream"
+    return Response(a["data"], media_type=safe,
+                    headers={"Cache-Control": "private, max-age=3600", "X-Content-Type-Options": "nosniff",
+                             "Content-Security-Policy": "default-src 'none'; sandbox"})
 
 
 # ---------------------------------------------------------------- tickets
@@ -308,6 +323,16 @@ def update_ticket(tid: int, body: dict = Body(default={}), user=Depends(staff_on
         raise HTTPException(400, "This request is closed.")
     fields = ("resolution", "labour_hours", "fault_code") + (("technician_id", "priority") if lvl == "rw" else ())
     vals = clean(body, fields)
+    if vals.get("technician_id") and not rules.is_active_role(db, vals["technician_id"], ("technician",)):
+        raise HTTPException(400, "Choose an active technician.")
+    if vals.get("priority") is not None and str(vals["priority"]) not in ("0", "1", "2"):
+        raise HTTPException(400, "Priority must be normal, high or urgent.")
+    if vals.get("labour_hours") is not None:
+        try:
+            vals["labour_hours"] = float(vals["labour_hours"])
+            assert 0 <= vals["labour_hours"] <= 200
+        except (TypeError, ValueError, AssertionError):
+            raise HTTPException(400, "Labour hours must be between 0 and 200.")
     if "ai_diagnosis" in body and body["ai_diagnosis"]:
         vals["ai_diagnosis"] = json.dumps(body["ai_diagnosis"])[:8000]
     db.update("tickets", tid, vals)
@@ -316,7 +341,10 @@ def update_ticket(tid: int, body: dict = Body(default={}), user=Depends(staff_on
         for l in body.get("lines") or []:
             p = db.get("products", int(l.get("product_id") or 0))
             if p:
-                db.insert("ticket_lines", {"ticket_id": tid, "product_id": p["id"], "qty": max(float(l.get("qty") or 1), 0),
+                qty = float(l.get("qty") or 1)
+                if not 0 < qty <= 1000:
+                    raise HTTPException(400, "Part quantities must be between 1 and 1000.")
+                db.insert("ticket_lines", {"ticket_id": tid, "product_id": p["id"], "qty": qty,
                                            "price_unit": p["price"], "cost": p["cost"],
                                            "new_serial": (l.get("new_serial") or "").strip() or None})
     return {"ok": True}
@@ -324,8 +352,15 @@ def update_ticket(tid: int, body: dict = Body(default={}), user=Depends(staff_on
 
 @router.post("/tickets/{tid}/{action}")
 def ticket_action(tid: int, action: str, user=Depends(staff_only), db=Depends(get_db)):
-    _ticket(db, user, tid, write=True)
+    _t, lvl = _ticket(db, user, tid, write=True)
     t = db.get("tickets", tid)
+    allowed = {"diagnose": ("new",), "repair": ("new", "diagnosed"), "cancel": ("new", "diagnosed", "repair")}
+    if action in allowed and t["stage"] not in allowed[action]:
+        raise HTTPException(400, "This request is %s, so it can't be moved there." % rules.label(rules.TICKET_STAGES, t["stage"]).lower())
+    if action == "cancel" and lvl != "rw":
+        raise HTTPException(403, "Only the service desk can cancel a request.")
+    if action == "reopen" and t["stage"] not in ("awaiting", "closed"):
+        raise HTTPException(400, "Only finished requests can be reopened.")
     if action == "diagnose":
         db.update("tickets", tid, {"stage": "diagnosed"})
     elif action == "repair":

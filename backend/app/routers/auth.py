@@ -19,7 +19,8 @@ from fastapi.responses import RedirectResponse
 from .. import rules
 from ..access import modules_for
 from ..db import get_db, now
-from ..security import (ROLE_HOME, STAFF, check_password, code_problem, create_session, current_user,
+from ..security import (ROLE_HOME, STAFF, check_password, check_password_or_dummy, client_ip, code_problem, create_session,
+                        current_user,
                         end_all_sessions, end_session, hash_password, make_token, optional_user, password_problem,
                         rate_limited, read_token, set_session_cookie, use_token)
 
@@ -30,6 +31,19 @@ CHECK_EMAIL = "This email already has a SunPower account. We've emailed you a li
 GOOGLE_AUTH = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN = "https://oauth2.googleapis.com/token"
 GOOGLE_USERINFO = "https://openidconnect.googleapis.com/v1/userinfo"
+GOOGLE_TOKENINFO = "https://oauth2.googleapis.com/tokeninfo"
+PORTALS = {"customer": ("customer",), "team": STAFF}       # sign-in page: "I am a customer" / "SunPower team"
+PORTAL_NAMES = {"customer": "customer", "team": "SunPower team"}
+
+
+def portal_mismatch(user, portal):
+    """None if the account belongs to the portal chosen on the sign-in page, else a clear message.
+    The portal is only a choice of door: what a person may do always comes from their role."""
+    if portal not in PORTALS or user["role"] in PORTALS[portal]:
+        return None
+    if user["role"] == "customer":
+        return "This is a customer account. Choose \"Customer\" above to sign in."
+    return "This is a SunPower team account. Choose \"SunPower team\" above to sign in."
 
 
 def me_payload(user):
@@ -53,12 +67,19 @@ def me(user=Depends(optional_user)):
 def login(request: Request, response: Response, body: dict = Body(default={}), db=Depends(get_db)):
     email = (body.get("login") or "").strip().lower()[:200]
     password = body.get("password") or ""
-    ip = request.client.host if request.client else "?"
-    if rate_limited("login:%s:%s" % (email, ip), limit=10, window=300):
+    portal = body.get("portal")
+    ip = client_ip(request)
+    # per email+device, and per email from anywhere (stops guessing one account from many addresses)
+    if rate_limited("login:%s:%s" % (email, ip), limit=10, window=300) or rate_limited("login-email:" + email, limit=30, window=900):
         return {"ok": False, "error": "Too many attempts. Wait a few minutes and try again."}
     user = db.one("SELECT * FROM users WHERE email = ? COLLATE NOCASE AND active = 1", email)
-    if not user or not user["password_hash"] or not check_password(password, user["password_hash"]):
-        return {"ok": False, "error": "That email and password don't match. Try again or reset your password."}
+    if not check_password_or_dummy(password, user["password_hash"] if user else None):
+        # one answer for every failure, so it never reveals which emails have accounts
+        return {"ok": False, "error": "That email and password don't match. If you signed up with Google, use "
+                                      "\"Continue with Google\". Otherwise try again or reset your password."}
+    problem = portal_mismatch(user, portal)
+    if problem:
+        return {"ok": False, "field": "portal", "error": problem}
     set_session_cookie(response, create_session(db, user["id"]))
     return {"ok": True, "uid": user["id"], **me_payload(user)}
 
@@ -123,7 +144,7 @@ def recover(request: Request, body: dict = Body(default={}), db=Depends(get_db))
     email = (body.get("email") or "").strip().lower()[:200]
     code = str(body.get("code") or "").strip()
     password = body.get("password") or ""
-    ip = request.client.host if request.client else "?"
+    ip = client_ip(request)
     if not EMAIL_RE.match(email):
         return {"ok": False, "field": "email", "error": "Please enter your email address."}
     if len(code) != 4 or not code.isdigit():
@@ -201,11 +222,28 @@ def reset_confirm(body: dict = Body(default={}), db=Depends(get_db)):
 
 
 # ----------------------------------------------------------------- Google
+def _google_client_id(db):
+    """Settings (Director) first, else GOOGLE_CLIENT_ID in backend/.env."""
+    return (db.setting("google_client_id") or os.environ.get("GOOGLE_CLIENT_ID", "")).strip() or None
+
+
 def _google_cfg(db):
-    """Google sign-in keys: Settings (Director) first, else GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET in backend/.env."""
-    cid = db.setting("google_client_id") or os.environ.get("GOOGLE_CLIENT_ID", "").strip()
+    """Client ID + secret, needed only for the redirect flow (the button flow needs just the ID)."""
+    cid = _google_client_id(db)
     secret = db.setting("google_client_secret") or os.environ.get("GOOGLE_CLIENT_SECRET", "").strip()
     return (cid, secret) if cid and secret else (None, None)
+
+
+def _google_user(db, email, name):
+    """The account for a Google-verified email; a new email gets a customer account (never staff)."""
+    user = db.one("SELECT * FROM users WHERE email = ? COLLATE NOCASE", email)
+    if user:
+        return user
+    name = (name or email.split("@")[0])[:120]
+    cid_ = db.val("SELECT id FROM customers WHERE email = ? COLLATE NOCASE", email) or db.insert(
+        "customers", {"name": name, "email": email, "created_at": now()})
+    uid = db.insert("users", {"name": name, "email": email, "role": "customer", "customer_id": cid_, "created_at": now()})
+    return db.get("users", uid)
 
 
 def _redirect_uri(db):
@@ -214,8 +252,47 @@ def _redirect_uri(db):
 
 @router.get("/providers")
 def providers(db=Depends(get_db)):
-    cid, _secret = _google_cfg(db)
-    return [{"id": "google", "name": "Google", "url": "/api/auth/google/start"}] if cid else []
+    """Google sign-in for the website button. The client ID is public by design (Google's
+    button needs it in the browser); the secret, if any, never leaves the server."""
+    cid = _google_client_id(db)
+    return [{"id": "google", "name": "Google", "enabled": bool(cid), "client_id": cid,
+             "url": "/api/auth/google/start" if _google_cfg(db)[0] else None}]
+
+
+@router.post("/google/token")
+def google_token(request: Request, response: Response, body: dict = Body(default={}), db=Depends(get_db)):
+    """Sign in with the ID token from Google's button. Google signs the token; we ask Google to
+    verify it and check it was issued for our client ID, recently, for a verified email."""
+    cid = _google_client_id(db)
+    credential = str(body.get("credential") or "")
+    ip = client_ip(request)
+    if not cid:
+        return {"ok": False, "error": "Google sign-in is not set up yet."}
+    if not credential or len(credential) > 4096 or rate_limited("google:" + ip, limit=30, window=300):
+        return {"ok": False, "error": "Google sign-in didn't complete. Please try again."}
+    try:
+        info = httpx.get(GOOGLE_TOKENINFO, params={"id_token": credential}, timeout=10).json()
+    except Exception:
+        return {"ok": False, "error": "We couldn't reach Google. Please try again or use your email."}
+    import time as _time
+    email = (info.get("email") or "").lower()
+    valid = (info.get("aud") == cid and info.get("iss") in ("accounts.google.com", "https://accounts.google.com")
+             and str(info.get("email_verified")).lower() == "true" and email
+             and int(info.get("exp") or 0) > _time.time())
+    if not valid:
+        return {"ok": False, "error": "Google sign-in didn't complete. Please try again or use your email."}
+    if body.get("portal") == "team" and not db.val("SELECT id FROM users WHERE email = ? COLLATE NOCASE", email):
+        # nobody new joins the team through Google: team accounts are created by the Director
+        return {"ok": False, "field": "portal", "error": "There's no SunPower team account for this Google address. "
+                                                         "Customers choose \"Customer\" above."}
+    user = _google_user(db, email, info.get("name"))
+    if not user["active"]:
+        return {"ok": False, "error": "This account is switched off. Please contact SunPower."}
+    problem = portal_mismatch(user, body.get("portal"))
+    if problem:
+        return {"ok": False, "field": "portal", "error": problem}
+    set_session_cookie(response, create_session(db, user["id"]))
+    return {"ok": True, **me_payload(user)}
 
 
 @router.get("/google/start")
@@ -248,16 +325,9 @@ def google_callback(request: Request, code: str = "", state: str = "", db=Depend
     email = (info.get("email") or "").lower()
     if not email or not info.get("email_verified"):
         return RedirectResponse(front + "/login?error=google")
-    user = db.one("SELECT * FROM users WHERE email = ? COLLATE NOCASE", email)
-    if user and not user["active"]:
+    user = _google_user(db, email, info.get("name"))
+    if not user["active"]:
         return RedirectResponse(front + "/login?error=inactive")
-    if not user:  # Google sign-up creates customers only
-        name = info.get("name") or email.split("@")[0]
-        cid_ = db.val("SELECT id FROM customers WHERE email = ? COLLATE NOCASE", email) or db.insert(
-            "customers", {"name": name, "email": email, "created_at": now()})
-        uid = db.insert("users", {"name": name, "email": email, "role": "customer", "customer_id": cid_,
-                                  "created_at": now()})
-        user = db.get("users", uid)
     resp = RedirectResponse(front + ROLE_HOME.get(user["role"], "/"))
     set_session_cookie(resp, create_session(db, user["id"]))
     resp.delete_cookie("sp_oauth_state", path="/")

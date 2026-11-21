@@ -28,8 +28,14 @@ FIRST = ["Aarav", "Vihaan", "Ananya", "Diya", "Rohan", "Kavya", "Arjun", "Isha",
          "Harsh", "Nisha", "Yash", "Anjali"]
 LAST = ["Patel", "Shah", "Mehta", "Sharma", "Desai", "Joshi", "Trivedi", "Iyer", "Reddy", "Nair", "Gupta",
         "Verma", "Chauhan", "Parmar", "Rana", "Bhatt"]
-AREAS = ["Satellite", "Bopal", "Navrangpura", "Maninagar", "Gota", "Thaltej", "Vastrapur", "Chandkheda",
-         "Naranpura", "Prahlad Nagar", "Sanand", "Gandhinagar Sec 21"]
+# Demo customers across India: (locality, city, state, electricity board)
+PLACES = [("Satellite", "Ahmedabad", "Gujarat", "Torrent Power"), ("Kothrud", "Pune", "Maharashtra", "MSEDCL"),
+          ("Malviya Nagar", "Jaipur", "Rajasthan", "JVVNL"), ("Gomti Nagar", "Lucknow", "Uttar Pradesh", "MVVNL"),
+          ("Whitefield", "Bengaluru", "Karnataka", "BESCOM"), ("Velachery", "Chennai", "Tamil Nadu", "TANGEDCO"),
+          ("Kondapur", "Hyderabad", "Telangana", "TSSPDCL"), ("Kakkanad", "Kochi", "Kerala", "KSEB"),
+          ("Vijay Nagar", "Indore", "Madhya Pradesh", "MPPKVVCL"), ("Beltola", "Guwahati", "Assam", "APDCL"),
+          ("Sector 35", "Chandigarh", "Chandigarh", "CED"), ("Patia", "Bhubaneswar", "Odisha", "TPCODL"),
+          ("Rohini", "Delhi", "Delhi", "TPDDL"), ("Salt Lake", "Kolkata", "West Bengal", "CESC")]
 TECHS = ["Ramesh Solanki", "Suresh Makwana", "Mahesh Vaghela", "Dinesh Rathod", "Jignesh Prajapati",
          "Bharat Thakor", "Kalpesh Parmar", "Hitesh Gohil", "Nilesh Chavda", "Paresh Barot", "Vipul Dabhi",
          "Hardik Zala", "Mukesh Bariya", "Sanjay Koli", "Ajay Damor"]
@@ -92,6 +98,7 @@ def _dispatch(db, order_id, actor):
 
 def load_demo(db):
     rnd = random.Random(42)
+    db.set_setting("test_payments", "1")      # demo only: lets the test card complete payments
     director = db.get("users", _user(db, "Asha Mehta", "director@sunpower.demo", "director"))
     sales = [_user(db, "Neel Shah", "sales@sunpower.demo", "sales"),
              _user(db, "Kriti Desai", "sales2@sunpower.demo", "sales")]
@@ -118,13 +125,15 @@ def load_demo(db):
         name = "%s %s" % (rnd.choice(FIRST), rnd.choice(LAST))
         email = "%s.%d@example.com" % (name.lower().replace(" ", "."), i)
         phone = "+91 98%08d" % rnd.randint(0, 99999999)
-        street = "%d, %s" % (rnd.randint(1, 250), rnd.choice(AREAS))
-        cid = rules.ensure_customer(db, name, email, phone, street, "Ahmedabad")
+        area, city, state, discom = rnd.choice(PLACES)
+        street = "%d, %s" % (rnd.randint(1, 250), area)
+        cid = rules.ensure_customer(db, name, email, phone, street, city)
+        db.update("customers", cid, {"state": state})
         lid = rules.create_enquiry(db, {
-            "contact_name": name, "phone": phone, "email": email, "street": street, "city": "Ahmedabad",
+            "contact_name": name, "phone": phone, "email": email, "street": street, "city": city, "state": state,
             "requested_kw": plan["kw"], "system_type": plan["type"], "subsidy_requested": plan["type"] == "on_grid",
             "monthly_bill": plan["kw"] * 1000 + rnd.randint(-200, 600), "roof_area_sqft": plan["kw"] * 110 + rnd.randint(0, 150),
-            "discom": "Torrent Power", "consumer_no": "TP%09d" % rnd.randint(0, 10 ** 9),
+            "discom": discom, "consumer_no": "%s%09d" % (discom[:2].upper(), rnd.randint(0, 10 ** 9)),
             "salesperson_id": rnd.choice(sales)}, channel=rnd.choice(["web", "web", "whatsapp", "call", "referral"]),
             customer_id=cid)
         db.update("leads", lid, {"grid_suitable": "yes"})
@@ -277,8 +286,8 @@ def _pipeline(db, rnd, techs, sales, director, today):
         kw = rnd.choice([2, 3, 5])
         lid = rules.create_enquiry(db, {
             "contact_name": name, "phone": "+91 97%08d" % rnd.randint(0, 99999999),
-            "email": "%s.new%d@example.com" % (name.lower().replace(" ", "."), i), "city": "Ahmedabad",
-            "street": "%d, %s" % (rnd.randint(1, 250), rnd.choice(AREAS)), "requested_kw": kw,
+            "email": "%s.new%d@example.com" % (name.lower().replace(" ", "."), i), "city": PLACES[i][1],
+            "state": PLACES[i][2], "street": "%d, %s" % (rnd.randint(1, 250), PLACES[i][0]), "requested_kw": kw,
             "subsidy_requested": True, "salesperson_id": sales[i % 2]}, channel=rnd.choice(["web", "whatsapp", "call"]))
         db.update("leads", lid, {"created_at": _ts(datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=rnd.randint(1, 60)))})
         if i < 2:

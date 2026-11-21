@@ -256,6 +256,8 @@ def connect():
 MIGRATIONS = [
     ("users", "recovery_code_hash", "TEXT"),          # 4-digit code for "forgot password"
     ("users", "onboarded", "INTEGER NOT NULL DEFAULT 0"),  # welcome tour shown once
+    ("leads", "state", "TEXT"),                       # state / UT (sets the subsidy)
+    ("customers", "state", "TEXT"),
 ]
 
 

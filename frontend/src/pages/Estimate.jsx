@@ -1,22 +1,23 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { saveQuotePrefill } from '../quotePrefill.js';
 import { api, inr, num } from '../api.js';
 import { estimateLocal, RULES } from '../solar.js';
-import { DEFAULT_STATE, saveState, savedState, useSubsidyTable } from '../subsidy.js';
+import { saveState, savedState, useSubsidyTable } from '../subsidy.js';
 import Tabs from '../components/ui/Tabs.jsx';
 import ElasticSlider from '../components/ui/ElasticSlider.jsx';
 import Switch from '../components/ui/Switch.jsx';
-import { useToast } from '../components/ui/Toast.jsx';
-import EnquirySuccess from '../components/EnquirySuccess.jsx';
 
 const RANGE = { units: { min: 60, max: 900, step: 10 }, bill: { min: 500, max: 8000, step: 100 } };
+// Typed values beyond these are not a household (10 kW covers ~1,200 units a month).
+const LIMIT = { units: { min: 30, max: 5000 }, bill: { min: 250, max: 50000 } };
 
 export default function Estimate() {
   const [params] = useSearchParams();
-  const toast = useToast();
   const [mode, setMode] = useState(params.get('bill') ? 'bill' : 'units');
   const [units, setUnits] = useState(Number(params.get('units')) || 360);
   const [bill, setBill] = useState(Number(params.get('bill')) || 2800);
+  const navigate = useNavigate();
   const table = useSubsidyTable();
   const [state, setState] = useState(() => params.get('state') || savedState());
   const [topup, setTopup] = useState(false);
@@ -27,12 +28,22 @@ export default function Estimate() {
   const [scanMsg, setScanMsg] = useState('');
   const fileRef = useRef(null);
 
-  const [form, setForm] = useState({ name: '', phone: '', email: '', street: '', city: 'Ahmedabad', subsidy: true });
-  const [sending, setSending] = useState(false);
-  const [done, setDone] = useState(null);
 
   const value = mode === 'units' ? units : bill;
   const setValue = mode === 'units' ? setUnits : setBill;
+  const [typed, setTyped] = useState('');
+  const lim = LIMIT[mode];
+  const usageErr = typed !== '' && (Number(typed) < lim.min || Number(typed) > lim.max)
+    ? (Number(typed) > lim.max
+      ? `That's more than a home uses (max ${mode === 'units' ? `${num(lim.max)} units` : inr(lim.max)} a month). For a factory or large building, request a commercial quote.`
+      : `Enter at least ${mode === 'units' ? `${lim.min} units` : inr(lim.min)} a month.`)
+    : '';
+  const onType = (e) => {
+    const raw = e.target.value;
+    setTyped(raw);
+    const n = Number(raw);
+    if (raw !== '' && n >= lim.min && n <= lim.max) setValue(Math.round(n));
+  };
 
   const stateRow = table?.states.find((x) => x.name === state);
   const customOpts = custom ? {
@@ -53,7 +64,7 @@ export default function Estimate() {
     setEst(estimateLocal(u, b, { state, topup, table, ...customOpts }));
     const t = setTimeout(() => {
       api.estimate({ units: u, bill: b, state, topup, kw: customOpts.kw, cost_per_kw: customOpts.costPerKw, tariff: customOpts.tariff })
-        .then((r) => r && r.kw && setEst(r)).catch(() => {});
+        .then((r) => r && r.kw && r.state && setEst(r)).catch(() => {});
     }, 300);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -84,31 +95,6 @@ export default function Estimate() {
     }
   };
 
-  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
-
-  const submit = async (e) => {
-    e.preventDefault();
-    if (!est) return;
-    setSending(true);
-    try {
-      const res = await api.submitEnquiry({
-        ...form,
-        system_kw: est.kw,
-        system_type: 'on_grid',
-        monthly_bill: mode === 'bill' ? bill : Math.round(est.units * 8),
-        notes: `Website estimate (${est.state}): ${est.units} units/month → ${est.kw} kW On-Grid, subsidy ${inr(est.subsidy)}` +
-          (custom ? `, custom price ${inr(est.cost_per_kw)}/kW at ₹${est.tariff}/unit` : '')
-      });
-      if (!res?.ok) throw new Error(res?.error || 'Request failed');
-      setDone({ ...res, phone: form.phone });
-      toast('Survey request sent. We’ll call you shortly.');
-    } catch (err) {
-      toast(err.message || 'We couldn’t send your request. Please call +91 79 4000 5000.', 'error');
-    } finally {
-      setSending(false);
-    }
-  };
-
   return (
     <>
       <section className="page-head wrap">
@@ -125,7 +111,7 @@ export default function Estimate() {
             <Tabs
               label="Usage input"
               value={mode}
-              onChange={setMode}
+              onChange={(m) => { setTyped(''); setMode(m); }}
               items={[{ value: 'units', label: 'Units' }, { value: 'bill', label: 'Bill' }]}
             />
           </div>
@@ -138,7 +124,7 @@ export default function Estimate() {
           <ElasticSlider
             {...RANGE[mode]}
             value={value}
-            onChange={setValue}
+            onChange={(v) => { setTyped(''); setValue(v); }}
             label={mode === 'units' ? 'Monthly units' : 'Monthly bill'}
             format={(v) => (mode === 'units' ? `${v} kWh` : inr(v))}
           />
@@ -151,9 +137,12 @@ export default function Estimate() {
               type="number"
               min="0"
               inputMode="numeric"
-              value={value || ''}
-              onChange={(e) => setValue(Math.max(0, Number(e.target.value) || 0))}
+              value={typed !== '' ? typed : value || ''}
+              onChange={onType}
+              onBlur={() => !usageErr && setTyped('')}
+              aria-invalid={!!usageErr}
             />
+            {usageErr && <span className="field-error" role="alert">{usageErr}</span>}
             {mode === 'bill' && <span className="form-hint">We assume ₹8 per unit when only the bill is known.</span>}
           </div>
 
@@ -172,10 +161,12 @@ export default function Estimate() {
           <div className="field" style={{ marginTop: 20 }}>
             <label className="label" htmlFor="state">Your state</label>
             <select id="state" className="select" value={state} onChange={(e) => pickState(e.target.value)}>
-              {(table?.states || [{ name: DEFAULT_STATE }]).map((s) => <option key={s.name} value={s.name}>{s.name}</option>)}
+              <option value="">Select your state</option>
+                    {(table?.states || []).map((s) => <option key={s.name} value={s.name}>{s.name}</option>)}
             </select>
             <span className="form-hint">
-              {stateRow?.category === 'special'
+              {!state ? 'Pick your state: special-category states get 10% more. Until then we show the standard rate.'
+                : stateRow?.category === 'special'
                 ? 'Special-category state: 10% higher central subsidy (up to ₹85,800).'
                 : 'Central subsidy: ₹30,000/kW for 2 kW + ₹18,000 for the 3rd kW (up to ₹78,000).'}
             </span>
@@ -225,6 +216,12 @@ export default function Estimate() {
               <span className="label">{custom && c.kw ? 'Your system' : 'Recommended system'}</span>
               <div className="est__kw tabular" style={{ marginTop: 8 }}>{est.kw}<span>kW On-Grid</span></div>
               {custom && <span className="pill pill--warn" style={{ marginTop: 6 }}>Custom calculation</span>}
+              {est.units > 0 && est.coverage < 100 && (
+                <p className="est__note" role="note">
+                  Covers about {est.coverage}% of your usage{custom ? '' : ' (10 kW is the largest home system)'}. The rest still comes from the grid.
+                  {!custom && <> For more, <Link to="/quote" className="link">request a custom quote</Link>.</>}
+                </p>
+              )}
               <p className="muted small" style={{ marginTop: 10 }}>
                 {est.units ? `Based on ${num(est.units)} units a month. ` : ''}Needs about {num(est.roof_sqft)} sq ft of shadow-free roof.
               </p>
@@ -236,10 +233,19 @@ export default function Estimate() {
               </div>
               <div className="rows tabular">
                 <div><span className="muted">{custom ? `System price (${est.kw} kW × ${inr(est.cost_per_kw)})` : 'Indicative system price'}</span><span>{inr(est.cost)}</span></div>
-                <div><span className="muted">PM Surya Ghar subsidy · {est.state}</span><span className="good">− {inr(est.subsidy_central ?? est.subsidy)}</span></div>
-                {est.subsidy_topup > 0 && <div><span className="muted">{est.state} top-up (reported)</span><span className="good">− {inr(est.subsidy_topup)}</span></div>}
+                <div><span className="muted">PM Surya Ghar subsidy · {state || 'standard rate'}</span><span className="good">− {inr(est.subsidy_central ?? est.subsidy)}</span></div>
+                {est.subsidy_topup > 0 && <div><span className="muted">{state} top-up (reported)</span><span className="good">− {inr(est.subsidy_topup)}</span></div>}
                 <div className="total"><span>You pay, approximately</span><span>{inr(est.net_cost)}</span></div>
               </div>
+              <button type="button" className="btn btn--primary btn--block" style={{ marginTop: 20 }}
+                      onClick={() => {
+                        saveQuotePrefill({
+                          kw: est.kw, state, topup, units: est.units,
+                          monthly_bill: mode === 'bill' ? bill : Math.round(est.units * (est.tariff || 8)),
+                          custom: custom ? { costPerKw: est.cost_per_kw, tariff: est.tariff } : null
+                        });
+                        navigate('/quote?from=estimate');
+                      }}>Get a quote for {est.kw} kW</button>
             </>
           ) : (
             <p className="empty">Enter your monthly usage to see your estimate.</p>
@@ -247,37 +253,6 @@ export default function Estimate() {
         </div>
       </section>
 
-      {/* BOOK SURVEY */}
-      <section className="section">
-        <div className="wrap wrap--narrow">
-          <div className="card card--alt">
-            {done ? (
-              <EnquirySuccess result={done} onReset={() => setDone(null)} resetLabel="Recalculate" />
-            ) : (
-              <form className="form" onSubmit={submit}>
-                <div>
-                  <h2 className="title">Book your free site survey.</h2>
-                  <p className="muted" style={{ marginTop: 8 }}>
-                    For your {est ? `${est.kw} kW` : ''} system. An advisor will call you within two working hours.
-                  </p>
-                </div>
-                <div className="form-row">
-                  <div className="field"><label className="label" htmlFor="e-name">Full name</label><input id="e-name" className="input" required value={form.name} onChange={set('name')} autoComplete="name" /></div>
-                  <div className="field"><label className="label" htmlFor="e-phone">Phone</label><input id="e-phone" className="input" type="tel" required value={form.phone} onChange={set('phone')} autoComplete="tel" /></div>
-                  <div className="field"><label className="label" htmlFor="e-email">Email <span className="form-hint">(optional)</span></label><input id="e-email" className="input" type="email" value={form.email} onChange={set('email')} autoComplete="email" /></div>
-                  <div className="field"><label className="label" htmlFor="e-city">City</label><input id="e-city" className="input" value={form.city} onChange={set('city')} autoComplete="address-level2" /></div>
-                  <div className="field field--full"><label className="label" htmlFor="e-street">Address <span className="form-hint">(optional)</span></label><input id="e-street" className="input" value={form.street} onChange={set('street')} autoComplete="street-address" /></div>
-                </div>
-                <Switch checked={form.subsidy} onChange={(v) => setForm((f) => ({ ...f, subsidy: v }))}>Apply for the PM Surya Ghar subsidy</Switch>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
-                  <span className="form-hint">Prefer more options? <Link to="/quote" className="link">Request a full quote</Link></span>
-                  <button type="submit" className="btn btn--primary" disabled={sending || !est}>{sending ? 'Sending…' : 'Book free survey'}</button>
-                </div>
-              </form>
-            )}
-          </div>
-        </div>
-      </section>
     </>
   );
 }

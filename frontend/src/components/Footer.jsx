@@ -9,7 +9,7 @@ export default function Footer() {
           <div>
             <Logo />
             <p style={{ marginTop: 12, maxWidth: 320, lineHeight: 1.5 }}>
-              Rooftop solar for homes and small businesses in Ahmedabad. Surveyed, installed and serviced by our own crew.
+              Rooftop solar for homes and small businesses across India. Surveyed, installed and serviced by our own crew.
             </p>
           </div>
           <div>
@@ -32,7 +32,7 @@ export default function Footer() {
             <h4>Contact</h4>
             <a href="tel:+917940005000">+91 79 4000 5000</a>
             <a href="mailto:hello@sunpower.example">hello@sunpower.example</a>
-            <span>12 Solar Park Road, SG Highway, Ahmedabad 380054</span>
+            <span>Head office: 12 Solar Park Road, SG Highway, Ahmedabad 380054</span>
           </div>
         </div>
         <div className="footer__legal">

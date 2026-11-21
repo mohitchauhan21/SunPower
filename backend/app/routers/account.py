@@ -68,7 +68,7 @@ def overview(user=Depends(customer), db=Depends(get_db)):
         s = db.one("SELECT s.*, u.name AS tech FROM surveys s LEFT JOIN users u ON u.id = s.technician_id "
                    "WHERE s.lead_id = ? ORDER BY s.id DESC LIMIT 1", l["id"])
         enquiries.append({"id": l["id"], "name": l["ref"], "created": l["created_at"], "kw": l["requested_kw"] or 0,
-                          "stage": rules.label(rules.LEAD_STAGES, l["stage"]),
+                          "stage": rules.label(rules.LEAD_STAGES, l["stage"]), **rules.enquiry_progress(l, s),
                           "survey": {"state": rules.label(rules.SURVEY_STATES, s["state"]), "date": s["survey_date"],
                                      "technician": s["tech"]} if s else None})
     warranties = db.q("SELECT w.*, p.name AS product, s.name AS serial FROM warranties w JOIN products p ON p.id = w.product_id "
@@ -105,7 +105,8 @@ def overview(user=Depends(customer), db=Depends(get_db)):
 def quote(order_id: int, user=Depends(customer), db=Depends(get_db)):
     o = _order(db, user, order_id, ("sent", "sale"))
     lines = db.q("SELECT description, qty, price_unit, discount, tax_rate, subtotal FROM order_lines WHERE order_id = ?", o["id"])
-    sub = rules.subsidy_expected(o["kw"]) if db.val("SELECT subsidy_requested FROM leads WHERE id = ?", o["lead_id"]) else 0
+    sub = (rules.subsidy_expected(o["kw"], rules.lead_state(db, o))
+           if o["system_type"] == "on_grid" and db.val("SELECT subsidy_requested FROM leads WHERE id = ?", o["lead_id"]) else 0)
     return {**order_summary(db, o), "lines": lines, "untaxed": o["amount_untaxed"], "tax": o["amount_tax"],
             "note": o["note"], "accepted_by": o["accepted_by"], "accepted_at": o["accepted_at"],
             "subsidy_expected": sub, "est_kwh_year": o["est_kwh_year"], "est_savings_year": o["est_savings_year"],

@@ -15,6 +15,9 @@ async function call(method, url, body, isForm = false) {
     throw new Error('We can’t reach SunPower right now. Check your connection and try again.');
   }
   const data = await res.json().catch(() => null);
+  // Signed out elsewhere or the session expired: let the app re-check who is signed in
+  // (pages then send the person to the sign-in page instead of showing broken screens).
+  if (res.status === 401 && !url.startsWith('/api/auth/')) window.dispatchEvent(new Event('sp:unauthorized'));
   if (!res.ok) {
     const detail = typeof data?.detail === 'string' ? data.detail : null;
     const err = new Error(detail || (res.status >= 500
@@ -55,7 +58,8 @@ export const api = {
   estimate: (values) => post('/api/sunpower/estimate', values),
   // auth
   me: () => get('/api/auth/me'),
-  login: (login, password) => ok(post('/api/auth/login', { login, password })),
+  login: (login, password, portal) => ok(post('/api/auth/login', { login, password, portal })),
+  googleToken: (credential, portal) => post('/api/auth/google/token', { credential, portal }),
   logout: () => post('/api/auth/logout'),
   providers: () => get('/api/auth/providers'),
   signup: (values) => post('/api/auth/signup', values),

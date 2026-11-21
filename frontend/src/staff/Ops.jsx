@@ -548,7 +548,16 @@ export function Ticket() {
             <KV items={[['Parts', inr(t.parts_price)], ['Labour', `${inr(t.labour)} (${t.labour_hours || 0} h × ${inr(t.labour_rate)})`],
               ['Customer pays', <strong key="c">{t.under_warranty ? 'Nothing (warranty)' : inr(t.customer_charge)}</strong>],
               me.role === 'director' && ['Cost to company', inr(t.repair_cost)],
-              t.invoice && ['Invoice', `${t.invoice.ref} · ${inr(t.invoice.amount_total)} incl. GST`]]} />
+              t.invoice && ['Invoice', `${t.invoice.ref} · ${inr(t.invoice.amount_total)} incl. GST · ${t.invoice.state === 'paid' ? 'paid' : `${inr(t.invoice.amount_total - t.invoice.amount_paid)} unpaid`}`]]} />
+            {t.invoice && t.invoice.state === 'posted' && ['director', 'sales', 'support'].includes(me.role) && (
+              <button type="button" className="btn btn--secondary btn--sm" disabled={busy === 'paid'} style={{ marginTop: 10 }}
+                      onClick={() => {
+                        const due = Math.round((t.invoice.amount_total - t.invoice.amount_paid) * 100) / 100;
+                        if (!window.confirm(`Record ${inr(due)} received in cash for ${t.invoice.ref}?`)) return;
+                        run('paid', () => post(`/api/staff/invoices/${t.invoice.id}/payment`, { amount: due, method: 'cash' }),
+                          'Payment recorded.').then((r) => r && reload());
+                      }}>Record payment received</button>
+            )}
           </Section>
           <Section title="Resolution" actions={open && <button className="btn btn--primary btn--sm" disabled={busy === 'save'} onClick={save}>Save</button>}>
             <F label="What was repaired or replaced?" type="textarea" value={t.resolution} onChange={set('resolution')} disabled={!open} />

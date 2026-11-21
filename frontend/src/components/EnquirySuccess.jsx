@@ -8,7 +8,7 @@ export default function EnquirySuccess({ result, onReset, resetLabel = 'Send ano
       </div>
       <h2>Thank you{result.contact ? `, ${result.contact.split(' ')[0]}` : ''}.</h2>
       <p>
-        Your enquiry is registered as <span className="ref">#{result.id}</span>. An advisor will call
+        Your enquiry is registered as <span className="ref">{result.ref || `#${result.id}`}</span>. An advisor will call
         {result.phone ? <> you on <strong>{result.phone}</strong></> : ' you'} within two working hours.
       </p>
       <div className="actions">

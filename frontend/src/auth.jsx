@@ -25,6 +25,13 @@ export function AuthProvider({ children }) {
   }, []);
 
   useEffect(() => { refresh(); }, [refresh]);
+  // A request came back "please sign in": the session ended (expired, signed out elsewhere,
+  // account switched off). Re-check, so the page guards send the person to sign in.
+  useEffect(() => {
+    const onUnauthorized = () => { refresh(); };
+    window.addEventListener('sp:unauthorized', onUnauthorized);
+    return () => window.removeEventListener('sp:unauthorized', onUnauthorized);
+  }, [refresh]);
 
   return <AuthContext.Provider value={{ me, refresh, signOut }}>{children}</AuthContext.Provider>;
 }

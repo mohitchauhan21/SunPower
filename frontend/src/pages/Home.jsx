@@ -56,7 +56,7 @@ export default function Home() {
           <Reveal>
             <span className="eyebrow">SunPower Rooftop Solar</span>
             <h1 className="display">Sunlight,<br />well spent.</h1>
-            <p className="lead">Rooftop solar for Ahmedabad homes. Surveyed, installed and serviced by one team, with the government subsidy handled for you.</p>
+            <p className="lead">Rooftop solar for homes across India. Surveyed, installed and serviced by one team, with the government subsidy handled for you.</p>
             <div className="actions">
               <Link to="/quote" className="btn btn--primary">Book a free survey</Link>
               <Link to="/estimate" className="link">Estimate your savings</Link>
@@ -182,7 +182,7 @@ export default function Home() {
           <div className="section__head">
             <span className="eyebrow">Installations</span>
             <h2 className="headline">For every kind of rooftop.</h2>
-            <p className="lead">Homes, housing societies and businesses across Ahmedabad.</p>
+            <p className="lead">Homes, housing societies and businesses across India.</p>
           </div>
           <AccordionGallery items={GALLERY} height={460} radius={24} gap={12} accentColor="#ffffff" overlayColor="#1d1d1f" grayscale={false} tilt={0} />
         </div>

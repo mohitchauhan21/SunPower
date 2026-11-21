@@ -129,12 +129,34 @@ def create_session(db, user_id):
     return token
 
 
+def _secure_cookies():
+    """Send cookies only over HTTPS when the site runs on HTTPS (set SUNPOWER_SECURE_COOKIES=1)."""
+    import os
+    return os.environ.get("SUNPOWER_SECURE_COOKIES", "0") == "1"
+
+
 def set_session_cookie(response, token):
     """Put the session token in the browser as a cookie.
     httponly=True: JavaScript on the page can't read it (protects against XSS).
-    samesite="lax": other websites can't send it along with their own forms."""
+    samesite="lax": other websites can't send it along with their own forms.
+    secure (when configured): the browser only sends it over HTTPS."""
     response.set_cookie(COOKIE, token, max_age=SESSION_DAYS * 86400, httponly=True,
-                        samesite="lax", path="/")
+                        samesite="lax", path="/", secure=_secure_cookies())
+
+
+# Checked against when the email is unknown, so a wrong email takes as long as a wrong password
+# (otherwise response times would reveal which emails have accounts).
+_DUMMY_HASH = None
+
+
+def check_password_or_dummy(password, stored):
+    global _DUMMY_HASH
+    if stored:
+        return check_password(password, stored)
+    if _DUMMY_HASH is None:
+        _DUMMY_HASH = hash_password(secrets.token_urlsafe(12))
+    check_password(password, _DUMMY_HASH)
+    return False
 
 
 def end_session(db, request, response):
@@ -208,6 +230,17 @@ def rate_limited(key, limit=3, window=3600):
         return True
     log.append(now)
     return False
+
+
+def client_ip(request):
+    """The visitor's address. Behind our own proxy (the website dev server or a reverse proxy on
+    this machine) every request comes from 127.0.0.1, so then the forwarded address is used;
+    from anywhere else the header is ignored (it could be faked)."""
+    host = request.client.host if request.client else "?"
+    fwd = request.headers.get("x-forwarded-for")
+    if fwd and host in ("127.0.0.1", "::1", "localhost"):
+        return fwd.split(",")[0].strip()[:64]
+    return host
 
 
 def reset_rate_limits():

@@ -91,18 +91,14 @@ function Overview({ data, reload }) {
               <h3>{e.kw ? `${e.kw} kW enquiry` : 'Solar enquiry'}</h3>
               <p className="muted small">Received {fmtDate(e.created)}</p>
             </div>
-            <span className="pill">{e.stage}</span>
+            <span className={`pill ${e.closed ? '' : 'pill--warn'}`}>{e.status || e.stage}</span>
           </header>
-          <Tracker steps={[
+          <Tracker steps={e.steps || [
             { label: 'Enquiry received', done: true },
-            { label: 'Roof survey', done: !!e.survey && /done|approved/i.test(e.survey.state), date: e.survey?.date },
             { label: 'Quotation', done: false },
           ]} />
-          <p className="muted small">
-            {e.survey
-              ? `Survey: ${e.survey.state}${e.survey.technician ? ` · ${e.survey.technician}` : ''}`
-              : 'An advisor will call you within two working hours to book your free roof survey.'}
-          </p>
+          <p className="small"><strong>Next:</strong> <span className="muted">{e.next}</span></p>
+          {e.survey?.technician && <p className="muted small">Surveyor: {e.survey.technician}</p>}
           <div className="actions actions--left">
             <button type="button" className="link--btn row-del" onClick={async () => {
               if (!window.confirm('Cancel this enquiry? We won’t contact you about it again.')) return;

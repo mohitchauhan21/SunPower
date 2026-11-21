@@ -58,7 +58,7 @@ function NewEnquiry({ onDone }) {
   const navigate = useNavigate();
   const { busy, run } = useAction();
   const [raw, setRaw] = useState('');
-  const [f, setF] = useState({ channel: 'whatsapp', contact_name: '', phone: '', email: '', street: '', city: 'Ahmedabad',
+  const [f, setF] = useState({ channel: 'whatsapp', contact_name: '', phone: '', email: '', street: '', city: '',
     requested_kw: '', system_type: 'on_grid', subsidy_requested: true, monthly_bill: '', notes: '' });
   const set = (k) => (v) => setF((s) => ({ ...s, [k]: v }));
   const fill = async () => {
@@ -342,7 +342,7 @@ export function Order() {
                   {o.lines.map((l) => (
                     <tr key={l.id}>
                       <td>{l.description}</td>
-                      <td className="num">{draft ? <input className="input input--xs" type="number" min="0" value={l.qty} onChange={(e) => setLine(l.id, 'qty', e.target.value)} /> : l.qty}</td>
+                      <td className="num">{draft ? <input className="input input--xs" type="number" min="1" value={l.qty} onChange={(e) => setLine(l.id, 'qty', e.target.value)} /> : l.qty}</td>
                       <td className="num">{inr(l.price_unit)}</td>
                       <td className="num">{draft ? <input className="input input--xs" type="number" min="0" max={me.role === 'director' ? 100 : 10} value={l.discount} onChange={(e) => setLine(l.id, 'discount', e.target.value)} /> : l.discount || '—'}</td>
                       <td className="num">{l.tax_rate}%</td>

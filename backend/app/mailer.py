@@ -40,7 +40,8 @@ def branded(db, title, paragraphs, button=None, link=None, footer=None):
     escape() turns characters like < and & into safe codes so names can't break the HTML.
     """
     company = escape(db.setting("company_name", "SunPower"))
-    body = "".join("<p>%s</p>" % p for p in paragraphs)     # join the paragraphs into one string
+    # escape(): names and other text typed by people can't inject HTML/links into the email
+    body = "".join("<p>%s</p>" % escape(str(p)) for p in paragraphs)
     btn = ""
     if button and link:
         btn = ('<p><a href="%s" style="display:inline-block;background:#1d1d1f;color:#fff;'

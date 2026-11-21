@@ -124,7 +124,11 @@ def test_installation_needs_checklist_photo_kw_signature(client):
     client.post("/api/staff/jobs/%s/start" % jid, headers=H)
     r = client.post("/api/staff/jobs/%s/finish" % jid, headers=H)
     assert r.status_code == 400 and "Checklist" in r.json()["detail"]
-    up = client.post("/api/staff/jobs/%s/photos" % jid, headers=H, files={"file": ("roof.png", b"\x89PNG fake", "image/png")})
+    svg = client.post("/api/staff/jobs/%s/photos" % jid, headers=H,
+                      files={"file": ("roof.png", b"<svg onload=alert(1)>", "image/png")})
+    assert svg.status_code == 400                      # not a real image: refused whatever the label says
+    up = client.post("/api/staff/jobs/%s/photos" % jid, headers=H,
+                     files={"file": ("roof.png", b"\x89PNG\r\n\x1a\n" + b"0" * 64, "image/png")})
     assert up.status_code == 200 and up.json()["ok"]
 
 
@@ -157,3 +161,178 @@ def test_state_wise_subsidy_and_custom_price(client):
     assert (custom["cost"], custom["subsidy"], custom["net_cost"], custom["custom"]) == (220000, 108000, 112000, True)
     table = client.get("/api/sunpower/subsidy-states").json()
     assert len(table["states"]) == 36 and table["average"]["3"] == 81033
+
+
+def test_enquiry_checks_phone_state_and_duplicates(client):
+    send = lambda **b: client.post("/api/sunpower/enquiry", json=b, headers=H).json()
+    assert send(name="Asha Rao", phone="12345")["field"] == "phone"
+    assert send(name="Asha Rao", phone="98765 11111", state="Atlantis")["field"] == "state"
+    first = send(name="Asha Rao", phone="+91 98765-11111", state="kerala", system_type="off_grid", monthly_bill=3000,
+                 estimate={"kw": 3, "cost": 279000, "subsidy": 0, "net_cost": 279000})
+    assert first["ok"] and not first.get("duplicate")
+    again = send(name="Asha Rao", phone="9876511111")            # same phone pressed twice
+    assert again["ok"] and again["duplicate"] and again["id"] == first["id"]
+    login(client, "director@sunpower.demo")
+    lead = client.get("/api/staff/leads/%s" % first["id"]).json()
+    assert lead["phone"] == "+919876511111" and lead["state"] == "Kerala" and "estimated total" in lead["notes"]
+
+
+def test_off_grid_estimate_has_no_subsidy(client):
+    e = client.post("/api/sunpower/estimate", json={"units": 360, "system_type": "off_grid"}, headers=H).json()
+    assert e["subsidy"] == 0 and e["cost"] == 3 * (65000 + 28000) and e["system_type"] == "off_grid"
+
+
+def test_enquiry_progress_is_truthful():
+    from app.rules import enquiry_progress
+    lead = {"stage": "new", "created_at": "2026-11-22 10:00:00"}
+    p = enquiry_progress(lead, None)
+    assert p["status"] == "Awaiting advisor call" and [s["done"] for s in p["steps"]] == [True, False, False, False, False]
+    p = enquiry_progress(dict(lead, stage="survey"), {"state": "scheduled", "survey_date": "2026-11-25 10:00:00"})
+    assert p["status"].startswith("Survey booked") and [s["done"] for s in p["steps"]][:4] == [True, True, True, False]
+
+
+# ---------------------------------------------------------------- audit fixes
+def test_portal_choice_must_match_the_account(client):
+    reset_rate_limits()
+    client.cookies.clear()
+    r = client.post("/api/auth/login", json={"login": "customer@sunpower.demo", "password": DEMO_PASSWORD, "portal": "team"},
+                    headers=H).json()
+    assert not r["ok"] and r["field"] == "portal" and "customer account" in r["error"]
+    assert not client.get("/api/auth/me").json()["authenticated"]      # no session on a mismatch
+    r = client.post("/api/auth/login", json={"login": "sales@sunpower.demo", "password": DEMO_PASSWORD, "portal": "customer"},
+                    headers=H).json()
+    assert not r["ok"] and "team account" in r["error"]
+    r = client.post("/api/auth/login", json={"login": "sales@sunpower.demo", "password": DEMO_PASSWORD, "portal": "team"},
+                    headers=H).json()
+    assert r["ok"] and r["role"] == "sales"
+
+
+def test_google_token_is_verified_on_the_server(client):
+    providers = client.get("/api/auth/providers").json()
+    assert providers[0]["id"] == "google" and "client_secret" not in str(providers)
+    r = client.post("/api/auth/google/token", json={"credential": "not-a-real-token"}, headers=H).json()
+    assert not r["ok"]
+
+
+def test_technician_cannot_note_other_peoples_work(client):
+    login(client, "director@sunpower.demo")
+    others = [j for j in client.get("/api/staff/jobs").json()["rows"] if "Ramesh" not in (j["crew"] or "")]
+    login(client, "tech01@sunpower.demo")
+    r = client.post("/api/staff/notes", json={"model": "job", "res_id": others[0]["id"], "body": "sneaky"}, headers=H)
+    assert r.status_code == 404
+    r = client.post("/api/staff/notes", json={"model": "job", "res_id": 999999, "body": "x"}, headers=H)
+    assert r.status_code == 404
+
+
+def test_payments_cannot_exceed_the_balance_or_repeat(client):
+    login(client, "sales@sunpower.demo")
+    order = next(o for o in client.get("/api/staff/orders", params={"state": "sale"}).json()["rows"]
+                 if o["amount_total"] - o["paid"] > 1000)
+    left = order["amount_total"] - order["paid"]
+    r = client.post("/api/staff/orders/%s/payment" % order["id"], json={"amount": left + 5000, "method": "cash"}, headers=H)
+    assert r.status_code == 400 and "owed" in r.json()["detail"]
+    ok1 = client.post("/api/staff/orders/%s/payment" % order["id"], json={"amount": 500, "method": "upi"}, headers=H)
+    ok2 = client.post("/api/staff/orders/%s/payment" % order["id"], json={"amount": 500, "method": "upi"}, headers=H)
+    assert ok1.status_code == 200 and ok2.status_code == 400          # double click: recorded once
+
+
+def test_online_payment_completes_only_once(client):
+    from app.db import session
+    from app import rules
+    with session() as db:
+        o = next(x for x in db.q("SELECT * FROM orders WHERE state = 'sale' ORDER BY id")
+                 if x["amount_total"] - rules.order_paid(db, x["id"]) > 200)
+        info = rules.start_online_payment(db, o, 100, "balance", None)
+        p = db.get("payments", info["payment_id"])
+        before = rules.order_paid(db, o["id"])
+        rules.complete_online_payment(db, p)
+        try:
+            rules.complete_online_payment(db, p)      # the same confirmation arriving twice
+            raised = False
+        except rules.RuleError:
+            raised = True
+        assert raised and rules.order_paid(db, o["id"]) == before + 100
+        db.rollback()
+
+
+def test_ticket_moves_only_forward(client):
+    login(client, "support@sunpower.demo")
+    closed = client.get("/api/staff/tickets", params={"stage": "closed"}).json()["rows"]
+    if closed:
+        r = client.post("/api/staff/tickets/%s/diagnose" % closed[0]["id"], headers=H)
+        assert r.status_code == 400
+    new = client.post("/api/staff/tickets", json={"customer_id": 1, "description": "Inverter beeping every night",
+                                                   "technician_id": 1}, headers=H)
+    assert new.status_code == 400                     # user 1 is not a technician
+
+
+def test_service_invoices_stay_out_of_order_money(client):
+    from app.db import session
+    from app import rules
+    with session() as db:
+        o = db.one("SELECT * FROM orders WHERE state = 'sale' ORDER BY id LIMIT 1")
+        db.insert("invoices", {"ref": "INV-T", "order_id": o["id"], "customer_id": o["customer_id"], "kind": "service",
+                               "amount_untaxed": 1000, "amount_tax": 180, "amount_total": 1180, "date": rules.today()})
+        rules.allocate_payments(db, o["id"])
+        svc = db.one("SELECT * FROM invoices WHERE ref = 'INV-T'")
+        assert svc["amount_paid"] == 0 and svc["state"] == "posted"   # order money never pays a repair invoice
+        db.rollback()
+
+
+def test_emails_escape_names():
+    from app import mailer
+
+    class FakeDB:
+        def setting(self, k, d=None):
+            return d
+    html = mailer.branded(FakeDB(), "T", ["Hi <a href='x'>Bob</a>,"])
+    assert "<a href" not in html and "&lt;a href" in html
+
+
+def test_cancelling_a_quote_keeps_the_enquiry(client):
+    from app.db import session
+    from app import rules
+    with session() as db:
+        o = db.one("SELECT * FROM orders WHERE state IN ('draft','sent') AND lead_id IS NOT NULL ORDER BY id LIMIT 1")
+        if o:
+            db.update("leads", o["lead_id"], {"stage": "quoted"})
+            rules.cancel_order(db, o, None)
+            assert db.val("SELECT stage FROM leads WHERE id = ?", o["lead_id"]) != "lost"
+        db.rollback()
+
+
+def test_refused_dispatch_changes_nothing(client):
+    login(client, "director@sunpower.demo")
+    waiting = client.get("/api/staff/deliveries", params={"state": "waiting"}).json()["rows"]
+    if not waiting:
+        return
+    d = client.get("/api/staff/deliveries/%s" % waiting[0]["id"]).json()
+    stock = {l["product_id"]: l["qty_on_hand"] for l in d["lines"]}
+    login(client, "warehouse@sunpower.demo")
+    r = client.post("/api/staff/deliveries/%s/validate" % d["id"], json={"serials": {}}, headers=H)
+    assert r.status_code == 400
+    login(client, "director@sunpower.demo")
+    after = client.get("/api/staff/deliveries/%s" % d["id"]).json()
+    assert after["state"] == "waiting" and {l["product_id"]: l["qty_on_hand"] for l in after["lines"]} == stock
+
+
+def test_money_taken_online_is_never_refused():
+    from app.db import session
+    from app import rules
+    with session() as db:
+        o = next(x for x in db.q("SELECT * FROM orders WHERE state = 'sale' ORDER BY id")
+                 if x["amount_total"] - rules.order_paid(db, x["id"]) > 200)
+        due = o["amount_total"] - rules.order_paid(db, o["id"])
+        info = rules.start_online_payment(db, o, due, "balance", None)
+        db.update("payments", info["payment_id"], {"amount": due + 50})      # bank took a little more
+        rules.complete_online_payment(db, db.get("payments", info["payment_id"]))
+        assert rules.order_paid(db, o["id"]) >= o["amount_total"]
+        db.rollback()
+
+
+def test_login_error_never_reveals_which_emails_exist(client):
+    reset_rate_limits()
+    client.cookies.clear()
+    a = client.post("/api/auth/login", json={"login": "nobody@nowhere.test", "password": "Wrong@1234"}, headers=H).json()
+    b = client.post("/api/auth/login", json={"login": "sales@sunpower.demo", "password": "Wrong@1234"}, headers=H).json()
+    assert a["error"] == b["error"]

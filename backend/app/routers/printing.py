@@ -47,13 +47,18 @@ def _page(db, title, body):
                              escape(db.setting("company_gstin", "")), "", body))
 
 
-def _order_access(db, request, order_id, token):
+def _order_access(db, request, order_id, token, staff_areas=("orders",)):
+    import hmac
+    from ..access import can_read
     o = db.get("orders", order_id)
     if not o:
         raise HTTPException(404, "Not found.")
     user = session_user(db, request)
-    ok = (token and o["access_token"] and token == o["access_token"]) or \
-        (user and (user["role"] in STAFF or user.get("customer_id") == o["customer_id"]))
+    token_ok = bool(token and o["access_token"] and hmac.compare_digest(str(token), o["access_token"]))
+    staff_ok = bool(user and user["role"] in STAFF and any(can_read(user, a) for a in staff_areas))
+    owner_ok = bool(user and user["role"] == "customer" and user.get("customer_id") == o["customer_id"]
+                    and o["state"] != "draft")
+    ok = token_ok or staff_ok or owner_ok
     if not ok:
         raise HTTPException(403, "This link is not valid.")
     return o
@@ -80,7 +85,8 @@ def quote(order_id: int, request: Request, token: str = "", db=Depends(get_db)):
     c = db.get("customers", o["customer_id"])
     lines = db.q("SELECT * FROM order_lines WHERE order_id = ? ORDER BY id", o["id"])
     lead = db.get("leads", o["lead_id"]) if o["lead_id"] else None
-    subsidy = rules.subsidy_expected(o["kw"]) if lead and lead["subsidy_requested"] and o["system_type"] == "on_grid" else 0
+    subsidy = (rules.subsidy_expected(o["kw"], rules.lead_state(db, o))
+               if lead and lead["subsidy_requested"] and o["system_type"] == "on_grid" else 0)
     rows = "".join(
         "<tr><td>%s</td><td class='num'>%g</td><td class='num'>%s</td><td class='num'>%s</td><td class='num'>%g%%</td>"
         "<td class='num'>%s</td></tr>" % (escape(l["description"] or ""), l["qty"], _m(l["price_unit"]),
@@ -120,7 +126,7 @@ def certificate(job_id: int, request: Request, token: str = "", db=Depends(get_d
     j = db.get("jobs", job_id)
     if not j:
         raise HTTPException(404, "Not found.")
-    o = _order_access(db, request, j["order_id"], token)
+    o = _order_access(db, request, j["order_id"], token, staff_areas=("orders", "jobs"))
     if j["state"] != "done":
         raise HTTPException(400, "The installation isn't completed yet.")
     c = db.get("customers", o["customer_id"])
