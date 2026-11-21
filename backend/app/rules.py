@@ -7,6 +7,15 @@ file + customer account -> dispatch with serials (only after the advance; starts
 the warranties) -> installation (checklist, photos, kW, signature) -> repairs
 under / out of warranty -> job profit and the Director's dashboard.
 """
+#
+# WHO USES THIS FILE
+#   The routers (app/routers/*.py) call these functions; they never put business
+#   logic in the web layer. seed.py also uses them to build the demo data, so the
+#   demo goes through exactly the same rules as real use.
+#   Every function receives `db` (a db.DB object for the current request) and works
+#   with plain dicts (database rows). When a rule says "no", it raises RuleError
+#   with a message for the user; main.py turns that into an HTTP 400 answer.
+#
 import json
 import secrets
 from datetime import date, datetime, timedelta
@@ -16,11 +25,16 @@ from .catalog import GST_GOODS, GST_SERVICE, INSTALL_CODE
 from .db import now, today
 
 
+# A custom error type. `class X(Exception)` makes a new kind of error;
+# raising it stops the current action and its message is shown to the user.
 class RuleError(Exception):
     """A business rule stopped the action; the message is shown to the user."""
 
 
 # ------------------------------------------------------------------ helpers
+# Rules of thumb for India: 1 kW of panels makes ~120 units (kWh) a month;
+# electricity costs ~₹8 per unit; an installed system costs ~₹65,000 per kW;
+# ~100 sq ft of shadow-free roof per kW. Packages are 1 to 5 kW.
 UNITS_PER_KW_MONTH = 120.0
 AVG_TARIFF_INR = 8.0
 COST_PER_KW_INR = 65000.0
@@ -28,6 +42,7 @@ ROOF_SQFT_PER_KW = 100.0
 MIN_KW, MAX_KW = 1, 5
 FALLBACK_KWH_PER_KW = 1450.0
 
+# Each status list is [(stored value, label shown to people), ...].
 LEAD_STAGES = [("new", "New"), ("contacted", "Contacted"), ("survey", "Survey"),
                ("quoted", "Quoted"), ("won", "Won"), ("lost", "Lost")]
 SURVEY_STATES = [("scheduled", "Scheduled"), ("done", "Visited"), ("approved", "Approved"),
@@ -48,14 +63,20 @@ CHECKLIST = [("chk_stands", "Mounting stands fixed"), ("chk_panels", "Panels lai
              ("chk_generation", "Power generation tested")]
 
 
+# Label for a stored status, e.g. label(LEAD_STAGES, "won") -> "Won".
+# dict(options) turns the list of pairs into a lookup table.
 def label(options, key):
     return dict(options).get(key, key or "")
 
 
+# Round money to 2 decimals. + 1e-9 (a tiny number) avoids 2.675 rounding down to 2.67
+# because of how computers store decimals.
 def r2(v):
     return round(float(v or 0) + 1e-9, 2)
 
 
+# Text like "2026-11-21 10:00:00" (or just a date) -> a datetime object; None if empty or unreadable.
+# Tries several formats; `continue` moves on to the next format.
 def parse_dt(v):
     if not v:
         return None
@@ -70,6 +91,9 @@ def parse_dt(v):
     return None
 
 
+# Add months to a date, keeping the day valid: 31 Jan + 1 month = 28/29 Feb.
+# divmod(a, b) returns (a // b, a % b): whole years and the remaining months.
+# calendar.monthrange(year, month)[1] = number of days in that month.
 def add_months(d, months):
     y, m = divmod(d.month - 1 + months, 12)
     year, month = d.year + y, m + 1
@@ -78,17 +102,22 @@ def add_months(d, months):
     return date(year, month, day)
 
 
+# Website address from Settings, used to build links in emails (no trailing slash).
 def frontend(db):
     return (db.setting("frontend_url") or "http://localhost:5173").rstrip("/")
 
 
 # ------------------------------------------------------------ calculations
+# PM Surya Ghar subsidy for a system of `kw`: 30,000 per kW for the first 2 kW,
+# 18,000 for the 3rd kW, never more than 78,000 in total.
 def subsidy_expected(kw):
     """PM Surya Ghar: Rs 30k/kW for the first 2 kW, Rs 18k for the 3rd, max Rs 78k."""
     kw = kw or 0
     return min(30000 * min(kw, 2) + 18000 * max(min(kw, 3) - 2, 0), 78000)
 
 
+# Suggested system size from monthly units (or the bill / ₹8), 1 to 5 kW.
+# int(x + 0.5) rounds half up (360 units -> 3 kW).
 def recommended_kw(units=0, bill=0):
     units = units or (bill / AVG_TARIFF_INR if bill else 0)
     if not units:
@@ -96,6 +125,9 @@ def recommended_kw(units=0, bill=0):
     return int(min(max(int(units / UNITS_PER_KW_MONTH + 0.5), MIN_KW), MAX_KW))
 
 
+# Savings estimate for the public website (Savings page): size, generation,
+# monthly/yearly saving, price, subsidy, net cost, payback years, roof area.
+# Returns None if neither units nor bill was given.
 def estimate(units=0.0, bill=0.0):
     units = units or (bill / AVG_TARIFF_INR if bill else 0.0)
     if not units:
@@ -114,6 +146,8 @@ def estimate(units=0.0, bill=0.0):
 
 
 # --------------------------------------------------------------- customers
+# Find a customer by email (then by phone); create one if none exists.
+# Fills in missing phone/address on an existing customer. Returns the customer id.
 def ensure_customer(db, name, email=None, phone=None, street=None, city=None):
     email = (email or "").strip().lower() or None
     row = None
@@ -130,6 +164,7 @@ def ensure_customer(db, name, email=None, phone=None, street=None, city=None):
                                    "city": city, "created_at": now()})
 
 
+# Give a customer a website login (no password yet) and email them a link to choose one.
 def invite_customer(db, customer_id):
     """Give a customer a website login and email a link to choose a password.
     Skips customers without email or who already have a login."""
@@ -145,6 +180,7 @@ def invite_customer(db, customer_id):
     return uid
 
 
+# Subject, first paragraph and button text of each account email, by kind.
 ACCOUNT_EMAILS = {
     "reset": ("Reset your SunPower password",
               "Someone (hopefully you) asked to reset the password for your SunPower account.",
@@ -160,6 +196,8 @@ ACCOUNT_EMAILS = {
 }
 
 
+# Queue an account email (reset / invite / claim / staff) with its one-time link.
+# Returns the link (the Director's screen shows it when email isn't set up yet).
 def send_account_email(db, user_id, kind, token):
     user = db.get("users", user_id)
     subject, intro, button = ACCOUNT_EMAILS[kind]
@@ -171,6 +209,8 @@ def send_account_email(db, user_id, kind, token):
 
 
 # ----------------------------------------------------------------- enquiries
+# Least-busy active salesperson (fewest open enquiries); the Director if there are no salespeople.
+# The sub-SELECT inside ORDER BY counts each person's open enquiries.
 def pick_salesperson(db):
     row = db.one("""SELECT u.id FROM users u WHERE u.role = 'sales' AND u.active = 1
                     ORDER BY (SELECT COUNT(*) FROM leads l WHERE l.salesperson_id = u.id
@@ -180,6 +220,8 @@ def pick_salesperson(db):
     return row["id"] if row else None
 
 
+# Create an enquiry (lead) from the website, a call, WhatsApp... Required: name and phone.
+# Assigns a salesperson and sets the "call within 2 hours" reminder. Returns the lead id.
 def create_enquiry(db, vals, channel="web", customer_id=None, actor_id=None):
     name = (vals.get("contact_name") or "").strip()
     if not name or not (vals.get("phone") or "").strip():
@@ -199,19 +241,23 @@ def create_enquiry(db, vals, channel="web", customer_id=None, actor_id=None):
     return lid
 
 
+# Phone screening is complete when we know the roof area, the bill or units, and the grid is suitable.
 def lead_screening_ok(lead):
     return bool(lead["roof_area_sqft"] and (lead["monthly_bill"] or lead["monthly_units"])
                 and lead["grid_suitable"] == "yes")
 
 
+# Suggested size from the enquiry's units or bill.
 def lead_recommended_kw(lead):
     return recommended_kw(lead.get("monthly_units") or 0, lead.get("monthly_bill") or 0)
 
 
+# The latest approved survey of an enquiry (or None).
 def approved_survey(db, lead_id):
     return db.one("SELECT * FROM surveys WHERE lead_id = ? AND state = 'approved' ORDER BY id DESC LIMIT 1", lead_id)
 
 
+# Book a roof survey with a technician. Refused until phone screening is complete.
 def schedule_survey(db, lead, technician_id, survey_date, actor_id):
     if not lead_screening_ok(lead):
         raise RuleError("Complete the phone screening first: shadow-free roof area, monthly bill or "
@@ -230,6 +276,7 @@ def schedule_survey(db, lead, technician_id, survey_date, actor_id):
     return sid
 
 
+# Technician (or Sales) marks the visit done; needs at least the roof direction and area.
 def survey_mark_done(db, survey, actor_id):
     if survey["state"] != "scheduled":
         raise RuleError("Only scheduled surveys can be marked visited.")
@@ -239,6 +286,7 @@ def survey_mark_done(db, survey, actor_id):
     db.note("survey", survey["id"], "Site visited.", actor_id)
 
 
+# Sales or the Director approves a visited survey; its recommended kW becomes the enquiry's size.
 def survey_approve(db, survey, actor):
     if actor["role"] not in ("sales", "director"):
         raise RuleError("Only Sales or the Director can approve a survey.")
@@ -247,11 +295,12 @@ def survey_approve(db, survey, actor):
     if not survey["recommended_kw"]:
         raise RuleError("Set the recommended system size (kW) first.")
     db.update("surveys", survey["id"], {"state": "approved"})
-    db.update("leads", survey["lead_id"], {"requested_kw": survey["recommended_kw"]})
+    db.update("leads", survey["lead_id"], {"requested_kw": survey["recommended_kw"]})  # the approved size becomes the enquiry's size
     db.note("survey", survey["id"], "Survey approved (%s kW)." % survey["recommended_kw"], actor["id"])
 
 
 # ------------------------------------------------------------------- orders
+# Recalculate each line's amount and the order's totals (before GST, GST, total).
 def recompute_order(db, order_id):
     lines = db.q("SELECT * FROM order_lines WHERE order_id = ?", order_id)
     untaxed = tax = 0.0
@@ -264,11 +313,14 @@ def recompute_order(db, order_id):
                                    "amount_total": r2(untaxed + tax)})
 
 
+# The package (kit product) for a size and system type, e.g. 3 kW on-grid.
 def package_for(db, kw, system_type):
     return db.one("SELECT * FROM products WHERE is_kit = 1 AND active = 1 AND kw = ? AND system_type = ?",
                   round(kw or 0), system_type or "on_grid")
 
 
+# Turn an enquiry with an approved survey into a draft quotation:
+# the matching package + installation (kW x price per kW). Returns the order id.
 def create_quote(db, lead, actor_id, kw=None, system_type=None):
     survey = approved_survey(db, lead["id"])
     if not survey:
@@ -289,7 +341,7 @@ def create_quote(db, lead, actor_id, kw=None, system_type=None):
         "survey_id": survey["id"], "state": "draft", "kit_product_id": kit["id"], "kw": kit["kw"],
         "system_type": kit["system_type"], "salesperson_id": lead["salesperson_id"] or actor_id,
         "date_order": now(), "valid_until": valid, "note": db.setting("quote_note"),
-        "access_token": secrets.token_urlsafe(16), "created_at": now()})
+        "access_token": secrets.token_urlsafe(16), "created_at": now()})  # secret token: lets the customer open the quote PDF without signing in
     db.insert("order_lines", {"order_id": oid, "product_id": kit["id"], "description": kit["name"], "qty": 1,
                               "price_unit": kit["price"], "tax_rate": GST_GOODS})
     db.insert("order_lines", {"order_id": oid, "product_id": install["id"], "description": install["name"],
@@ -301,6 +353,9 @@ def create_quote(db, lead, actor_id, kw=None, system_type=None):
     return oid
 
 
+# Yearly generation and payback for an order: asks PVGIS (a free EU solar calculator)
+# for the surveyed roof; if that fails (no internet), uses 1450 kWh per kW per year.
+# httpx is the HTTP client library used to call other websites.
 def generation_estimate(db, order):
     """Yearly generation from PVGIS (EU JRC) for the surveyed roof, with an
     offline rule of thumb."""
@@ -326,10 +381,12 @@ def generation_estimate(db, order):
                                       "est_source": source})
 
 
+# Link the customer opens to review and accept a quotation.
 def quote_link(db, order):
     return "%s/account/quote/%s" % (frontend(db), order["id"])
 
 
+# Mark a quote as sent and email it (also creating the customer's login if needed).
 def send_quote(db, order, actor_id):
     if order["state"] not in ("draft", "sent"):
         raise RuleError("Only quotations can be sent.")
@@ -350,6 +407,7 @@ def send_quote(db, order, actor_id):
     db.note("order", order["id"], "Quotation sent to the customer.", actor_id)
 
 
+# Format rupees the Indian way: 1234567 -> "₹12,34,567" (groups of 2 after the first 3 digits).
 def money(v):
     s = "%.0f" % round(v or 0)
     neg = s.startswith("-")
@@ -366,6 +424,9 @@ def money(v):
     return ("-" if neg else "") + "₹" + s
 
 
+# Confirm an order. This is the big automatic step: it creates the warehouse delivery
+# (the package broken into its parts), the installation job, the subsidy file (if wanted),
+# marks the enquiry won and invites the customer to their account.
 def confirm_order(db, order, actor_id=None, invite=True, accepted_by=None):
     if order["state"] not in ("draft", "sent"):
         raise RuleError("This order is already %s." % label(ORDER_STATES, order["state"]).lower())
@@ -413,6 +474,7 @@ def confirm_order(db, order, actor_id=None, invite=True, accepted_by=None):
     return order
 
 
+# Cancel an order (not possible once the kit has been dispatched).
 def cancel_order(db, order, actor_id):
     if order["state"] == "sale" and db.val("SELECT COUNT(*) FROM deliveries WHERE order_id = ? AND state = 'done'", order["id"]):
         raise RuleError("A dispatched order can't be cancelled.")
@@ -423,25 +485,30 @@ def cancel_order(db, order, actor_id):
 
 
 # ---------------------------------------------------------- money: invoices
+# Money received so far for an order (completed payments only).
 def order_paid(db, order_id):
     return r2(db.val("SELECT COALESCE(SUM(amount), 0) FROM payments WHERE order_id = ? AND state = 'done'", order_id))
 
 
+# The advance required before dispatch: advance % (Settings) of the order total.
 def advance_needed(db, order):
     pct = float(db.setting("advance_pct", 30) or 0)
     return r2(order["amount_total"] * pct / 100.0)
 
 
+# How much of the advance is still missing (never below 0).
 def advance_due(db, order):
     return max(r2(advance_needed(db, order) - order_paid(db, order["id"])), 0)
 
 
+# Split an amount into (before GST, GST) using the order's own ratio.
 def _split_tax(order, amount):
     ratio = (order["amount_untaxed"] / order["amount_total"]) if order["amount_total"] else 1
     untaxed = r2(amount * ratio)
     return untaxed, r2(amount - untaxed)
 
 
+# Create an invoice of `kind` (advance / final / service) for `amount` including GST.
 def create_invoice(db, order, kind, amount):
     untaxed, tax = _split_tax(order, amount)
     return db.insert("invoices", {"ref": db.next_ref("invoice", "INV-"), "order_id": order["id"],
@@ -449,6 +516,7 @@ def create_invoice(db, order, kind, amount):
                                   "amount_tax": tax, "amount_total": r2(amount), "date": today()})
 
 
+# Invoice whatever part of the order hasn't been invoiced yet.
 def final_invoice(db, order, actor_id):
     if order["state"] != "sale":
         raise RuleError("Only confirmed orders can be invoiced.")
@@ -464,6 +532,7 @@ def final_invoice(db, order, actor_id):
     return iid
 
 
+# Mark invoices paid using the money received, oldest invoice first.
 def allocate_payments(db, order_id):
     """Spread the order's received money over its invoices, oldest first."""
     pool = order_paid(db, order_id)
@@ -474,6 +543,8 @@ def allocate_payments(db, order_id):
                                           "state": "paid" if paid + 0.5 >= inv["amount_total"] else "posted"})
 
 
+# Record money received for an order (cash, bank, UPI, online...).
+# Creates an advance invoice if needed, and confirms a quotation automatically once the advance is paid.
 def record_payment(db, order, amount, method, actor_id=None, provider_ref=None, purpose="advance"):
     """Money received for an order. A payment without an open invoice gets an
     advance invoice (marked paid). An online payment of the advance on a sent
@@ -483,7 +554,7 @@ def record_payment(db, order, amount, method, actor_id=None, provider_ref=None, 
         raise RuleError("Enter an amount above zero.")
     if order["state"] == "cancel":
         raise RuleError("This order is cancelled.")
-    was_due = advance_due(db, order) > 0 or order["state"] != "sale"
+    was_due = advance_due(db, order) > 0 or order["state"] != "sale"  # remember: was the advance still missing before this payment?
     open_amount = r2(db.val("SELECT COALESCE(SUM(amount_total - amount_paid), 0) FROM invoices "
                             "WHERE order_id = ? AND state = 'posted'", order["id"]))
     pid = db.insert("payments", {"ref": db.next_ref("payment", "PAY-"), "order_id": order["id"],
@@ -494,7 +565,7 @@ def record_payment(db, order, amount, method, actor_id=None, provider_ref=None, 
         create_invoice(db, order, "advance" if purpose == "advance" else "final", r2(amount - open_amount))
     allocate_payments(db, order["id"])
     db.note("order", order["id"], "Payment of %s received (%s)." % (money(amount), method), actor_id)
-    if order["state"] in ("draft", "sent") and order_paid(db, order["id"]) + 0.5 >= advance_needed(db, order):
+    if order["state"] in ("draft", "sent") and order_paid(db, order["id"]) + 0.5 >= advance_needed(db, order):  # advance paid on a quote -> confirm the order
         confirm_order(db, order, actor_id, accepted_by=order.get("accepted_by"))
     order = db.get("orders", order["id"])
     refresh_delivery_state(db, order["id"])
@@ -503,6 +574,7 @@ def record_payment(db, order, amount, method, actor_id=None, provider_ref=None, 
     return pid
 
 
+# A delivery is "ready" when the advance is fully paid, otherwise "waiting".
 def refresh_delivery_state(db, order_id):
     order = db.get("orders", order_id)
     ready = advance_due(db, order) == 0
@@ -511,6 +583,7 @@ def refresh_delivery_state(db, order_id):
 
 
 # -------------------------------------------------------------------- stock
+# Add stock: serial-tracked items need one serial per unit; others just a quantity.
 def receive_stock(db, product, qty, serials, actor_id, note=None):
     qty = float(qty or 0)
     names = [s.strip() for s in (serials or []) if s and s.strip()]
@@ -530,6 +603,9 @@ def receive_stock(db, product, qty, serials, actor_id, note=None):
     return qty
 
 
+# Dispatch a delivery. Checks: advance paid (or a Director override), enough stock,
+# a serial for every tracked unit. Then takes the stock out and starts a warranty
+# for every delivered serial/batch. Returns the list of serials whose warranty started.
 def validate_delivery(db, delivery, serials_by_line, actor, override=False):
     """Dispatch: advance paid, stock available, a serial for every tracked unit.
     Starts the warranty of every delivered serial/lot."""
@@ -537,7 +613,7 @@ def validate_delivery(db, delivery, serials_by_line, actor, override=False):
         raise RuleError("Already dispatched.")
     order = db.get("orders", delivery["order_id"])
     due = advance_due(db, order)
-    if due > 0 and not (override and actor["role"] == "director"):
+    if due > 0 and not (override and actor["role"] == "director"):  # only the Director may dispatch without the advance
         raise RuleError("%s cannot be dispatched yet: %s%% advance (%s) is required, %s received so far." % (
             order["ref"], db.setting("advance_pct"), money(advance_needed(db, order)), money(order_paid(db, order["id"]))))
     lines = db.q("SELECT dl.*, p.name, p.tracking, p.qty_on_hand, p.warranty_months, p.cost FROM delivery_lines dl "
@@ -590,6 +666,7 @@ def validate_delivery(db, delivery, serials_by_line, actor, override=False):
 
 
 # --------------------------------------------------------------------- jobs
+# Technician starts the installation on site.
 def job_start(db, job, actor_id):
     if job["state"] == "done":
         raise RuleError("This job is already completed.")
@@ -597,6 +674,9 @@ def job_start(db, job, actor_id):
     db.note("job", job["id"], "Work started on site.", actor_id)
 
 
+# Finish an installation. Refused until: checklist complete, a roof photo,
+# the installed kW, the customer's signature and the kit dispatched. Then logs
+# each technician's hours (labour cost) and emails the certificate link.
 def job_finish(db, job, actor):
     missing = [lbl for f, lbl in CHECKLIST if not job[f]]
     if missing:
@@ -611,7 +691,7 @@ def job_finish(db, job, actor):
         raise RuleError("The kit hasn't been dispatched yet.")
     end = now()
     start = job["site_start"] or end
-    hours = max((parse_dt(end) - parse_dt(start)).total_seconds() / 3600.0, 0.25)
+    hours = max((parse_dt(end) - parse_dt(start)).total_seconds() / 3600.0, 0.25)  # time on site in hours, at least a quarter hour
     db.update("jobs", job["id"], {"state": "done", "site_start": start, "site_end": end,
                                   "signed_on": job["signed_on"] or end})
     techs = db.q("SELECT u.* FROM job_techs jt JOIN users u ON u.id = jt.user_id WHERE jt.job_id = ?", job["id"]) or [actor]
@@ -633,10 +713,12 @@ def job_finish(db, job, actor):
 
 
 # ------------------------------------------------------------------ tickets
+# True if the warranty covers that day (dates as "YYYY-MM-DD" text compare correctly).
 def warranty_active_on(w, day):
     return bool(w and w["start_date"] <= day <= w["end_date"])
 
 
+# Create a service request. If a serial is given, links its product, order and warranty.
 def create_ticket(db, customer_id, description, actor_id=None, serial_id=None, fault_code=None,
                   channel="phone", technician_id=None):
     description = (description or "").strip()
@@ -656,18 +738,21 @@ def create_ticket(db, customer_id, description, actor_id=None, serial_id=None, f
     return tid
 
 
+# Money for a request: parts price, labour, cost to the company, and what the customer
+# pays (nothing if the equipment was under warranty on the day it was reported).
 def ticket_amounts(db, ticket):
     lines = db.q("SELECT * FROM ticket_lines WHERE ticket_id = ?", ticket["id"])
     parts = sum(l["qty"] * l["price_unit"] for l in lines)
     parts_cost = sum(l["qty"] * l["cost"] for l in lines)
     labour = (ticket["labour_hours"] or 0) * (ticket["labour_rate"] or 0)
     w = db.get("warranties", ticket["warranty_id"]) if ticket["warranty_id"] else None
-    under = warranty_active_on(w, (ticket["reported_on"] or now())[:10])
+    under = warranty_active_on(w, (ticket["reported_on"] or now())[:10])  # [:10] keeps just the date part
     return {"parts_price": r2(parts), "labour": r2(labour), "repair_cost": r2(parts_cost + labour),
             "customer_charge": 0.0 if under else r2(parts + labour), "under_warranty": under,
             "warranty_end": w["end_date"] if w else None}
 
 
+# Repair done: invoice the customer if out of warranty, then ask them to confirm by email.
 def ticket_resolve(db, ticket, actor_id):
     if ticket["stage"] in ("closed", "cancel", "awaiting"):
         raise RuleError("This request is already %s." % label(TICKET_STAGES, ticket["stage"]).lower())
@@ -694,6 +779,7 @@ def ticket_resolve(db, ticket, actor_id):
     db.note("ticket", ticket["id"], "Repair completed; waiting for the customer to confirm.", actor_id)
 
 
+# The customer confirms the fix: the request is closed.
 def ticket_confirm(db, ticket, actor_id):
     if ticket["stage"] != "awaiting":
         raise RuleError("This request is not waiting for confirmation.")
@@ -701,12 +787,16 @@ def ticket_confirm(db, ticket, actor_id):
     db.note("ticket", ticket["id"], "Customer confirmed the system works. Request closed.", actor_id)
 
 
+# The customer says it's still not working: back to "repair".
 def ticket_reopen(db, ticket, actor_id, note=""):
     db.update("tickets", ticket["id"], {"stage": "repair", "customer_confirmed": 0, "closed_on": None})
     db.note("ticket", ticket["id"], "Reopened: the problem is not fixed. %s" % (note or ""), actor_id)
 
 
 # ---------------------------------------------------------------- financials
+# Job costing for one order: revenue - material - labour - warranty repairs = profit,
+# plus the job stage and what is still pending (Dispatch, Installation, Payment, Subsidy).
+# Used by the dashboard, Insights and the order screen (Director only).
 def order_financials(db, order):
     """Job costing: revenue - material - labour - warranty repairs."""
     oid = order["id"]
@@ -723,7 +813,7 @@ def order_financials(db, order):
         if a["under_warranty"]:
             repair += a["repair_cost"]
     revenue = order["amount_untaxed"] if order["state"] == "sale" else 0.0
-    profit = r2(revenue - material - labour_row["cost"] - repair)
+    profit = r2(revenue - material - labour_row["cost"] - repair)  # the job's profit
     delivered = bool(db.val("SELECT COUNT(*) FROM deliveries WHERE order_id = ?", oid)) and not db.val(
         "SELECT COUNT(*) FROM deliveries WHERE order_id = ? AND state != 'done'", oid)
     jobs = db.q("SELECT state FROM jobs WHERE order_id = ?", oid)
@@ -749,11 +839,13 @@ def order_financials(db, order):
             "stage": stage, "pending": pending}
 
 
+# Labels for the job stages computed by order_financials().
 JOB_STAGE_LABELS = {"quote": "Quotation", "confirmed": "Confirmed – awaiting dispatch",
                     "dispatched": "Dispatched – awaiting install", "installed": "Installed",
                     "closed": "Completed & paid"}
 
 
+# First and last day of a period: today, this week (from Monday), this month or this year.
 def period_bounds(period):
     t = date.today()
     if period == "today":
@@ -768,6 +860,7 @@ def period_bounds(period):
 
 
 # ------------------------------------------------------------ online payments
+# Which online payment options are switched on: Razorpay (if keys are set) and/or test payments.
 def payment_modes(db):
     modes = []
     if db.setting("razorpay_key_id") and db.setting("razorpay_key_secret"):
@@ -777,6 +870,8 @@ def payment_modes(db):
     return modes
 
 
+# Start an online payment: a "pending" payment row, plus a Razorpay order when Razorpay is set up.
+# Returns what the website needs to open the payment window.
 def start_online_payment(db, order, amount, purpose, user_id):
     """Create a pending payment (and a Razorpay order when Razorpay is set up)."""
     import httpx
@@ -808,6 +903,7 @@ def start_online_payment(db, order, amount, purpose, user_id):
     return out
 
 
+# The bank confirmed a pending payment: record it as received (via record_payment).
 def complete_online_payment(db, payment, provider_ref=None, actor_id=None):
     if payment["state"] == "done":
         return payment["id"]
@@ -817,6 +913,8 @@ def complete_online_payment(db, payment, provider_ref=None, actor_id=None):
                           provider_ref=provider_ref or payment["provider_ref"], purpose=payment["purpose"])
 
 
+# Check that a payment confirmation really came from Razorpay: Razorpay signs
+# "order_id|payment_id" with our secret key (HMAC-SHA256); we recompute and compare.
 def verify_razorpay_signature(db, razorpay_order_id, razorpay_payment_id, signature):
     import hashlib
     import hmac
