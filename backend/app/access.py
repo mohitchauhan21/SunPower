@@ -17,23 +17,25 @@ ACCESS = {
     "warranties": {"director": "r", "sales": "r", "warehouse": "r", "support": "r", "technician": "own"},
     "customers": {"director": "r", "sales": "r", "support": "r"},
     "subsidies": {"director": "rw", "sales": "rw", "support": "r"},
+    "insights": {"director": "rw"},
     "reports": {"director": "rw"},
     "settings": {"director": "rw"},
 }
 
 # Website modules, in navigation order
 MODULES = [
-    ("dashboard", "Overview", "/app"),
+    ("dashboard", "Today", "/app"),
     ("leads", "Enquiries", "/app/enquiries"),
     ("surveys", "Surveys", "/app/surveys"),
     ("orders", "Quotes & orders", "/app/orders"),
     ("deliveries", "Dispatch", "/app/dispatch"),
     ("stock", "Stock", "/app/stock"),
     ("jobs", "Installations", "/app/jobs"),
-    ("tickets", "Service", "/app/service"),
+    ("tickets", "Requests", "/app/service"),
     ("warranties", "Warranties", "/app/warranties"),
     ("customers", "Customers", "/app/customers"),
     ("subsidies", "Subsidy", "/app/subsidy"),
+    ("insights", "Insights", "/app/insights"),
     ("reports", "Reports", "/app/reports"),
     ("settings", "Settings", "/app/settings"),
 ]

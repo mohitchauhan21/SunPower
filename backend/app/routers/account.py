@@ -4,7 +4,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Request
 
 from .. import rules
 from ..db import get_db, today
-from ..security import (MIN_PASSWORD, COOKIE, check_password, end_all_sessions, hash_password, require)
+from ..security import (COOKIE, check_password, end_all_sessions, hash_password, password_problem, require)
 
 router = APIRouter(prefix="/api/my")
 customer = require("customer")
@@ -245,8 +245,11 @@ def password(request: Request, body: dict = Body(default={}), user=Depends(requi
                                                                                      "warehouse", "technician", "support")),
              db=Depends(get_db)):
     new = body.get("new") or ""
-    if len(new) < MIN_PASSWORD:
-        return {"ok": False, "field": "new", "error": "Use at least %s characters." % MIN_PASSWORD}
+    problem = password_problem(new)
+    if problem:
+        return {"ok": False, "field": "new", "error": problem}
+    if "confirm" in body and body.get("confirm") != new:
+        return {"ok": False, "field": "confirm", "error": "The two new passwords don't match."}
     if not check_password(body.get("old") or "", user["password_hash"]):
         return {"ok": False, "field": "old", "error": "Your current password is not correct."}
     db.update("users", user["id"], {"password_hash": hash_password(new)})

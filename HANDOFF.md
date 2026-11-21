@@ -11,6 +11,17 @@
 | AI service (`ai_service/`) | Unchanged and optional. **Not re-tested in this round**: the AI buttons (fill enquiry from text, AI diagnose, photo check, bill upload) were only checked to fall back cleanly when the service is off. |
 | Odoo version | Removed from this branch; kept on the **`legacy-odoo`** branch. |
 
+## Latest round (UI/UX and accounts)
+
+- **Top bar:** "Sign in" and "Get started" are the same size and shape. Signed-in people see a name badge and a "Sign out" button of the same size.
+- **Welcome tour:** written separately for visitors, customers and each staff role. Visitors see it once per browser (`localStorage`); signed-in people once per account (`users.onboarded`, `POST /api/auth/onboarded`).
+- **Workspace:** at most 5 groups (Today, Sales, Operations, Service, Business), with pages as tabs. **Today** (`GET /api/staff/today`) shows only what needs acting on now. History moved to **Insights**.
+- **Passwords:** strong-password rules in `backend/app/security.py` (`password_problem`) and `frontend/src/password.js`. **Keep them identical.** Every password is typed twice.
+- **Recovery code:** 4 digits chosen at sign-up, stored hashed (`users.recovery_code_hash`), used by `POST /api/auth/recover`, rate-limited to 5 tries per email per 15 minutes.
+- **Google sign-in:** keys from Settings, or `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` in `backend/.env` (loaded at start-up).
+- **Database:** new columns are added automatically to existing databases (`MIGRATIONS` in `db.py`).
+- **Fixes:** the home page no longer scrolls sideways on narrow screens (ReactBits image layers are now clipped). Motion is switched off for people who ask their device for reduced motion.
+
 ## How the pieces connect
 
 - The browser only talks to the website's origin. Vite forwards `/api/*` and `/print/*` to the back end (:8001) and `/ai/*` to the AI service (:8000).
@@ -31,6 +42,8 @@
 8. An empty `addons/` folder may linger on the original Windows machine (it was locked by another program during removal). It isn't in git; delete it when convenient.
 
 ## Suggested next steps
+
+0. **Security of the 4-digit code:** with only 10,000 possible codes, it relies on the rate limit. For production, also send a one-time code by SMS or email at reset time, or ask for a longer code.
 
 1. Re-test the AI helpers end to end with the AI service running (bill upload, fill from text, AI diagnose, photo check).
 2. Production setup: reverse proxy, HTTPS, nightly copy of `sunpower.db`, `SUNPOWER_DEMO=0` for a clean company.

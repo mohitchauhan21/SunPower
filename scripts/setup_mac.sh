@@ -48,6 +48,6 @@ cat <<EOF
     (cd frontend && npm run dev)    # website on http://localhost:5173
     ./ai_service/run.sh             # optional third terminal: AI helpers on :8000
 
-    Demo sign-in (password for all: sunpower):
+    Demo sign-in (password for all: Sunpower@2026, recovery code 2580):
     director@sunpower.demo · sales@ · warehouse@ · support@ · tech01@ · customer@sunpower.demo
 EOF

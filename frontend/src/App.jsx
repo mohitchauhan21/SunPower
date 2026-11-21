@@ -17,7 +17,8 @@ import Logout from './pages/Logout.jsx';
 import RequireRole from './components/RequireRole.jsx';
 import { AuthProvider } from './auth.jsx';
 import StaffLayout from './staff/Layout.jsx';
-import Overview from './staff/Overview.jsx';
+import Today, { Insights, StaffMe } from './staff/Overview.jsx';
+import Onboarding from './components/Onboarding.jsx';
 import { Customer, Customers, Enquiries, Enquiry, Order, Orders, Subsidies, Subsidy, Survey, Surveys } from './staff/Sales.jsx';
 import { Deliveries, Delivery, Job, Jobs, Stock, Ticket, Tickets, Warranties } from './staff/Ops.jsx';
 import { Reports, Settings } from './staff/Admin.jsx';
@@ -25,7 +26,7 @@ import { Reports, Settings } from './staff/Admin.jsx';
 const TITLES = {
   '/': 'Rooftop solar', '/estimate': 'Savings estimate', '/quote': 'Get a quote', '/login': 'Sign in',
   '/forgot-password': 'Forgot password', '/reset-password': 'New password', '/signup': 'Create account', '/account': 'My account',
-  '/app': 'Workspace', '/app/enquiries': 'Enquiries', '/app/surveys': 'Surveys', '/app/orders': 'Quotes & orders',
+  '/app': 'Today', '/app/insights': 'Insights', '/app/me': 'My account', '/app/enquiries': 'Enquiries', '/app/surveys': 'Surveys', '/app/orders': 'Quotes & orders',
   '/app/dispatch': 'Dispatch', '/app/stock': 'Stock', '/app/jobs': 'Installations', '/app/service': 'Service',
   '/app/warranties': 'Warranties', '/app/customers': 'Customers', '/app/subsidy': 'Subsidy', '/app/reports': 'Reports',
   '/app/settings': 'Settings'
@@ -59,7 +60,9 @@ export default function App() {
             <Route path="/account/quote/:id" element={<RequireRole roles={['customer']}><QuoteReview /></RequireRole>} />
             <Route path="/console" element={<Navigate to="/app" replace />} />
             <Route path="/app" element={<StaffLayout />}>
-              <Route index element={<Overview />} />
+              <Route index element={<Today />} />
+              <Route path="insights" element={<Insights />} />
+              <Route path="me" element={<StaffMe />} />
               <Route path="enquiries" element={<Enquiries />} />
               <Route path="enquiries/:id" element={<Enquiry />} />
               <Route path="surveys" element={<Surveys />} />
@@ -85,6 +88,7 @@ export default function App() {
           </Routes>
         </main>
         {!inApp && <Footer />}
+        <Onboarding />
       </ToastProvider>
     </AuthProvider>
   );

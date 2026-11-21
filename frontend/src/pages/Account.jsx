@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { api, fmtDate, inr } from '../api.js';
 import { useAuth } from '../auth.jsx';
 import Tabs from '../components/ui/Tabs.jsx';
+import SecuritySettings from '../components/SecuritySettings.jsx';
 import { useToast } from '../components/ui/Toast.jsx';
 
 const TABS = [
@@ -45,6 +46,10 @@ function Overview({ data }) {
   }
   return (
     <div className="stack">
+      <div className="add-system">
+        <div><strong>Want solar on another roof?</strong><span className="muted small"> Add a second system and we’ll book a free survey.</span></div>
+        <Link to="/quote" className="btn btn--secondary btn--sm">+ Add another system</Link>
+      </div>
       {orders.map((o) => (
         <article key={o.id} className="card card--outline order">
           <header className="order__head">
@@ -236,9 +241,7 @@ function Profile({ data, reload }) {
   const { refresh } = useAuth();
   const c = data.customer;
   const [p, setP] = useState({ name: c.name || '', phone: c.phone || '', street: c.street || '', city: c.city || '' });
-  const [pw, setPw] = useState({ old: '', next: '', confirm: '' });
   const [pErr, setPErr] = useState('');
-  const [pwErr, setPwErr] = useState('');
   const [busy, setBusy] = useState('');
 
   const save = async (e) => {
@@ -253,19 +256,6 @@ function Profile({ data, reload }) {
       await Promise.all([reload(), refresh()]);
     } catch (ex) { setPErr(ex.message); } finally { setBusy(''); }
   };
-  const change = async (e) => {
-    e.preventDefault();
-    setPwErr('');
-    if (pw.next.length < 8) { setPwErr('Use at least 8 characters for the new password.'); return; }
-    if (pw.next !== pw.confirm) { setPwErr('The two new passwords don’t match.'); return; }
-    setBusy('pw');
-    try {
-      const r = await api.myPassword(pw.old, pw.next);
-      if (!r?.ok) { setPwErr(r?.error); return; }
-      toast('Password changed.');
-      setPw({ old: '', next: '', confirm: '' });
-    } catch (ex) { setPwErr(ex.message); } finally { setBusy(''); }
-  };
 
   return (
     <div className="grid grid--2 align-start">
@@ -279,15 +269,9 @@ function Profile({ data, reload }) {
         <div className="field"><label className="label" htmlFor="p-city">City</label><input id="p-city" className="input" value={p.city} onChange={(e) => setP({ ...p, city: e.target.value })} /></div>
         <button className="btn btn--primary" disabled={busy === 'p'}>{busy === 'p' ? 'Saving…' : 'Save details'}</button>
       </form>
-      <form className="card card--alt form" onSubmit={change} noValidate>
-        <h3>Change password</h3>
-        {pwErr && <div className="form-error" role="alert">{pwErr}</div>}
-        <div className="field"><label className="label" htmlFor="pw-old">Current password</label><input id="pw-old" className="input" type="password" autoComplete="current-password" value={pw.old} onChange={(e) => setPw({ ...pw, old: e.target.value })} /></div>
-        <div className="field"><label className="label" htmlFor="pw-new">New password</label><input id="pw-new" className="input" type="password" autoComplete="new-password" value={pw.next} onChange={(e) => setPw({ ...pw, next: e.target.value })} /></div>
-        <div className="field"><label className="label" htmlFor="pw-confirm">Confirm new password</label><input id="pw-confirm" className="input" type="password" autoComplete="new-password" value={pw.confirm} onChange={(e) => setPw({ ...pw, confirm: e.target.value })} /></div>
-        <button className="btn btn--primary" disabled={busy === 'pw' || !pw.old}>{busy === 'pw' ? 'Saving…' : 'Change password'}</button>
-        <p className="form-hint">Forgot it? <Link to="/forgot-password" className="auth__small">Reset by email</Link></p>
-      </form>
+      <div className="stack">
+        <SecuritySettings />
+      </div>
     </div>
   );
 }

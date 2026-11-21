@@ -3,7 +3,7 @@
 Everything goes through the real business rules (rules.py), then dates are
 moved into the past so the dashboard has three months of history.
 
-Demo logins (password for all: sunpower):
+Demo logins (password for all: Sunpower@2026, recovery code 2580):
   director@sunpower.demo   Director (everything)
   sales@sunpower.demo      Sales
   warehouse@sunpower.demo  Warehouse
@@ -20,7 +20,8 @@ from .catalog import TECH_RATES
 from .db import now
 from .security import hash_password
 
-DEMO_PASSWORD = "sunpower"
+DEMO_PASSWORD = "Sunpower@2026"   # meets the password rules
+DEMO_CODE = "2580"               # 4-digit recovery code for every demo account
 
 FIRST = ["Aarav", "Vihaan", "Ananya", "Diya", "Rohan", "Kavya", "Arjun", "Isha", "Kabir", "Meera", "Rahul",
          "Sneha", "Vikram", "Pooja", "Aditya", "Neha", "Karan", "Riya", "Siddharth", "Tanvi", "Manish", "Priya",
@@ -58,6 +59,7 @@ def _uts(dt):
 def _user(db, name, email, role, rate=0, customer_id=None):
     return db.insert("users", {"name": name, "email": email, "role": role, "hourly_rate": rate,
                                "customer_id": customer_id, "password_hash": hash_password(DEMO_PASSWORD),
+                               "recovery_code_hash": hash_password(DEMO_CODE),
                                "created_at": now()})
 
 
@@ -182,7 +184,8 @@ def load_demo(db):
     db.update("customers", cust_id, {"email": "customer@sunpower.demo"})
     existing = db.one("SELECT id FROM users WHERE customer_id = ?", cust_id)
     if existing:
-        db.update("users", existing["id"], {"email": "customer@sunpower.demo", "password_hash": hash_password(DEMO_PASSWORD)})
+        db.update("users", existing["id"], {"email": "customer@sunpower.demo", "password_hash": hash_password(DEMO_PASSWORD),
+                                            "recovery_code_hash": hash_password(DEMO_CODE)})
     else:
         _user(db, db.val("SELECT name FROM customers WHERE id = ?", cust_id), "customer@sunpower.demo", "customer",
               customer_id=cust_id)

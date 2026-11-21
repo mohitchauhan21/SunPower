@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
 import { goHome, useAuth } from '../auth.jsx';
+import { codeProblem, passwordProblem } from '../password.js';
+import { CodeField, ConfirmField, PasswordField } from '../components/ui/Secret.jsx';
 import { GoogleMark } from './Login.jsx';
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
@@ -9,7 +11,7 @@ const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 export default function Signup() {
   const { me, refresh } = useAuth();
   const navigate = useNavigate();
-  const [f, setF] = useState({ name: '', email: '', phone: '', password: '' });
+  const [f, setF] = useState({ name: '', email: '', phone: '', password: '', confirm: '', recovery_code: '' });
   const [errors, setErrors] = useState({});
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -19,13 +21,15 @@ export default function Signup() {
   useEffect(() => { api.providers().then((p) => setProviders(p || [])).catch(() => {}); }, []);
   useEffect(() => { if (me?.authenticated) goHome(navigate, me.home); }, [me, navigate]);
 
-  const set = (k) => (e) => { setF((s) => ({ ...s, [k]: e.target.value })); setErrors((s) => ({ ...s, [k]: '' })); };
+  const set = (k) => (v) => { setF((s) => ({ ...s, [k]: v })); setErrors((s) => ({ ...s, [k]: '' })); };
 
   const validate = () => {
     const e = {};
     if (!f.name.trim()) e.name = 'Please enter your name.';
     if (!EMAIL_RE.test(f.email.trim())) e.email = 'Please enter a valid email address.';
-    if (f.password.length < 8) e.password = 'Use at least 8 characters.';
+    if (passwordProblem(f.password)) e.password = passwordProblem(f.password);
+    if (f.confirm !== f.password) e.confirm = 'The two passwords don’t match.';
+    if (codeProblem(f.recovery_code)) e.recovery_code = codeProblem(f.recovery_code);
     setErrors(e);
     return !Object.keys(e).length;
   };
@@ -54,12 +58,11 @@ export default function Signup() {
   if (sent) {
     return (
       <section className="wrap auth">
-        <div className="auth__card">
+        <div className="auth__card fade-up">
           <h1 className="headline">Check your email.</h1>
           <p className="lead">{sent}</p>
           <p className="muted small" style={{ marginBottom: 24 }}>The link works once and expires in 24 hours. Didn’t get it? Check spam, or ask for a new one.</p>
           <Link to="/login" className="btn btn--primary btn--block">Back to sign in</Link>
-          <p className="auth__foot"><Link to="/forgot-password" className="auth__small">Send a new link</Link></p>
         </div>
       </section>
     );
@@ -67,7 +70,7 @@ export default function Signup() {
 
   return (
     <section className="wrap auth">
-      <div className="auth__card">
+      <div className="auth__card fade-up">
         <h1 className="headline">Create account</h1>
         <p className="lead">Follow your installation, warranties and repairs in one place.</p>
 
@@ -82,26 +85,23 @@ export default function Signup() {
           {error && <div className="form-error" role="alert">{error}</div>}
           <div className="field">
             <label className="label" htmlFor="s-name">Full name</label>
-            <input id="s-name" className="input" autoComplete="name" value={f.name} onChange={set('name')}
-                   aria-invalid={!!errors.name} aria-describedby="s-name-e" />
-            {errors.name && <span id="s-name-e" className="field-error">{errors.name}</span>}
+            <input id="s-name" className="input" autoComplete="name" value={f.name} onChange={(e) => set('name')(e.target.value)} aria-invalid={!!errors.name} />
+            {errors.name && <span className="field-error">{errors.name}</span>}
           </div>
           <div className="field">
             <label className="label" htmlFor="s-email">Email</label>
-            <input id="s-email" className="input" type="email" autoComplete="email" value={f.email} onChange={set('email')}
-                   aria-invalid={!!errors.email} aria-describedby="s-email-e" />
-            {errors.email && <span id="s-email-e" className="field-error">{errors.email}</span>}
+            <input id="s-email" className="input" type="email" autoComplete="email" value={f.email} onChange={(e) => set('email')(e.target.value)} aria-invalid={!!errors.email} />
+            {errors.email && <span className="field-error">{errors.email}</span>}
           </div>
           <div className="field">
             <label className="label" htmlFor="s-phone">Phone <span className="form-hint">(optional)</span></label>
-            <input id="s-phone" className="input" type="tel" autoComplete="tel" value={f.phone} onChange={set('phone')} />
+            <input id="s-phone" className="input" type="tel" autoComplete="tel" value={f.phone} onChange={(e) => set('phone')(e.target.value)} />
           </div>
-          <div className="field">
-            <label className="label" htmlFor="s-pass">Password</label>
-            <input id="s-pass" className="input" type="password" autoComplete="new-password" value={f.password} onChange={set('password')}
-                   aria-invalid={!!errors.password} aria-describedby="s-pass-e" />
-            {errors.password ? <span id="s-pass-e" className="field-error">{errors.password}</span>
-              : <span className="form-hint">At least 8 characters.</span>}
+          <PasswordField value={f.password} onChange={set('password')} error={errors.password} showRules />
+          <ConfirmField value={f.confirm} onChange={set('confirm')} against={f.password} error={errors.confirm} />
+          <div className="auth__box">
+            <CodeField label="Choose a 4-digit recovery code" value={f.recovery_code} onChange={set('recovery_code')} error={errors.recovery_code}
+                       hint="If you ever forget your password, this code lets you set a new one. Keep it somewhere safe, and avoid easy ones like 1234." />
           </div>
           <button className="btn btn--primary btn--block" disabled={busy}>{busy ? 'Creating account…' : 'Create account'}</button>
           <p className="form-hint center">For homeowners and businesses. SunPower staff accounts are set up by the office.</p>

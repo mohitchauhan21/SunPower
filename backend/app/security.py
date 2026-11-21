@@ -24,12 +24,43 @@ COOKIE = "sp_session"
 SESSION_DAYS = 14
 TOKEN_HOURS = 24
 MIN_PASSWORD = 8
+WEAK_CODES = {"0000", "1111", "2222", "3333", "4444", "5555", "6666", "7777", "8888", "9999",
+              "1234", "2345", "3456", "4567", "5678", "6789", "4321", "9876", "0123", "1212", "1122"}
+
+
+def password_problem(password):
+    """None if the password is strong enough, else what to fix (shown to the user).
+    Same rules as frontend/src/password.js."""
+    p = password or ""
+    if len(p) < MIN_PASSWORD:
+        return "Use at least %s characters." % MIN_PASSWORD
+    if len(p) > 128:
+        return "Use at most 128 characters."
+    if not any(c.isupper() for c in p):
+        return "Add a capital letter (A–Z)."
+    if not any(c.islower() for c in p):
+        return "Add a small letter (a–z)."
+    if not any(c.isdigit() for c in p):
+        return "Add a number (0–9)."
+    if not any(not c.isalnum() for c in p):
+        return "Add a symbol, like ! @ # or $."
+    return None
+
+
+def code_problem(code):
+    """Recovery code: exactly 4 digits, not an obvious one like 1234 or 0000."""
+    c = str(code or "")
+    if len(c) != 4 or not c.isdigit():
+        return "Choose a 4-digit recovery code."
+    if c in WEAK_CODES:
+        return "That code is too easy to guess. Pick a less obvious one."
+    return None
 
 ROLES = ("director", "sales", "warehouse", "technician", "support", "customer")
 STAFF = ("director", "sales", "warehouse", "technician", "support")
-ROLE_HOME = {
-    "director": "/app", "sales": "/app/enquiries", "warehouse": "/app/dispatch",
-    "technician": "/app/jobs", "support": "/app/service", "customer": "/account",
+ROLE_HOME = {  # every staff member starts on Today (their own to-do list)
+    "director": "/app", "sales": "/app", "warehouse": "/app", "technician": "/app", "support": "/app",
+    "customer": "/account",
 }
 
 

@@ -1,31 +1,37 @@
-import { NavLink, Navigate, Outlet, useLocation } from 'react-router-dom';
+import { Link, NavLink, Navigate, Outlet, useLocation } from 'react-router-dom';
 import { ROLE_LABELS, useAuth } from '../auth.jsx';
 import './staff.css';
 
-const ICONS = {
-  dashboard: 'M3 12l9-8 9 8M5 10v10h5v-6h4v6h5V10',
-  leads: 'M4 6h16M4 12h10M4 18h7',
-  surveys: 'M3 11l9-7 9 7M6 10v9h12v-9',
-  orders: 'M6 3h9l4 4v14H6zM14 3v5h5M9 13h7M9 17h5',
-  deliveries: 'M3 7h11v9H3zM14 10h4l3 3v3h-7M7 19a2 2 0 100-4 2 2 0 000 4zM17 19a2 2 0 100-4 2 2 0 000 4z',
-  stock: 'M4 7l8-4 8 4v10l-8 4-8-4zM4 7l8 4 8-4M12 11v10',
-  jobs: 'M14.7 6.3a4 4 0 00-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 005.4-5.4l-2.5 2.5-2.5-2.5z',
-  tickets: 'M12 8v4l3 2M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
-  warranties: 'M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z',
-  customers: 'M16 11a4 4 0 10-8 0 4 4 0 008 0zM4 21a8 8 0 0116 0',
-  subsidies: 'M4 10h16M6 10v8M10 10v8M14 10v8M18 10v8M3 20h18M12 3l9 5H3z',
-  reports: 'M4 20V10M10 20V4M16 20v-7M22 20H2',
-  settings: 'M12 15a3 3 0 100-6 3 3 0 000 6zM19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z'
-};
+// At most five groups. Each group holds the modules (pages) that belong together;
+// people only see the groups and pages their role may open (me.modules, from the server).
+export const GROUPS = [
+  { key: 'today', label: 'Today', icon: 'M12 3v2M12 19v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M3 12h2M19 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4M12 8a4 4 0 100 8 4 4 0 000-8z', modules: ['dashboard'] },
+  { key: 'sales', label: 'Sales', icon: 'M4 6h16M4 12h10M4 18h7', modules: ['leads', 'surveys', 'orders', 'customers', 'subsidies'] },
+  { key: 'ops', label: 'Operations', icon: 'M14.7 6.3a4 4 0 00-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 005.4-5.4l-2.5 2.5-2.5-2.5z', modules: ['jobs', 'deliveries', 'stock'] },
+  { key: 'service', label: 'Service', icon: 'M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z', modules: ['tickets', 'warranties'] },
+  { key: 'business', label: 'Business', icon: 'M4 20V10M10 20V4M16 20v-7M22 20H2', modules: ['insights', 'reports', 'settings'] }
+];
 
 const STAFF = ['director', 'sales', 'warehouse', 'technician', 'support'];
+
+/** The groups (with their visible pages) for this person. */
+export function useGroups() {
+  const { me } = useAuth();
+  const mods = me?.modules || [];
+  return GROUPS.map((g) => ({ ...g, pages: g.modules.map((k) => mods.find((m) => m.key === k)).filter(Boolean) }))
+    .filter((g) => g.pages.length);
+}
+
+const inPage = (pathname, path) => (path === '/app' ? pathname === '/app' : pathname === path || pathname.startsWith(path + '/'));
 
 export default function StaffLayout() {
   const { me } = useAuth();
   const location = useLocation();
+  const groups = useGroups();
   if (me === undefined) return <p className="empty" style={{ padding: '160px 0' }}>Loading…</p>;
   if (!me.authenticated) return <Navigate to={`/login?next=${encodeURIComponent(location.pathname + location.search)}`} replace />;
   if (!STAFF.includes(me.role)) return <Navigate to={me.home || '/'} replace />;
+  const active = groups.find((g) => g.pages.some((p) => inPage(location.pathname, p.path)));
   return (
     <div className="ws">
       <aside className="ws-side" aria-label="Workspace">
@@ -34,17 +40,33 @@ export default function StaffLayout() {
           <span className="muted small">{ROLE_LABELS[me.role]}</span>
         </div>
         <nav className="ws-nav">
-          {(me.modules || []).map((m) => (
-            <NavLink key={m.key} to={m.path} end={m.path === '/app'} className={({ isActive }) => `ws-nav__link${isActive ? ' is-active' : ''}`}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={ICONS[m.key] || ICONS.dashboard} /></svg>
-              <span>{m.label}</span>
-              {m.level === 'r' && <span className="ws-nav__ro" title="Read only">view</span>}
-            </NavLink>
-          ))}
+          {groups.map((g) => {
+            const label = g.pages.length === 1 && g.key !== 'today' ? g.pages[0].label : g.label;
+            return (
+              <Link key={g.key} to={g.pages[0].path} className={`ws-nav__link${active?.key === g.key ? ' is-active' : ''}`} aria-current={active?.key === g.key ? 'page' : undefined}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={g.icon} /></svg>
+                <span>{label}</span>
+              </Link>
+            );
+          })}
         </nav>
+        <NavLink to="/app/me" className={({ isActive }) => `ws-nav__link ws-nav__me${isActive ? ' is-active' : ''}`}>
+          <span className="nav__avatar" aria-hidden="true">{(me.name || '?')[0]}</span><span>My account</span>
+        </NavLink>
       </aside>
       <div className="ws-main">
-        <Outlet />
+        {active && active.pages.length > 1 && (
+          <nav className="ws-tabs" aria-label={active.label}>
+            {active.pages.map((p) => (
+              <Link key={p.key} to={p.path} className={`ws-tab${inPage(location.pathname, p.path) ? ' is-active' : ''}`}>
+                {p.label}{p.level === 'r' && <span className="ws-tab__ro">view</span>}
+              </Link>
+            ))}
+          </nav>
+        )}
+        <div className="ws-page" key={location.pathname}>
+          <Outlet />
+        </div>
       </div>
     </div>
   );

@@ -60,7 +60,11 @@ export const api = {
   signup: (values) => post('/api/auth/signup', values),
   requestReset: (email) => post('/api/auth/reset', { email }),
   checkReset: (token) => post('/api/auth/reset/check', { token }),
-  confirmReset: (token, password) => post('/api/auth/reset/confirm', { token, password }),
+  confirmReset: (values) => post('/api/auth/reset/confirm', values),
+  recover: (values) => post('/api/auth/recover', values),
+  setRecoveryCode: (password, code) => post('/api/auth/recovery-code', { password, code }),
+  onboarded: () => post('/api/auth/onboarded'),
+  today: () => get('/api/staff/today'),
   // My Account (customers)
   myOverview: () => get('/api/my/overview'),
   myQuote: (id) => get(`/api/my/quote/${id}`),
@@ -72,7 +76,7 @@ export const api = {
   confirmFix: (ticket_id) => post('/api/my/ticket/confirm', { ticket_id }),
   reopenTicket: (ticket_id, note) => post('/api/my/ticket/reopen', { ticket_id, note }),
   myProfile: (values) => post('/api/my/profile', values),
-  myPassword: (old, next) => post('/api/my/password', { old, new: next }),
+  myPassword: (old, next, confirm) => post('/api/my/password', { old, new: next, confirm }),
   // staff
   dashboard: (period) => get('/api/staff/dashboard', { period }),
   summary: () => get('/api/staff/summary'),

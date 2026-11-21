@@ -272,3 +272,183 @@ def update_user(uid: int, body: dict = Body(default={}), user=Depends(director_o
     if vals.get("active") == 0:
         db.exec("DELETE FROM sessions WHERE user_id = ?", uid)
     return {"ok": True}
+
+
+# ------------------------------------------------------------------- today
+def _utc_day_bounds(day):
+    """Local calendar day -> UTC bounds (event times are stored in UTC)."""
+    from datetime import timezone
+    a = datetime.combine(day, time.min).astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    b = datetime.combine(day, time.max).astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    return a, b
+
+
+def _item(title, sub, path, tag="", when=None, tone=""):
+    return {"title": title, "sub": sub, "path": path, "tag": tag, "when": when, "tone": tone}
+
+
+@router.get("/today")
+def today_view(user=Depends(staff_only), db=Depends(get_db)):
+    """Today's work for the signed-in person: a few numbers and at most five groups of
+    things to do, most urgent first. History and trends live in Insights."""
+    uid, role = user["id"], user["role"]
+    day = date.today()
+    us, ue = _utc_day_bounds(day)
+    ls, le = day.isoformat() + " 00:00:00", day.isoformat() + " 23:59:59"   # local (appointments)
+    nowdt = rules.parse_dt(now())
+
+    def new_leads(mine=False):
+        rows = db.q("SELECT * FROM leads WHERE stage = 'new'" + (" AND salesperson_id = ?" if mine else "") +
+                    " ORDER BY created_at", *([uid] if mine else []))
+        return [_item(l["contact_name"], "%s · %s kW · %s" % (l["ref"], l["requested_kw"] or "?", l["city"] or "no city"),
+                      "/app/enquiries/%s" % l["id"], "Call", l["created_at"], "warn") for l in rows]
+
+    def surveys_to_approve():
+        rows = db.q("SELECT s.*, l.contact_name FROM surveys s JOIN leads l ON l.id = s.lead_id WHERE s.state = 'done' ORDER BY s.id")
+        return [_item(s["contact_name"], "%s · %s kW recommended" % (s["ref"], s["recommended_kw"] or "?"),
+                      "/app/surveys/%s" % s["id"], "Approve") for s in rows]
+
+    def quotes_to_move():
+        out = []
+        for o in db.q("SELECT o.*, c.name AS customer FROM orders o JOIN customers c ON c.id = o.customer_id "
+                      "WHERE o.state IN ('draft','sent') ORDER BY o.date_order"):
+            if o["state"] == "draft":
+                out.append(_item(o["customer"], "%s · %g kW · %s" % (o["ref"], o["kw"], rules.money(o["amount_total"])),
+                                 "/app/orders/%s" % o["id"], "Send quote"))
+            elif (nowdt - rules.parse_dt(o["date_order"])).days >= 3:
+                out.append(_item(o["customer"], "%s · sent %s days ago" % (o["ref"], (nowdt - rules.parse_dt(o["date_order"])).days),
+                                 "/app/orders/%s" % o["id"], "Follow up"))
+        return out
+
+    def money_to_collect():
+        out = []
+        for o in db.q("SELECT o.*, c.name AS customer FROM orders o JOIN customers c ON c.id = o.customer_id "
+                      "WHERE o.state = 'sale' ORDER BY o.confirmed_at"):
+            due = rules.advance_due(db, o)
+            if due > 0:
+                out.append(_item(o["customer"], "%s · advance %s due" % (o["ref"], rules.money(due)),
+                                 "/app/orders/%s" % o["id"], "Advance", tone="bad"))
+        for i in db.q("SELECT i.*, c.name AS customer FROM invoices i JOIN customers c ON c.id = i.customer_id "
+                      "WHERE i.state = 'posted' AND i.amount_total - i.amount_paid > 0.5 ORDER BY i.date"):
+            out.append(_item(i["customer"], "%s · %s unpaid" % (i["ref"], rules.money(i["amount_total"] - i["amount_paid"])),
+                             "/app/orders/%s" % i["order_id"] if i["order_id"] else "/app/reports", "Invoice"))
+        return out
+
+    def deliveries(state):
+        rows = db.q("SELECT d.*, o.ref AS order_ref, o.kw, c.name AS customer FROM deliveries d JOIN orders o ON o.id = d.order_id "
+                    "JOIN customers c ON c.id = o.customer_id WHERE d.state = ? ORDER BY d.id", state)
+        return [_item(d["customer"], "%s · %g kW kit · order %s" % (d["ref"], d["kw"], d["order_ref"]), "/app/dispatch/%s" % d["id"],
+                      "Dispatch" if state == "ready" else "Advance due") for d in rows]
+
+    def low_stock():
+        rows = db.q("SELECT * FROM products WHERE is_kit = 0 AND is_service = 0 AND qty_on_hand < min_qty ORDER BY qty_on_hand")
+        return [_item(p["name"], "%g in stock · minimum %g" % (p["qty_on_hand"], p["min_qty"]), "/app/stock", "Reorder", tone="bad")
+                for p in rows]
+
+    def jobs(mine=False, only_today=False):
+        sql = ("SELECT j.*, c.name AS customer, c.city FROM jobs j JOIN customers c ON c.id = j.customer_id WHERE j.state != 'done'")
+        args = []
+        if mine:
+            sql += " AND j.id IN (SELECT job_id FROM job_techs WHERE user_id = ?)"
+            args.append(uid)
+        if only_today:
+            sql += " AND j.scheduled_at BETWEEN ? AND ?"
+            args += [ls, le]
+        rows = db.q(sql + " ORDER BY CASE j.state WHEN 'in_progress' THEN 0 ELSE 1 END, j.scheduled_at", *args)
+        return [_item(j["customer"], "%s · %g kW · %s" % (j["ref"], j["kw_planned"] or 0, j["city"] or ""), "/app/jobs/%s" % j["id"],
+                      "On site" if j["state"] == "in_progress" else ("Today" if ls <= (j["scheduled_at"] or "") <= le else "Upcoming"),
+                      j["scheduled_at"], "warn" if j["state"] == "in_progress" else "") for j in rows]
+
+    def visits(mine=False, only_today=False):
+        sql = ("SELECT s.*, l.contact_name, l.city FROM surveys s JOIN leads l ON l.id = s.lead_id WHERE s.state = 'scheduled'")
+        args = []
+        if mine:
+            sql += " AND s.technician_id = ?"
+            args.append(uid)
+        if only_today:
+            sql += " AND s.survey_date BETWEEN ? AND ?"
+            args += [ls, le]
+        rows = db.q(sql + " ORDER BY s.survey_date", *args)
+        return [_item(s["contact_name"], "%s · roof survey · %s" % (s["ref"], s["city"] or ""), "/app/surveys/%s" % s["id"],
+                      "Today" if ls <= (s["survey_date"] or "") <= le else "Visit", s["survey_date"]) for s in rows]
+
+    def tickets(where, mine=False, tag=""):
+        sql = ("SELECT t.*, c.name AS customer FROM tickets t JOIN customers c ON c.id = t.customer_id WHERE " + where)
+        args = []
+        if mine:
+            sql += " AND t.technician_id = ?"
+            args.append(uid)
+        rows = db.q(sql + " ORDER BY t.priority DESC, t.reported_on", *args)
+        out = []
+        for t in rows:
+            days = (nowdt - rules.parse_dt(t["reported_on"])).days
+            out.append(_item(t["customer"], "%s · %s" % (t["ref"], (t["description"] or "")[:70]), "/app/service/%s" % t["id"],
+                             tag or ("Urgent" if t["priority"] == "2" else "%sd open" % days), t["reported_on"],
+                             "bad" if days > 3 or t["priority"] == "2" else ""))
+        return out
+
+    def count(sql, *args):
+        return db.val(sql, *args) or 0
+
+    groups, stats = [], []
+
+    def group(key, title, hint, items, path):
+        groups.append({"key": key, "title": title, "hint": hint, "count": len(items), "items": items[:6], "path": path})
+
+    if role == "director":
+        stats = [
+            {"label": "New enquiries", "value": count("SELECT COUNT(*) FROM leads WHERE created_at BETWEEN ? AND ?", us, ue)},
+            {"label": "Collected today", "value": rules.money(count("SELECT COALESCE(SUM(amount),0) FROM payments WHERE state = 'done' AND date BETWEEN ? AND ?", us, ue))},
+            {"label": "Installs today", "value": count("SELECT COUNT(*) FROM jobs WHERE state != 'done' AND scheduled_at BETWEEN ? AND ?", ls, le)},
+            {"label": "Open repairs", "value": count("SELECT COUNT(*) FROM tickets WHERE stage NOT IN ('closed','cancel')")},
+        ]
+        group("sales", "Sales to move forward", "New enquiries to call, surveys to approve, quotes to send or chase.",
+              new_leads() + surveys_to_approve() + quotes_to_move(), "/app/enquiries")
+        group("money", "Money to collect", "Advances still due and unpaid invoices.", money_to_collect(), "/app/orders?state=sale")
+        group("site", "On site today", "Installations and roof surveys booked for today.",
+              jobs(only_today=True) + visits(only_today=True), "/app/jobs")
+        group("warehouse", "Warehouse", "Kits ready to dispatch and items to reorder.", deliveries("ready") + low_stock(), "/app/dispatch")
+        group("service", "Service", "New and overdue repair requests.",
+              tickets("t.stage = 'new'") + [t for t in tickets("t.stage IN ('diagnosed','repair')") if t["tone"] == "bad"], "/app/service")
+    elif role == "sales":
+        stats = [
+            {"label": "New enquiries today", "value": count("SELECT COUNT(*) FROM leads WHERE created_at BETWEEN ? AND ?", us, ue)},
+            {"label": "Quotes with customers", "value": count("SELECT COUNT(*) FROM orders WHERE state = 'sent'")},
+            {"label": "Orders confirmed today", "value": count("SELECT COUNT(*) FROM orders WHERE state = 'sale' AND confirmed_at BETWEEN ? AND ?", us, ue)},
+        ]
+        group("call", "Call new enquiries", "Call within two hours: screen the roof, bill and grid.", new_leads(), "/app/enquiries?stage=new")
+        group("approve", "Surveys to approve", "Visited by a technician; check the size and approve.", surveys_to_approve(), "/app/surveys?state=done")
+        group("quotes", "Quotes to send or chase", "Drafts to send, and quotes sent 3+ days ago.", quotes_to_move(), "/app/orders?state=quotes")
+        group("money", "Money to collect", "Advances still due and unpaid invoices.", money_to_collect(), "/app/orders?state=sale")
+    elif role == "warehouse":
+        stats = [
+            {"label": "Ready to dispatch", "value": count("SELECT COUNT(*) FROM deliveries WHERE state = 'ready'")},
+            {"label": "Dispatched today", "value": count("SELECT COUNT(*) FROM deliveries WHERE state = 'done' AND date_done BETWEEN ? AND ?", us, ue)},
+            {"label": "Items to reorder", "value": count("SELECT COUNT(*) FROM products WHERE is_kit = 0 AND is_service = 0 AND qty_on_hand < min_qty")},
+        ]
+        group("ready", "Ready to dispatch", "Advance paid: pack, scan serials and send.", deliveries("ready"), "/app/dispatch?state=ready")
+        group("waiting", "Waiting for the advance", "Can't leave until the customer pays.", deliveries("waiting"), "/app/dispatch?state=waiting")
+        group("stock", "Items to reorder", "Below the minimum stock level.", low_stock(), "/app/stock")
+    elif role == "technician":
+        mine_jobs = jobs(mine=True)
+        stats = [
+            {"label": "My jobs today", "value": sum(1 for j in mine_jobs if j["tag"] in ("Today", "On site"))},
+            {"label": "My visits today", "value": len(visits(mine=True, only_today=True))},
+            {"label": "My open repairs", "value": count("SELECT COUNT(*) FROM tickets WHERE technician_id = ? AND stage NOT IN ('closed','cancel')", uid)},
+        ]
+        group("jobs", "My installations", "Start on site, then checklist, photos and the customer's signature.", mine_jobs, "/app/jobs")
+        group("visits", "My roof surveys", "Measure the roof and mark the visit done.", visits(mine=True), "/app/surveys")
+        group("repairs", "My repairs", "Fix, add parts and hours, then ask the customer to confirm.",
+              tickets("t.stage NOT IN ('closed','cancel','awaiting')", mine=True), "/app/service")
+    elif role == "support":
+        stats = [
+            {"label": "New today", "value": count("SELECT COUNT(*) FROM tickets WHERE reported_on BETWEEN ? AND ?", us, ue)},
+            {"label": "Open requests", "value": count("SELECT COUNT(*) FROM tickets WHERE stage NOT IN ('closed','cancel')")},
+            {"label": "Open over 3 days", "value": sum(1 for t in tickets("t.stage NOT IN ('closed','cancel')") if t["tone"] == "bad")},
+        ]
+        group("new", "New requests", "Find the equipment, assign a technician, diagnose.", tickets("t.stage = 'new'"), "/app/service?stage=new")
+        group("repair", "Being repaired", "Diagnosed or with a technician.", tickets("t.stage IN ('diagnosed','repair')"), "/app/service?stage=repair")
+        group("awaiting", "Waiting for the customer", "Repair done; the customer has to confirm.", tickets("t.stage = 'awaiting'", tag="Confirm"),
+              "/app/service?stage=awaiting")
+    return {"date": day.isoformat(), "stats": stats, "groups": groups,
+            "all_clear": not any(g["count"] for g in groups)}

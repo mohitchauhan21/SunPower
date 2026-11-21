@@ -33,16 +33,18 @@ powershell -ExecutionPolicy Bypass -File .\backend\run.ps1     # 1st terminal: c
 cd frontend; npm install; npm run dev                         # 2nd terminal: website on :5173
 ```
 
-Open **http://localhost:5173** and sign in. The password for every demo account is **`sunpower`**:
+Open **http://localhost:5173** and sign in. Every demo account uses the password **`Sunpower@2026`** and the recovery code **`2580`**:
 
-| Role | Login | Lands on |
+| Role | Login | Their Today page shows |
 |---|---|---|
-| Director | `director@sunpower.demo` | Dashboard: profit per job, cash, installs, repairs, subsidy |
-| Sales | `sales@sunpower.demo` | Enquiries → surveys → quotes → payments |
-| Warehouse | `warehouse@sunpower.demo` | Dispatch (serial scanning) and stock |
-| Service desk | `support@sunpower.demo` | Service requests |
-| Technician | `tech01@sunpower.demo` … `tech15@sunpower.demo` | My installation jobs, my surveys, my repairs |
-| Customer | `customer@sunpower.demo` | My account: installation tracker, warranties, service, quotes & payments |
+| Director | `director@sunpower.demo` | Sales to move forward, money to collect, work on site, warehouse, service. Trends are under Business → Insights. |
+| Sales | `sales@sunpower.demo` | Enquiries to call, surveys to approve, quotes to send, money to collect |
+| Warehouse | `warehouse@sunpower.demo` | Kits ready to dispatch, kits waiting for the advance, items to reorder |
+| Service desk | `support@sunpower.demo` | New requests, repairs in progress, customers to confirm |
+| Technician | `tech01@sunpower.demo` … `tech15@sunpower.demo` | My installations, my roof surveys, my repairs |
+| Customer | `customer@sunpower.demo` | (My account) installation tracker, warranties, service, quotes & payments |
+
+Everyone sees a short welcome tour the first time they sign in (visitors: the first time they open the site). It never comes back after that.
 
 **Optional AI helpers** (bill reading, "fill from WhatsApp text", fault diagnosis, panel-photo check), in a 3rd terminal:
 
@@ -52,6 +54,21 @@ powershell -ExecutionPolicy Bypass -File .\ai_service\run.ps1      # Windows
 ```
 The first start downloads about 2.2 GB of free models. Without the AI service everything still works; the AI buttons just ask you to fill the details in by hand. See [ai_service/README.md](ai_service/README.md).
 
+**Turn on "Sign in with Google"** (optional)
+1. In [Google Cloud Console](https://console.cloud.google.com/) → *APIs & Services* → *OAuth consent screen*: set it up (External, app name SunPower, your email).
+2. *Credentials* → *Create credentials* → *OAuth client ID* → type **Web application**.
+   - Authorised JavaScript origin: `http://localhost:5173`
+   - Authorised redirect URI: `http://localhost:5173/api/auth/google/callback`
+3. Copy the **Client ID** and **Client secret** into either:
+   - **the website:** sign in as Director → Business → Settings → *Email, payments & sign-in* → Google, then Save; or
+   - **a file:** create `backend/.env` (it is git-ignored) containing
+     ```
+     GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+     GOOGLE_CLIENT_SECRET=your-client-secret
+     ```
+     and restart the back end.
+4. A "Continue with Google" button appears on the sign-in and sign-up pages. Never commit or share the secret.
+
 **Useful extras**
 - Fresh demo data: `./backend/run.sh --reset` (Windows: `run.ps1 -Reset`).
 - Empty company (no demo data): set `SUNPOWER_DEMO=0` before the first start.
@@ -60,6 +77,25 @@ The first start downloads about 2.2 GB of free models. Without the AI service ev
 - Production build of the website: `cd frontend && npm run build && npm run preview` (:4173, same proxy).
 
 ---
+
+## Accounts and passwords
+
+- **Passwords** need at least 8 characters with a capital letter, a small letter, a number and a symbol, typed twice. The forms show the rules ticking off as you type.
+- **Recovery code:** everyone chooses a 4-digit code when they create their account (staff when they set their first password from the invite email). Obvious codes like 1234 or 0000 are refused.
+- **Forgot password:** email + recovery code + new password (twice). Five wrong tries lock that email for 15 minutes. People without their code can still ask for an emailed reset link.
+- Change your password or recovery code: customers in My account → Profile, staff in Workspace → My account.
+
+## The workspace: five groups
+
+| Group | Pages inside (tabs) |
+|---|---|
+| **Today** | Your to-do list for today: up to 4 numbers and up to 5 groups of things to act on |
+| **Sales** | Enquiries · Surveys · Quotes & orders · Customers · Subsidy |
+| **Operations** | Installations · Dispatch · Stock |
+| **Service** | Requests · Warranties |
+| **Business** (Director) | Insights (week / month / year trends) · Reports · Settings |
+
+Each person only sees the groups and pages their role may open. Every staff member lands on **Today** after signing in.
 
 ## The business flow
 

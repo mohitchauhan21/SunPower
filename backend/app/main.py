@@ -1,6 +1,21 @@
 """SunPower back end (FastAPI). Run:  uvicorn app.main:app --port 8001"""
 import logging
 import os
+from pathlib import Path
+
+
+def _load_env_file():
+    """KEY=value lines from backend/.env (e.g. GOOGLE_CLIENT_ID). Real environment variables win."""
+    env = Path(__file__).resolve().parent.parent / ".env"
+    if env.exists():
+        for line in env.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, value = line.split("=", 1)
+                os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+_load_env_file()
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse

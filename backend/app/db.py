@@ -185,10 +185,20 @@ def connect():
     return conn
 
 
+# Columns added after the first release: added in place to existing databases.
+MIGRATIONS = [
+    ("users", "recovery_code_hash", "TEXT"),          # 4-digit code for "forgot password"
+    ("users", "onboarded", "INTEGER NOT NULL DEFAULT 0"),  # welcome tour shown once
+]
+
+
 def init_db(conn=None):
     own = conn is None
     conn = conn or connect()
     conn.executescript(SCHEMA)
+    for table, column, kind in MIGRATIONS:
+        if column not in [r[1] for r in conn.execute("PRAGMA table_info(%s)" % table)]:
+            conn.execute("ALTER TABLE %s ADD COLUMN %s %s" % (table, column, kind))
     conn.commit()
     if own:
         conn.close()

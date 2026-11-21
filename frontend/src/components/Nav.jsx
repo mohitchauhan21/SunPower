@@ -1,5 +1,5 @@
 import { NavLink, Link, useNavigate } from 'react-router-dom';
-import { useAuth } from '../auth.jsx';
+import { ROLE_LABELS, useAuth } from '../auth.jsx';
 import BubbleMenu from './reactbits/BubbleMenu.jsx';
 import Logo from './Logo.jsx';
 
@@ -18,10 +18,13 @@ const ROLE_ITEMS = {
 export default function Nav() {
   const { me, signOut } = useAuth();
   const navigate = useNavigate();
+  const signedIn = !!me?.authenticated;
   const items = [...NAV_ITEMS, ...(ROLE_ITEMS[me?.role] || [])];
   const out = async () => { await signOut(); navigate('/'); };
-  const mobileItems = [...items,
-    me?.authenticated ? { label: 'Sign out', path: '/logout' } : { label: 'Sign in', path: '/login' }];
+  const mine = me?.role === 'customer' ? '/account?tab=profile' : '/app/me';
+  const mobileItems = [...items, ...(signedIn
+    ? [{ label: 'Sign out', path: '/logout' }]
+    : [{ label: 'Sign in', path: '/login' }, { label: 'Get started', path: '/estimate' }])];
   return (
     <>
       <header className="nav">
@@ -29,21 +32,26 @@ export default function Nav() {
           <Link to="/" aria-label="SunPower home"><Logo /></Link>
           <nav className="nav__links" aria-label="Main">
             {items.map((i) => (
-              <NavLink key={i.path} to={i.path} end className={({ isActive }) => `nav__link${isActive ? ' is-active' : ''}`}>
+              <NavLink key={i.path} to={i.path} end={i.path === '/'} className={({ isActive }) => `nav__link${isActive ? ' is-active' : ''}`}>
                 {i.label}
               </NavLink>
             ))}
           </nav>
           <div className="nav__actions">
-            {me?.authenticated ? (
+            {signedIn ? (
               <>
-                <span className="nav__user" title={me.login}>{me.name?.split(' ')[0]}</span>
-                <button type="button" className="nav__link nav__btn" onClick={out}>Sign out</button>
+                <Link to={mine} className="nav__me" title={`${me.login} · ${ROLE_LABELS[me.role] || ''}`}>
+                  <span className="nav__avatar" aria-hidden="true">{(me.name || '?').trim()[0]}</span>
+                  <span>{me.name?.split(' ')[0]}</span>
+                </Link>
+                <button type="button" className="btn btn--secondary btn--sm" onClick={out}>Sign out</button>
               </>
             ) : (
-              <Link to="/login" className="nav__link">Sign in</Link>
+              <>
+                <Link to="/login" className="btn btn--secondary btn--sm">Sign in</Link>
+                <Link to="/estimate" className="btn btn--primary btn--sm">Get started</Link>
+              </>
             )}
-            <Link to="/quote" className="btn btn--primary btn--sm">Free survey</Link>
           </div>
         </div>
       </header>
