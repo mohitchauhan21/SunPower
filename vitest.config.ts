@@ -44,7 +44,9 @@ export default defineConfig({
           environment: "node",
           globalSetup: ["tests/db/global-setup.ts"],
           setupFiles: ["tests/db/setup.ts"],
-          fileParallelism: false,
+          // DB test files share one database, so run them one at a time in a single process.
+          pool: "forks",
+          poolOptions: { forks: { singleFork: true } },
           testTimeout: 30_000,
           hookTimeout: 120_000,
         },

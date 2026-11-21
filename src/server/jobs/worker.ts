@@ -4,7 +4,8 @@
  * 2. Runs the handler for each event type.
  * Handlers must be idempotent: an event can be delivered more than once after a crash.
  */
-import "dotenv/config";
+import { config } from "dotenv";
+config({ quiet: true });
 import { db } from "@/server/db";
 import { relayOutbox } from "./outbox";
 import { PgBossQueue } from "./pgboss-queue";

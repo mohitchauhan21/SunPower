@@ -2,7 +2,8 @@
  * Create the dev and test databases on the local PostgreSQL server if they don't exist.
  * Uses DATABASE_URL / TEST_DATABASE_URL from .env. No Docker needed.
  */
-import "dotenv/config";
+import { config } from "dotenv";
+config({ quiet: true });
 import { Client } from "pg";
 
 async function ensureDatabase(urlString: string | undefined, label: string): Promise<void> {
@@ -39,8 +40,11 @@ async function ensureDatabase(urlString: string | undefined, label: string): Pro
 }
 
 async function main() {
-  await ensureDatabase(process.env.DATABASE_URL, "dev");
-  await ensureDatabase(process.env.TEST_DATABASE_URL, "test");
+  const dev = process.env.DATABASE_URL;
+  const test = process.env.TEST_DATABASE_URL;
+  // The test harness points DATABASE_URL at the test DB; don't report it twice.
+  if (dev && dev !== test) await ensureDatabase(dev, "dev");
+  await ensureDatabase(test, "test");
 }
 
 main().catch((err) => {

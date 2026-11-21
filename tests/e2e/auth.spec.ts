@@ -14,7 +14,8 @@ test.describe("sign-in", () => {
   test("a wrong password shows a readable error and keeps the email", async ({ page }) => {
     await page.goto("/login");
     await login(page, "support@sunpower.test", "definitely-wrong");
-    await expect(page.getByRole("alert")).toContainText("don't match an active account");
+    // Next.js renders its own (empty) role="alert" route announcer, so match ours by text.
+    await expect(page.getByRole("alert").filter({ hasText: "don't match an active account" })).toBeVisible();
     await expect(page.getByLabel("Email")).toHaveValue("support@sunpower.test");
   });
 

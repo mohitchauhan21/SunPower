@@ -1,7 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 import { config } from "dotenv";
 
-config();
+config({ quiet: true });
 
 const PORT = 3100;
 const baseURL = `http://localhost:${PORT}`;
