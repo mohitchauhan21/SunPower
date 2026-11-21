@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_solar_warranty_list" model="ir.ui.view">
+        <field name="name">solar.warranty.list</field>
+        <field name="model">solar.warranty</field>
+        <field name="arch" type="xml">
+            <list create="0" decoration-muted="state == 'expired'">
+                <field name="serial"/>
+                <field name="product_id"/>
+                <field name="partner_id"/>
+                <field name="phone" optional="show"/>
+                <field name="sale_order_id" optional="show"/>
+                <field name="start_date"/>
+                <field name="months"/>
+                <field name="end_date"/>
+                <field name="days_left" optional="show"/>
+                <field name="state" widget="badge" decoration-success="state == 'active'"
+                       decoration-danger="state == 'expired'"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_solar_warranty_form" model="ir.ui.view">
+        <field name="name">solar.warranty.form</field>
+        <field name="model">solar.warranty</field>
+        <field name="arch" type="xml">
+            <form create="0">
+                <sheet>
+                    <widget name="web_ribbon" title="Under Warranty" bg_color="text-bg-success"
+                            invisible="state != 'active'"/>
+                    <widget name="web_ribbon" title="Expired" bg_color="text-bg-danger"
+                            invisible="state != 'expired'"/>
+                    <div class="oe_title"><h1><field name="serial"/></h1></div>
+                    <group>
+                        <group>
+                            <field name="lot_id"/>
+                            <field name="product_id"/>
+                            <field name="partner_id"/>
+                            <field name="phone" widget="phone"/>
+                        </group>
+                        <group>
+                            <field name="start_date"/>
+                            <field name="months"/>
+                            <field name="end_date"/>
+                            <field name="days_left"/>
+                            <field name="state" invisible="1"/>
+                            <field name="sale_order_id"/>
+                            <field name="picking_id"/>
+                        </group>
+                    </group>
+                    <field name="ticket_ids" readonly="1">
+                        <list>
+                            <field name="name"/>
+                            <field name="reported_on"/>
+                            <field name="description"/>
+                            <field name="stage" widget="badge"/>
+                        </list>
+                    </field>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_solar_warranty_search" model="ir.ui.view">
+        <field name="name">solar.warranty.search</field>
+        <field name="model">solar.warranty</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="serial"/>
+                <field name="partner_id"/>
+                <field name="phone"/>
+                <field name="product_id"/>
+                <filter name="active_w" string="Under Warranty" domain="[('state', '=', 'active')]"/>
+                <filter name="expired_w" string="Expired" domain="[('state', '=', 'expired')]"/>
+                <group expand="0" string="Group By">
+                    <filter name="g_cat" string="Category" context="{'group_by': 'product_categ_id'}"/>
+                    <filter name="g_partner" string="Customer" context="{'group_by': 'partner_id'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_solar_warranty" model="ir.actions.act_window">
+        <field name="name">Warranty Register</field>
+        <field name="res_model">solar.warranty</field>
+        <field name="view_mode">list,form</field>
+    </record>
+</odoo>

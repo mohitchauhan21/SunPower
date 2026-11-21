@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_solar_subsidy_form" model="ir.ui.view">
+        <field name="name">solar.subsidy.form</field>
+        <field name="model">solar.subsidy.application</field>
+        <field name="arch" type="xml">
+            <form>
+                <header>
+                    <button name="action_apply" string="Mark Applied" type="object"
+                            class="btn-primary" invisible="state != 'draft'"/>
+                    <button name="action_inspection" string="Inspection Done" type="object"
+                            class="btn-primary" invisible="state != 'applied'"/>
+                    <button name="action_approve" string="Approved" type="object"
+                            class="btn-primary" invisible="state != 'inspection'"/>
+                    <button name="action_disburse" string="Subsidy Received" type="object"
+                            class="btn-primary" invisible="state != 'approved'"/>
+                    <button name="action_reject" string="Rejected" type="object"
+                            invisible="state in ('disbursed', 'rejected')"/>
+                    <field name="state" widget="statusbar"
+                           statusbar_visible="draft,applied,inspection,approved,disbursed"/>
+                </header>
+                <sheet>
+                    <div class="oe_title"><h1><field name="name" readonly="1"/></h1></div>
+                    <group>
+                        <group>
+                            <field name="sale_order_id"/>
+                            <field name="partner_id"/>
+                            <field name="system_kw"/>
+                            <field name="scheme"/>
+                            <field name="portal_application_no"/>
+                            <field name="discom"/>
+                            <field name="consumer_no"/>
+                        </group>
+                        <group>
+                            <field name="amount_expected"/>
+                            <field name="amount_received"/>
+                            <field name="applied_on"/>
+                            <field name="inspection_on"/>
+                            <field name="disbursed_on"/>
+                            <field name="days_pending"/>
+                            <field name="currency_id" invisible="1"/>
+                        </group>
+                    </group>
+                    <group string="Document Checklist">
+                        <group>
+                            <field name="doc_aadhaar"/>
+                            <field name="doc_bill"/>
+                            <field name="doc_bank"/>
+                        </group>
+                        <group>
+                            <field name="doc_photo"/>
+                            <field name="doc_net_meter"/>
+                        </group>
+                    </group>
+                    <field name="document_ids" widget="many2many_binary"/>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_solar_subsidy_list" model="ir.ui.view">
+        <field name="name">solar.subsidy.list</field>
+        <field name="model">solar.subsidy.application</field>
+        <field name="arch" type="xml">
+            <list>
+                <field name="name"/>
+                <field name="partner_id"/>
+                <field name="sale_order_id"/>
+                <field name="system_kw"/>
+                <field name="portal_application_no"/>
+                <field name="amount_expected" sum="Total"/>
+                <field name="amount_received" sum="Total"/>
+                <field name="days_pending"/>
+                <field name="currency_id" column_invisible="1"/>
+                <field name="state" widget="badge" decoration-success="state == 'disbursed'"
+                       decoration-danger="state == 'rejected'"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_solar_subsidy_kanban" model="ir.ui.view">
+        <field name="name">solar.subsidy.kanban</field>
+        <field name="model">solar.subsidy.application</field>
+        <field name="arch" type="xml">
+            <kanban default_group_by="state">
+                <field name="currency_id"/>
+                <templates>
+                    <t t-name="card">
+                        <field name="name" class="fw-bold"/>
+                        <field name="partner_id"/>
+                        <div class="d-flex justify-content-between">
+                            <span><field name="system_kw"/> kW</span>
+                            <field name="amount_expected" widget="monetary"/>
+                        </div>
+                    </t>
+                </templates>
+            </kanban>
+        </field>
+    </record>
+
+    <record id="action_solar_subsidy" model="ir.actions.act_window">
+        <field name="name">Subsidy Tracker</field>
+        <field name="res_model">solar.subsidy.application</field>
+        <field name="view_mode">kanban,list,form</field>
+    </record>
+</odoo>

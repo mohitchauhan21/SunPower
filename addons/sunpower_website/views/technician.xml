@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <template id="technician_page" name="Technician View">
+        <t t-call="website.layout">
+            <div id="wrap" class="sp-site sp-tech">
+                <t t-call="sunpower_website.page_header">
+                    <t t-set="title" t-value="'Hi %s 👷' % request.env.user.name"/>
+                    <t t-set="subtitle" t-value="'%s open job(s) · %s open ticket(s)' % (len(jobs), len(tickets))"/>
+                    <t t-set="crumb">Technician</t>
+                </t>
+
+                <section class="sp-section pt-4">
+                    <div class="container" style="max-width: 860px;">
+                        <div t-if="msg" class="alert alert-success" t-out="msg"/>
+                        <div t-if="err" class="alert alert-danger" t-out="err"/>
+
+                        <h3 class="sp-h3">Installation jobs</h3>
+                        <div t-if="not jobs" class="sp-card sp-empty"><p class="mb-0">No open installation jobs assigned to you.</p></div>
+                        <t t-foreach="jobs" t-as="job">
+                            <t t-set="chk" t-value="[('Stands', job.chk_stands), ('Panels', job.chk_panels), ('Wiring', job.chk_wiring), ('Earthing', job.chk_earthing), ('Generation', job.chk_generation)]"/>
+                            <div class="sp-card sp-job mb-3">
+                                <div class="d-flex justify-content-between align-items-start gap-2">
+                                    <div>
+                                        <h5 class="mb-1" t-out="job.partner_id.name or job.name"/>
+                                        <div class="sp-muted" t-out="job.partner_id.contact_address_complete or 'No address on file'"/>
+                                    </div>
+                                    <t t-call="sunpower_website.pill">
+                                        <t t-set="label" t-value="dict(job._fields['installation_state'].selection).get(job.installation_state)"/>
+                                        <t t-set="tone" t-value="'warn' if job.installation_state == 'in_progress' else 'info'"/>
+                                    </t>
+                                </div>
+                                <div class="sp-job-meta">
+                                    <span>⚡ <t t-out="job.installation_kw_planned"/> kW</span>
+                                    <span t-if="job.installation_date">📅 <span t-field="job.installation_date" t-options="{'widget': 'datetime', 'format': 'd MMM, HH:mm'}"/></span>
+                                    <span t-if="job.partner_id.phone">📞 <a t-attf-href="tel:#{job.partner_id.phone}" t-out="job.partner_id.phone"/></span>
+                                </div>
+                                <div class="sp-chk">
+                                    <span t-foreach="chk" t-as="c" t-att-class="'on' if c[1] else ''"><t t-out="'✔' if c[1] else '○'"/> <t t-out="c[0]"/></span>
+                                </div>
+                                <div class="sp-job-actions">
+                                    <form t-if="job.installation_state == 'planned'" t-attf-action="/technician/job/#{job.id}/start" method="post">
+                                        <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                                        <button class="btn sp-btn-sun btn-lg">▶ Start job</button>
+                                    </form>
+                                    <a t-attf-href="/odoo/action-project.action_view_all_task/#{job.id}" class="btn btn-outline-secondary btn-lg">
+                                        Checklist, photos &amp; signature</a>
+                                </div>
+                            </div>
+                        </t>
+
+                        <h3 class="sp-h3 mt-4">Service tickets</h3>
+                        <div t-if="not tickets" class="sp-card sp-empty"><p class="mb-0">No open service tickets.</p></div>
+                        <div t-foreach="tickets" t-as="tk" class="sp-card sp-job mb-3">
+                            <div class="d-flex justify-content-between align-items-start gap-2">
+                                <div>
+                                    <h5 class="mb-1"><t t-out="tk.name"/> · <t t-out="tk.partner_id.name"/></h5>
+                                    <div class="sp-muted"><t t-out="tk.product_id.display_name or 'Equipment not specified'"/>
+                                        <t t-if="tk.fault_code"> · Code <code t-out="tk.fault_code"/></t></div>
+                                </div>
+                                <t t-call="sunpower_website.pill">
+                                    <t t-set="label" t-value="dict(tk._fields['stage'].selection).get(tk.stage)"/>
+                                    <t t-set="tone" t-value="'danger' if tk.priority == '2' else 'warn' if tk.stage == 'repair' else 'info'"/>
+                                </t>
+                            </div>
+                            <p class="mt-2 mb-2" t-out="tk.description"/>
+                            <div class="sp-job-meta">
+                                <span t-if="tk.under_warranty" class="text-success">🛡 Under warranty</span>
+                                <span>⏱ Open <t t-out="tk.days_open"/> day(s)</span>
+                                <span t-if="tk.phone">📞 <a t-attf-href="tel:#{tk.phone}" t-out="tk.phone"/></span>
+                            </div>
+                            <div class="sp-job-actions">
+                                <a t-attf-href="/odoo/solar.service.ticket/#{tk.id}" class="btn btn-outline-secondary btn-lg">Open ticket</a>
+                            </div>
+                        </div>
+
+                        <t t-if="done_jobs">
+                            <h3 class="sp-h3 mt-4">Recently completed</h3>
+                            <ul class="sp-list">
+                                <li t-foreach="done_jobs" t-as="d"><t t-out="d.partner_id.name or d.name"/> · <t t-out="d.installation_kw_confirmed"/> kW
+                                    <span class="sp-muted">(<span t-field="d.site_end" t-options="{'widget': 'date'}"/>)</span></li>
+                            </ul>
+                        </t>
+                    </div>
+                </section>
+            </div>
+        </t>
+    </template>
+</odoo>

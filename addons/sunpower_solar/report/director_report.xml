@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <template id="report_director">
+        <t t-call="web.html_container">
+            <t t-foreach="docs" t-as="o">
+                <t t-set="d" t-value="o._get_data()"/>
+                <t t-set="k" t-value="d['kpi']"/>
+                <t t-set="c" t-value="d['currency']"/>
+                <t t-call="web.external_layout">
+                    <div class="page">
+                        <h2>SunPower Performance Report</h2>
+                        <p class="text-muted">Period: <t t-out="d['period_label']"/></p>
+                        <table class="table table-sm table-bordered">
+                            <tr><th>New enquiries</th><td t-out="k['leads_new']"/>
+                                <th>Orders won</th><td><t t-out="k['orders_won']"/> (<t t-out="'%.0f' % k['kw_sold']"/> kW)</td></tr>
+                            <tr><th>Order value</th><td><t t-out="c"/> <t t-out="'{:,.0f}'.format(k['orders_value'])"/></td>
+                                <th>Job profit</th><td><t t-out="c"/> <t t-out="'{:,.0f}'.format(k['profit'])"/></td></tr>
+                            <tr><th>Invoiced</th><td><t t-out="c"/> <t t-out="'{:,.0f}'.format(k['invoiced'])"/></td>
+                                <th>Collected</th><td><t t-out="c"/> <t t-out="'{:,.0f}'.format(k['collected'])"/></td></tr>
+                            <tr><th>Installs done</th><td t-out="k['installs_done']"/>
+                                <th>Installs pending</th><td t-out="k['installs_pending']"/></tr>
+                            <tr><th>Open repairs</th><td t-out="k['tickets_open']"/>
+                                <th>Subsidies pending</th><td><t t-out="k['subsidy_pending']"/> (<t t-out="c"/> <t t-out="'{:,.0f}'.format(k['subsidy_amount'])"/>)</td></tr>
+                            <tr><th>Receivables</th><td><t t-out="c"/> <t t-out="'{:,.0f}'.format(k['receivable'])"/></td>
+                                <th>Stock value</th><td><t t-out="c"/> <t t-out="'{:,.0f}'.format(k['stock_value'])"/></td></tr>
+                        </table>
+
+                        <h4 class="mt-4">Profit by job</h4>
+                        <table class="table table-sm">
+                            <thead><tr><th>Order</th><th>Customer</th><th>kW</th><th class="text-end">Revenue</th>
+                                <th class="text-end">Material</th><th class="text-end">Labour</th>
+                                <th class="text-end">Profit</th><th class="text-end">Margin</th><th>Pending</th></tr></thead>
+                            <tbody>
+                                <tr t-foreach="d['jobs']" t-as="j" t-att-style="'color:#b00020' if j['profit'] &lt; 0 else ''">
+                                    <td t-out="j['name']"/><td t-out="j['customer']"/><td t-out="j['kw']"/>
+                                    <td class="text-end" t-out="'{:,.0f}'.format(j['revenue'])"/>
+                                    <td class="text-end" t-out="'{:,.0f}'.format(j['material'])"/>
+                                    <td class="text-end" t-out="'{:,.0f}'.format(j['labour'])"/>
+                                    <td class="text-end" t-out="'{:,.0f}'.format(j['profit'])"/>
+                                    <td class="text-end" t-out="'%.1f%%' % j['margin']"/>
+                                    <td t-out="j['pending']"/>
+                                </tr>
+                            </tbody>
+                        </table>
+
+                        <h4 class="mt-4">Open repairs</h4>
+                        <table class="table table-sm">
+                            <thead><tr><th>Ticket</th><th>Customer</th><th>Equipment</th><th>Stage</th><th>Warranty</th><th>Days open</th></tr></thead>
+                            <tbody>
+                                <tr t-foreach="d['tickets']" t-as="t">
+                                    <td t-out="t['name']"/><td t-out="t['customer']"/><td t-out="t['product']"/>
+                                    <td t-out="t['stage']"/><td t-out="'Yes' if t['warranty'] else 'No'"/><td t-out="t['days']"/>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </t>
+            </t>
+        </t>
+    </template>
+</odoo>

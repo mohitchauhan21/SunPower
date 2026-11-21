@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="product_template_form_solar" model="ir.ui.view">
+        <field name="name">product.template.form.solar</field>
+        <field name="model">product.template</field>
+        <field name="inherit_id" ref="product.product_template_form_view"/>
+        <field name="arch" type="xml">
+            <xpath expr="//notebook" position="inside">
+                <page string="Solar" name="solar">
+                    <group>
+                        <group string="Package">
+                            <field name="is_solar_kit"/>
+                            <field name="solar_kw" invisible="not is_solar_kit"/>
+                            <field name="solar_system_type" invisible="not is_solar_kit"/>
+                            <field name="is_installation_service"/>
+                        </group>
+                        <group string="Warranty">
+                            <field name="solar_warranty_months"/>
+                            <div class="text-muted" colspan="2">
+                                Starts automatically for each serial/lot when the delivery is validated.
+                            </div>
+                        </group>
+                    </group>
+                </page>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="product_category_form_solar" model="ir.ui.view">
+        <field name="name">product.category.form.solar</field>
+        <field name="model">product.category</field>
+        <field name="inherit_id" ref="product.product_category_form_view"/>
+        <field name="arch" type="xml">
+            <xpath expr="//group[@name='first']" position="inside">
+                <field name="solar_warranty_months"/>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="action_solar_packages" model="ir.actions.act_window">
+        <field name="name">Solar Packages</field>
+        <field name="res_model">product.template</field>
+        <field name="view_mode">kanban,list,form</field>
+        <field name="domain">[('is_solar_kit', '=', True)]</field>
+        <field name="context">{'default_is_solar_kit': True}</field>
+    </record>
+
+    <record id="action_solar_components" model="ir.actions.act_window">
+        <field name="name">Components &amp; Stock</field>
+        <field name="res_model">product.template</field>
+        <field name="view_mode">list,kanban,form</field>
+        <field name="domain">[('is_storable', '=', True)]</field>
+    </record>
+
+    <record id="action_solar_serials" model="ir.actions.act_window">
+        <field name="name">Serial Numbers</field>
+        <field name="res_model">stock.lot</field>
+        <field name="view_mode">list,form</field>
+    </record>
+
+    <record id="stock_lot_list_solar" model="ir.ui.view">
+        <field name="name">stock.lot.list.solar</field>
+        <field name="model">stock.lot</field>
+        <field name="inherit_id" ref="stock.view_production_lot_tree"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='product_id']" position="after">
+                <field name="solar_partner_id" optional="show"/>
+                <field name="warranty_end" optional="show"/>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="stock_lot_search_solar" model="ir.ui.view">
+        <field name="name">stock.lot.search.solar</field>
+        <field name="model">stock.lot</field>
+        <field name="inherit_id" ref="stock.search_product_lot_filter"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='product_id']" position="after">
+                <field name="solar_partner_id" string="Customer"/>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="stock_picking_form_solar" model="ir.ui.view">
+        <field name="name">stock.picking.form.solar</field>
+        <field name="model">stock.picking</field>
+        <field name="inherit_id" ref="stock.view_picking_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <button name="action_view_warranties" type="object" class="oe_stat_button"
+                        icon="fa-shield" invisible="warranty_count == 0">
+                    <div class="o_stat_info">
+                        <field name="warranty_count" class="o_stat_value"/>
+                        <span class="o_stat_text">Warranties</span>
+                    </div>
+                </button>
+            </xpath>
+        </field>
+    </record>
+</odoo>

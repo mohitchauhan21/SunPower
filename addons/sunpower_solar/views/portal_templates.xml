@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <template id="portal_solar_ticket" name="Solar Service Ticket">
+        <t t-call="portal.portal_layout">
+            <div class="container py-4" style="max-width: 720px;">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between">
+                        <h4 class="mb-0">Service Ticket <span t-out="ticket.name"/></h4>
+                        <span class="badge text-bg-info" t-out="dict(ticket._fields['stage'].selection)[ticket.stage]"/>
+                    </div>
+                    <div class="card-body">
+                        <p><strong>Equipment:</strong> <span t-out="ticket.product_id.display_name"/>
+                            <t t-if="ticket.lot_id"> (Serial <span t-out="ticket.lot_id.name"/>)</t></p>
+                        <p><strong>Complaint:</strong> <span t-out="ticket.description"/></p>
+                        <p t-if="ticket.under_warranty" class="text-success fw-bold">
+                            Covered under warranty — no charge.</p>
+                        <p t-if="not ticket.under_warranty and ticket.customer_charge">
+                            <strong>Charge:</strong>
+                            <span t-out="ticket.customer_charge"
+                                  t-options="{'widget': 'monetary', 'display_currency': ticket.currency_id}"/>
+                        </p>
+                        <div t-if="ticket.resolution">
+                            <strong>Work done:</strong>
+                            <div t-out="ticket.resolution"/>
+                        </div>
+                        <t t-if="ticket.stage == 'awaiting'">
+                            <hr/>
+                            <h5>Is everything working now?</h5>
+                            <form method="post" t-attf-action="/my/solar-ticket/#{ticket.id}/confirm?access_token=#{access_token or ''}">
+                                <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                                <textarea name="comment" class="form-control mb-2" placeholder="Comments (optional)"/>
+                                <button name="works" value="yes" class="btn btn-success me-2">✔ Yes, everything works</button>
+                                <button name="works" value="no" class="btn btn-outline-danger">✖ Still a problem</button>
+                            </form>
+                        </t>
+                        <div t-if="ticket.stage == 'closed'" class="alert alert-success mt-3">
+                            Thank you for confirming. This ticket is closed.
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </t>
+    </template>
+</odoo>

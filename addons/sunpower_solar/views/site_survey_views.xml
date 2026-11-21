@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_solar_site_survey_form" model="ir.ui.view">
+        <field name="name">solar.site.survey.form</field>
+        <field name="model">solar.site.survey</field>
+        <field name="arch" type="xml">
+            <form string="Site Survey">
+                <header>
+                    <button name="action_mark_done" string="Mark Visited" type="object"
+                            class="btn-primary" invisible="state != 'scheduled'"/>
+                    <button name="action_approve" string="Approve Survey" type="object"
+                            class="btn-primary" invisible="state != 'done'"/>
+                    <button name="action_reject" string="Reject" type="object"
+                            invisible="state not in ('scheduled', 'done')"/>
+                    <button name="action_reset" string="Reset" type="object"
+                            invisible="state not in ('approved', 'rejected')"/>
+                    <field name="state" widget="statusbar"
+                           statusbar_visible="scheduled,done,approved"/>
+                </header>
+                <sheet>
+                    <widget name="web_ribbon" title="Approved" bg_color="text-bg-success"
+                            invisible="state != 'approved'"/>
+                    <widget name="web_ribbon" title="Rejected" bg_color="text-bg-danger"
+                            invisible="state != 'rejected'"/>
+                    <div class="oe_title">
+                        <h1><field name="name" readonly="1"/></h1>
+                    </div>
+                    <group>
+                        <group string="Customer">
+                            <field name="lead_id"/>
+                            <field name="contact_name"/>
+                            <field name="phone" widget="phone"/>
+                            <field name="address"/>
+                        </group>
+                        <group string="Visit">
+                            <field name="technician_id"/>
+                            <field name="survey_date"/>
+                            <field name="latitude"/>
+                            <field name="longitude"/>
+                        </group>
+                    </group>
+                    <group>
+                        <group string="Roof Measurements">
+                            <field name="roof_type"/>
+                            <field name="roof_direction"/>
+                            <field name="roof_tilt"/>
+                            <field name="usable_area_sqft"/>
+                            <field name="shading"/>
+                        </group>
+                        <group string="Electrical">
+                            <field name="cable_distance_m"/>
+                            <field name="earthing_possible"/>
+                            <field name="max_kw_fit"/>
+                            <field name="recommended_kw" class="fw-bold"/>
+                            <field name="rejection_reason" invisible="state != 'rejected'"/>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Photos">
+                            <field name="photo_ids" widget="many2many_binary"/>
+                        </page>
+                        <page string="Notes">
+                            <field name="notes"/>
+                        </page>
+                    </notebook>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_solar_site_survey_list" model="ir.ui.view">
+        <field name="name">solar.site.survey.list</field>
+        <field name="model">solar.site.survey</field>
+        <field name="arch" type="xml">
+            <list decoration-success="state == 'approved'" decoration-danger="state == 'rejected'">
+                <field name="name"/>
+                <field name="contact_name"/>
+                <field name="address"/>
+                <field name="technician_id" widget="many2one_avatar_user"/>
+                <field name="survey_date"/>
+                <field name="usable_area_sqft"/>
+                <field name="recommended_kw"/>
+                <field name="state" widget="badge"
+                       decoration-success="state == 'approved'"
+                       decoration-info="state == 'scheduled'"
+                       decoration-warning="state == 'done'"
+                       decoration-danger="state == 'rejected'"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_solar_site_survey_calendar" model="ir.ui.view">
+        <field name="name">solar.site.survey.calendar</field>
+        <field name="model">solar.site.survey</field>
+        <field name="arch" type="xml">
+            <calendar date_start="survey_date" color="technician_id" mode="week"
+                      event_open_popup="1" quick_create="0">
+                <field name="contact_name"/>
+                <field name="address"/>
+                <field name="technician_id" filters="1"/>
+            </calendar>
+        </field>
+    </record>
+
+    <record id="view_solar_site_survey_search" model="ir.ui.view">
+        <field name="name">solar.site.survey.search</field>
+        <field name="model">solar.site.survey</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="name"/>
+                <field name="contact_name"/>
+                <field name="technician_id"/>
+                <filter name="to_visit" string="To Visit" domain="[('state', '=', 'scheduled')]"/>
+                <filter name="to_approve" string="To Approve" domain="[('state', '=', 'done')]"/>
+                <filter name="mine" string="My Surveys" domain="[('technician_id', '=', uid)]"/>
+                <group expand="0" string="Group By">
+                    <filter name="g_state" string="Status" context="{'group_by': 'state'}"/>
+                    <filter name="g_tech" string="Surveyor" context="{'group_by': 'technician_id'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_solar_site_survey" model="ir.actions.act_window">
+        <field name="name">Site Surveys</field>
+        <field name="res_model">solar.site.survey</field>
+        <field name="view_mode">list,calendar,form</field>
+    </record>
+</odoo>

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- "Get a Solar Quote" (/solar-quote) is owned by sunpower_solar -->
+    <record id="menu_estimate" model="website.menu">
+        <field name="name">Savings Estimate</field>
+        <field name="url">/solar/estimate</field>
+        <field name="parent_id" ref="website.main_menu"/>
+        <field name="sequence">15</field>
+    </record>
+    <record id="menu_my_solar" model="website.menu">
+        <field name="name">My Solar</field>
+        <field name="url">/my/solar</field>
+        <field name="parent_id" ref="website.main_menu"/>
+        <field name="sequence">30</field>
+    </record>
+    <record id="menu_technician" model="website.menu">
+        <field name="name">Technician</field>
+        <field name="url">/technician</field>
+        <field name="parent_id" ref="website.main_menu"/>
+        <field name="sequence">40</field>
+        <field name="group_ids" eval="[(6, 0, [ref('base.group_user')])]"/>
+    </record>
+</odoo>

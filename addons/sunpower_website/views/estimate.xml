@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <template id="estimate_page" name="Solar Savings Estimate">
+        <t t-call="website.layout">
+            <div id="wrap" class="sp-site">
+                <t t-call="sunpower_website.page_header">
+                    <t t-set="title">Your solar estimate</t>
+                    <t t-set="subtitle">Three quick steps: your usage, your recommended system, then a free quote.</t>
+                    <t t-set="crumb">Savings estimate</t>
+                </t>
+
+                <section class="sp-section pt-4">
+                    <div class="container">
+                        <div id="sp_estimator" class="row g-4"
+                             t-att-data-ai-url="ai_url"
+                             t-att-data-cfg="cfg_json">
+
+                            <!-- STEP 1: usage -->
+                            <div class="col-lg-5">
+                                <div class="sp-card">
+                                    <div class="sp-card-step">Step 1 · Your usage</div>
+                                    <form action="/solar/estimate" method="get" id="sp_usage_form">
+                                        <label class="form-label">Monthly units consumed (kWh)</label>
+                                        <input name="units" id="sp_units" type="number" min="0" step="1"
+                                               class="form-control form-control-lg mb-1" placeholder="e.g. 320"
+                                               t-att-value="units"/>
+                                        <div class="sp-or">or</div>
+                                        <label class="form-label">Average monthly bill (₹)</label>
+                                        <input name="bill" id="sp_bill" type="number" min="0" step="50"
+                                               class="form-control form-control-lg" placeholder="e.g. 2500"
+                                               t-att-value="bill"/>
+                                        <p class="sp-note mt-1">We use ₹8 per unit if you only enter the bill amount.</p>
+                                        <button type="submit" class="btn sp-btn-sun w-100 sp-nojs">Calculate</button>
+                                    </form>
+
+                                    <!-- Optional bill upload (AI). Manual entry above always works. -->
+                                    <details class="sp-upload mt-3">
+                                        <summary>Optional: upload your electricity bill to fill this in automatically</summary>
+                                        <div class="mt-2">
+                                            <input type="file" id="sp_bill_file" class="form-control"
+                                                   accept="image/*,application/pdf"/>
+                                            <button type="button" id="sp_bill_parse" class="btn btn-outline-secondary btn-sm mt-2">
+                                                Read my bill</button>
+                                            <div id="sp_bill_status" class="sp-note mt-2" role="status"/>
+                                        </div>
+                                    </details>
+                                </div>
+                            </div>
+
+                            <!-- STEP 2: result -->
+                            <div class="col-lg-7">
+                                <div class="sp-card sp-result" id="sp_result">
+                                    <div class="sp-card-step">Step 2 · Recommended system</div>
+                                    <div id="sp_result_empty" t-att-class="'d-none' if est else ''">
+                                        <p class="sp-muted mb-0">Enter your monthly units or bill to see the system size and savings.</p>
+                                    </div>
+                                    <div id="sp_result_body" t-att-class="'' if est else 'd-none'">
+                                        <div class="sp-kw-big"><span data-sp="kw" t-out="est and est['kw']"/> kW
+                                            <span class="sp-kw-type">On-Grid</span></div>
+                                        <p class="sp-muted">Based on <span data-sp="units" t-out="est and est['units']"/> units/month.
+                                            Needs about <span data-sp="roof_sqft" t-out="est and est['roof_sqft']"/> sq ft of shadow-free roof.</p>
+                                        <div class="sp-metrics">
+                                            <div><span class="sp-metric-label">Monthly saving</span>
+                                                <span class="sp-metric">₹<span data-sp="monthly_saving" t-out="est and est['monthly_saving']"/></span></div>
+                                            <div><span class="sp-metric-label">Yearly saving</span>
+                                                <span class="sp-metric">₹<span data-sp="yearly_saving" t-out="est and est['yearly_saving']"/></span></div>
+                                            <div><span class="sp-metric-label">Generation</span>
+                                                <span class="sp-metric"><span data-sp="generation" t-out="est and est['generation']"/> units/mo</span></div>
+                                            <div><span class="sp-metric-label">Payback</span>
+                                                <span class="sp-metric"><span data-sp="payback_years" t-out="est and est['payback_years']"/> yrs</span></div>
+                                        </div>
+                                        <table class="sp-cost-table">
+                                            <tr><td>Indicative system cost</td><td>₹<span data-sp="cost" t-out="est and est['cost']"/></td></tr>
+                                            <tr><td>PM Surya Ghar subsidy</td><td class="text-success">− ₹<span data-sp="subsidy" t-out="est and est['subsidy']"/></td></tr>
+                                            <tr class="sp-total"><td>You pay (approx.)</td><td>₹<span data-sp="net_cost" t-out="est and est['net_cost']"/></td></tr>
+                                        </table>
+                                        <p class="sp-note mb-0">Indicative only. Your final price is fixed after the free site survey.
+                                            Sizes are 1–5 kW (rounded from units ÷ 120).</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- STEP 3: enquiry (posts to sunpower_solar's /solar-quote/submit) -->
+                            <div class="col-12">
+                                <div class="sp-card">
+                                    <div class="sp-card-step">Step 3 · Book your free site survey</div>
+                                    <form action="/solar-quote/submit" method="post" id="sp_enquiry_form">
+                                        <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                                        <input type="hidden" name="system_type" value="on_grid"/>
+                                        <input type="hidden" name="system_kw" id="sp_hidden_kw" t-att-value="est and est['kw']"/>
+                                        <input type="hidden" name="monthly_bill" id="sp_hidden_bill"
+                                               t-att-value="bill or (est and est['units'] * 8) or ''"/>
+                                        <input type="hidden" name="notes" id="sp_hidden_notes"
+                                               t-att-value="est and ('Website estimate: %s units/month → %s kW On-Grid' % (est['units'], est['kw'])) or ''"/>
+                                        <div class="row g-3">
+                                            <div class="col-md-4"><label class="form-label">Full name *</label>
+                                                <input name="name" class="form-control" required="1"/></div>
+                                            <div class="col-md-4"><label class="form-label">Phone *</label>
+                                                <input name="phone" type="tel" class="form-control" required="1"/></div>
+                                            <div class="col-md-4"><label class="form-label">Email</label>
+                                                <input name="email" type="email" class="form-control"/></div>
+                                            <div class="col-md-5"><label class="form-label">Address</label>
+                                                <input name="street" class="form-control"/></div>
+                                            <div class="col-md-3"><label class="form-label">City</label>
+                                                <input name="city" class="form-control"/></div>
+                                            <div class="col-md-2"><label class="form-label">Roof area (sq ft)</label>
+                                                <input name="roof_area" type="number" min="0" class="form-control"/></div>
+                                            <div class="col-md-2 d-flex align-items-end">
+                                                <div class="form-check mb-2">
+                                                    <input class="form-check-input" type="checkbox" name="subsidy" id="sp_subsidy" checked="1"/>
+                                                    <label class="form-check-label" for="sp_subsidy">Apply for subsidy</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-12 d-md-flex align-items-center justify-content-between">
+                                                <p class="sp-note mb-2 mb-md-0">Selected system: <strong><span data-sp="kw" t-out="est and est['kw'] or '—'"/> kW On-Grid</strong>.
+                                                    Our advisor calls you within 2 working hours.</p>
+                                                <button type="submit" class="btn sp-btn-sun btn-lg">Request my free survey</button>
+                                            </div>
+                                        </div>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </t>
+    </template>
+</odoo>

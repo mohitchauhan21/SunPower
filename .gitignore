@@ -1,0 +1,18 @@
+# secrets
+.env
+*.env
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+# AI model caches / downloads
+ai_service/models/
+ai_service/.cache/
+*.h5
+*.onnx
+*.safetensors
+# local tool settings
+.claude/settings.local.json
+# logs
+*.log

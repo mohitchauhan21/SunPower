@@ -1,0 +1,9 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_solar_site_survey,solar.site.survey,model_solar_site_survey,base.group_user,1,1,1,1
+access_solar_warranty,solar.warranty,model_solar_warranty,base.group_user,1,1,1,1
+access_solar_service_ticket,solar.service.ticket,model_solar_service_ticket,base.group_user,1,1,1,1
+access_solar_service_ticket_line,solar.service.ticket.line,model_solar_service_ticket_line,base.group_user,1,1,1,1
+access_solar_subsidy,solar.subsidy.application,model_solar_subsidy_application,base.group_user,1,1,1,1
+access_solar_director_report,solar.director.report,model_solar_director_report,base.group_user,1,1,1,1
+access_solar_enquiry_wizard,solar.enquiry.wizard,model_solar_enquiry_wizard,base.group_user,1,1,1,1
+access_solar_ticket_portal,solar.service.ticket.portal,model_solar_service_ticket,base.group_portal,1,0,0,0

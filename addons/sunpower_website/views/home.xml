@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <template id="sunpower_homepage" inherit_id="website.homepage" name="SunPower Homepage">
+        <xpath expr="//div[@id='wrap']" position="replace">
+            <div id="wrap" class="sp-site">
+
+                <!-- HERO -->
+                <section class="sp-hero">
+                    <div class="container">
+                        <div class="row align-items-center g-5">
+                            <div class="col-lg-7">
+                                <span class="sp-eyebrow">Rooftop solar · 1 kW to 5 kW · On-Grid &amp; battery</span>
+                                <h1 class="sp-hero-title">Cut your electricity bill by up to 90% with SunPower.</h1>
+                                <p class="sp-hero-lead">Free roof survey, PM Surya Ghar subsidy paperwork handled
+                                    for you, installation by our own trained crew, and every panel, inverter and
+                                    battery tracked by serial number for its full warranty.</p>
+                                <div class="sp-hero-cta">
+                                    <a href="/solar/estimate" class="btn sp-btn-sun btn-lg">Estimate my savings</a>
+                                    <a href="/solar-quote" class="btn sp-btn-ghost btn-lg">Get a free quote</a>
+                                </div>
+                                <ul class="sp-hero-trust">
+                                    <li><strong>₹78,000</strong> max. govt. subsidy</li>
+                                    <li><strong>25 yr</strong> panel performance</li>
+                                    <li><strong>2 hr</strong> call-back promise</li>
+                                </ul>
+                            </div>
+                            <div class="col-lg-5">
+                                <div class="sp-hero-card">
+                                    <div class="sp-hero-card-head">Quick estimate</div>
+                                    <form action="/solar/estimate" method="get">
+                                        <label class="form-label">Your average monthly bill (₹)</label>
+                                        <div class="input-group input-group-lg mb-3">
+                                            <span class="input-group-text">₹</span>
+                                            <input name="bill" type="number" min="0" step="50" class="form-control"
+                                                   placeholder="e.g. 2500" required="1"/>
+                                        </div>
+                                        <button type="submit" class="btn sp-btn-sun w-100 btn-lg">See my system size</button>
+                                        <p class="sp-note mt-2 mb-0">Know your units (kWh)? You can enter them on the next page,
+                                            or upload your bill.</p>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- HOW IT WORKS -->
+                <section class="sp-section">
+                    <div class="container">
+                        <h2 class="sp-h2 text-center">From enquiry to switched on, tracked at every step</h2>
+                        <p class="sp-sub text-center">You can follow your installation live in the customer portal.</p>
+                        <div class="sp-steps">
+                            <div class="sp-step"><div class="sp-step-n">1</div><h5>Enquiry</h5><p>Tell us about your home and bill. Our advisor calls within 2 hours.</p></div>
+                            <div class="sp-step"><div class="sp-step-n">2</div><h5>Site survey</h5><p>Free roof visit: shadow-free area, structure and grid connection.</p></div>
+                            <div class="sp-step"><div class="sp-step-n">3</div><h5>Quotation &amp; subsidy</h5><p>Fixed-price kit quote. We file the PM Surya Ghar application.</p></div>
+                            <div class="sp-step"><div class="sp-step-n">4</div><h5>Installation</h5><p>Our crew installs, tests generation and you sign off on site.</p></div>
+                            <div class="sp-step"><div class="sp-step-n">5</div><h5>Warranty &amp; service</h5><p>Serial-tracked warranty. Raise a complaint online any time.</p></div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- PACKAGES -->
+                <section class="sp-section sp-section-alt">
+                    <div class="container">
+                        <h2 class="sp-h2 text-center">Which size fits your home?</h2>
+                        <p class="sp-sub text-center">Rule of thumb: 1 kW of panels makes about 120 units a month.</p>
+                        <div class="row g-4">
+                            <t t-foreach="[(1, '0–150', 'Small flat, fans &amp; lights'), (2, '150–270', '1 BHK with fridge &amp; TV'), (3, '270–390', '2–3 BHK with 1 AC'), (5, '390+', 'Large home, 2+ ACs')]" t-as="p">
+                                <div class="col-sm-6 col-lg-3">
+                                    <div class="sp-pack">
+                                        <div class="sp-pack-kw"><t t-out="p[0]"/> kW</div>
+                                        <div class="sp-pack-units"><t t-out="p[1]"/> units / month</div>
+                                        <p class="sp-pack-desc" t-out="p[2]"/>
+                                        <a t-attf-href="/solar/estimate?units=#{p[0] * 120}" class="sp-link">See savings →</a>
+                                    </div>
+                                </div>
+                            </t>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- PORTAL ENTRY -->
+                <section class="sp-section">
+                    <div class="container">
+                        <div class="row g-4">
+                            <div class="col-md-6">
+                                <a href="/my/solar" class="sp-tile">
+                                    <div class="sp-tile-icon">🏠</div>
+                                    <h4>Already a customer?</h4>
+                                    <p>Track your installation, see your warranties and raise a service complaint.</p>
+                                    <span class="sp-link">Open my solar portal →</span>
+                                </a>
+                            </div>
+                            <div class="col-md-6">
+                                <a href="/technician" class="sp-tile sp-tile-dark">
+                                    <div class="sp-tile-icon">🔧</div>
+                                    <h4>SunPower crew</h4>
+                                    <p>Today's installation jobs and service tickets assigned to you.</p>
+                                    <span class="sp-link">Technician login →</span>
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- CTA -->
+                <section class="sp-cta-band">
+                    <div class="container d-md-flex align-items-center justify-content-between">
+                        <h3 class="mb-3 mb-md-0">Ready to stop paying for daylight?</h3>
+                        <a href="/solar/estimate" class="btn sp-btn-sun btn-lg">Start with a 30-second estimate</a>
+                    </div>
+                </section>
+                <div class="oe_structure"/>
+            </div>
+        </xpath>
+    </template>
+</odoo>

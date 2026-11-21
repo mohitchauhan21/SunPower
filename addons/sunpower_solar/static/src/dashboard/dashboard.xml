@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<templates xml:space="preserve">
+    <t t-name="sunpower_solar.Dashboard">
+        <div class="o_action sp_dash p-3 overflow-auto h-100">
+            <div class="d-flex flex-wrap align-items-center justify-content-between mb-3 gap-2">
+                <div>
+                    <h2 class="mb-0">☀ SunPower – Director Dashboard</h2>
+                    <small class="text-muted" t-if="state.data" t-esc="state.data.period_label"/>
+                </div>
+                <div class="d-flex gap-2">
+                    <div class="btn-group">
+                        <t t-foreach="[['today','Today'],['week','This Week'],['month','This Month'],['year','This Year']]" t-as="p" t-key="p[0]">
+                            <button t-attf-class="btn btn-sm #{state.period === p[0] ? 'btn-primary' : 'btn-outline-primary'}"
+                                    t-on-click="() => this.setPeriod(p[0])" t-esc="p[1]"/>
+                        </t>
+                    </div>
+                    <button class="btn btn-sm btn-secondary" t-on-click="() => this.load()"><i class="fa fa-refresh"/></button>
+                    <button class="btn btn-sm btn-warning" t-on-click="() => this.share()"><i class="fa fa-share-alt"/> Share</button>
+                </div>
+            </div>
+
+            <t t-if="state.data">
+                <t t-set="k" t-value="state.data.kpi"/>
+                <t t-set="c" t-value="state.data.currency"/>
+                <div class="sp_grid mb-4">
+                    <div class="sp_card" t-on-click="() => this.openAction('crm.crm_lead_action_pipeline')">
+                        <div class="sp_label">New Enquiries</div><div class="sp_value" t-esc="k.leads_new"/>
+                    </div>
+                    <div class="sp_card" t-on-click="() => this.openAction('sunpower_solar.action_solar_jobs')">
+                        <div class="sp_label">Orders Won</div>
+                        <div class="sp_value"><t t-esc="k.orders_won"/> <small class="fs-6 text-muted">/ <t t-esc="k.kw_sold"/> kW</small></div>
+                        <div class="sp_sub"><t t-esc="c"/> <t t-esc="fmt(k.orders_value)"/></div>
+                    </div>
+                    <div t-attf-class="sp_card #{k.profit &lt; 0 ? 'sp_bad' : 'sp_good'}" t-on-click="() => this.openAction('sunpower_solar.action_solar_jobs')">
+                        <div class="sp_label">Job Profit</div>
+                        <div class="sp_value"><t t-esc="c"/> <t t-esc="fmt(k.profit)"/></div>
+                        <div class="sp_sub" t-if="k.loss_jobs"><t t-esc="k.loss_jobs"/> loss-making job(s)</div>
+                    </div>
+                    <div class="sp_card" t-on-click="() => this.openAction('account.action_move_out_invoice_type')">
+                        <div class="sp_label">Invoiced / Collected</div>
+                        <div class="sp_value fs-4"><t t-esc="c"/> <t t-esc="fmt(k.invoiced)"/></div>
+                        <div class="sp_sub">Collected <t t-esc="c"/> <t t-esc="fmt(k.collected)"/> · Due <t t-esc="c"/> <t t-esc="fmt(k.receivable)"/></div>
+                    </div>
+                    <div class="sp_card" t-on-click="() => this.openAction('sunpower_solar.action_installation_jobs')">
+                        <div class="sp_label">Installations</div>
+                        <div class="sp_value"><t t-esc="k.installs_done"/> <small class="fs-6 text-muted">done</small></div>
+                        <div class="sp_sub"><t t-esc="k.installs_pending"/> scheduled / in progress</div>
+                    </div>
+                    <div t-attf-class="sp_card #{k.tickets_overdue ? 'sp_warn' : ''}" t-on-click="() => this.openAction('sunpower_solar.action_solar_ticket')">
+                        <div class="sp_label">Open Repairs</div>
+                        <div class="sp_value" t-esc="k.tickets_open"/>
+                        <div class="sp_sub"><t t-esc="k.tickets_new"/> new · <t t-esc="k.tickets_overdue"/> open &gt; 3 days</div>
+                    </div>
+                    <div class="sp_card" t-on-click="() => this.openAction('sunpower_solar.action_solar_subsidy')">
+                        <div class="sp_label">Subsidies Pending</div>
+                        <div class="sp_value" t-esc="k.subsidy_pending"/>
+                        <div class="sp_sub"><t t-esc="c"/> <t t-esc="fmt(k.subsidy_amount)"/> expected</div>
+                    </div>
+                    <div class="sp_card" t-on-click="() => this.openAction('sunpower_solar.action_solar_components')">
+                        <div class="sp_label">Stock Value</div>
+                        <div class="sp_value fs-4"><t t-esc="c"/> <t t-esc="fmt(k.stock_value)"/></div>
+                        <div class="sp_sub"><t t-esc="k.unfinished_jobs"/> unfinished jobs</div>
+                    </div>
+                </div>
+
+                <div class="row g-3">
+                    <div class="col-xl-8">
+                        <div class="card">
+                            <div class="card-header fw-bold">Profit by job (worst first)</div>
+                            <div class="table-responsive">
+                                <table class="table table-sm table-hover mb-0">
+                                    <thead><tr><th>Order</th><th>Customer</th><th>kW</th><th class="text-end">Revenue</th>
+                                        <th class="text-end">Material</th><th class="text-end">Labour</th><th class="text-end">Repairs</th>
+                                        <th class="text-end">Profit</th><th class="text-end">Margin</th><th>Stage</th></tr></thead>
+                                    <tbody>
+                                        <tr t-foreach="state.data.jobs" t-as="j" t-key="j.id" class="cursor-pointer"
+                                            t-on-click="() => this.openRecord('sale.order', j.id)">
+                                            <td t-esc="j.name"/><td t-esc="j.customer"/><td><t t-esc="j.kw"/> <small class="text-muted" t-esc="j.type"/></td>
+                                            <td class="text-end" t-esc="fmt(j.revenue)"/>
+                                            <td class="text-end" t-esc="fmt(j.material)"/>
+                                            <td class="text-end" t-esc="fmt(j.labour)"/>
+                                            <td class="text-end" t-esc="fmt(j.repair)"/>
+                                            <td t-attf-class="text-end fw-bold #{j.profit &lt; 0 ? 'text-danger' : 'text-success'}" t-esc="fmt(j.profit)"/>
+                                            <td class="text-end"><t t-esc="j.margin.toFixed(1)"/>%</td>
+                                            <td><span class="badge text-bg-light" t-esc="j.stage"/></td>
+                                        </tr>
+                                        <tr t-if="!state.data.jobs.length"><td colspan="10" class="text-muted text-center">No jobs in this period</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-xl-4">
+                        <div class="card mb-3">
+                            <div class="card-header fw-bold">Unfinished for customers</div>
+                            <ul class="list-group list-group-flush">
+                                <li t-foreach="state.data.unfinished" t-as="u" t-key="u.id" class="list-group-item cursor-pointer"
+                                    t-on-click="() => this.openRecord('sale.order', u.id)">
+                                    <strong t-esc="u.name"/> · <t t-esc="u.customer"/><br/>
+                                    <small class="text-warning">Pending: <t t-esc="u.pending"/></small>
+                                </li>
+                                <li t-if="!state.data.unfinished.length" class="list-group-item text-muted">Nothing pending 🎉</li>
+                            </ul>
+                        </div>
+                        <div class="card">
+                            <div class="card-header fw-bold">Open repairs</div>
+                            <ul class="list-group list-group-flush">
+                                <li t-foreach="state.data.tickets" t-as="t" t-key="t.id" class="list-group-item cursor-pointer"
+                                    t-on-click="() => this.openRecord('solar.service.ticket', t.id)">
+                                    <strong t-esc="t.name"/> · <t t-esc="t.customer"/>
+                                    <span t-attf-class="badge ms-1 #{t.warranty ? 'text-bg-success' : 'text-bg-warning'}" t-esc="t.warranty ? 'Warranty' : 'Billable'"/><br/>
+                                    <small class="text-muted"><t t-esc="t.product"/> · <t t-esc="t.stage"/> · <t t-esc="t.days"/>d</small>
+                                </li>
+                                <li t-if="!state.data.tickets.length" class="list-group-item text-muted">No open repairs</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </t>
+            <div t-else="" class="text-center p-5"><i class="fa fa-spinner fa-spin fa-2x"/></div>
+        </div>
+    </t>
+</templates>

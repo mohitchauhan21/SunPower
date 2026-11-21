@@ -1,0 +1,199 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_solar_ticket_form" model="ir.ui.view">
+        <field name="name">solar.service.ticket.form</field>
+        <field name="model">solar.service.ticket</field>
+        <field name="arch" type="xml">
+            <form>
+                <header>
+                    <button name="action_diagnose" string="Diagnosed" type="object"
+                            class="btn-primary" invisible="stage != 'new'"/>
+                    <button name="action_start_repair" string="Start Repair" type="object"
+                            class="btn-primary" invisible="stage != 'diagnosed'"/>
+                    <button name="action_resolve" string="Repair Done – Ask Customer" type="object"
+                            class="btn-primary" invisible="stage not in ('diagnosed', 'repair')"/>
+                    <button name="action_customer_confirm" string="Customer Confirmed" type="object"
+                            invisible="stage != 'awaiting'"
+                            confirm="Close the ticket on behalf of the customer?"/>
+                    <button name="action_reopen" string="Not Fixed – Reopen" type="object"
+                            invisible="stage not in ('awaiting', 'closed')"/>
+                    <button name="action_cancel" string="Cancel" type="object"
+                            invisible="stage in ('closed', 'cancel')"/>
+                    <field name="stage" widget="statusbar"
+                           statusbar_visible="new,diagnosed,repair,awaiting,closed"/>
+                </header>
+                <sheet>
+                    <div class="oe_button_box" name="button_box">
+                        <button name="action_view_invoice" type="object" class="oe_stat_button"
+                                icon="fa-file-text-o" invisible="not invoice_id">
+                            <span class="o_stat_text">Invoice</span>
+                        </button>
+                    </div>
+                    <widget name="web_ribbon" title="Under Warranty – Free"
+                            bg_color="text-bg-success" invisible="not under_warranty"/>
+                    <widget name="web_ribbon" title="Out of Warranty – Billable"
+                            bg_color="text-bg-warning" invisible="under_warranty or not lot_id"/>
+                    <div class="oe_title">
+                        <h1><field name="name" readonly="1"/></h1>
+                        <field name="priority" widget="priority"/>
+                    </div>
+                    <group>
+                        <group string="Customer &amp; Equipment">
+                            <field name="partner_id"/>
+                            <field name="phone" widget="phone"/>
+                            <field name="lot_id" options="{'no_create': True}"
+                                   placeholder="Scan or type serial number"/>
+                            <field name="product_id"/>
+                            <field name="sale_order_id"/>
+                        </group>
+                        <group string="Warranty &amp; Status">
+                            <field name="under_warranty" readonly="1"/>
+                            <field name="warranty_end"/>
+                            <field name="reported_on"/>
+                            <field name="days_open"/>
+                            <field name="user_id" widget="many2one_avatar_user"/>
+                            <field name="customer_confirmed"/>
+                        </group>
+                    </group>
+                    <group string="Complaint">
+                        <field name="fault_code"/>
+                        <field name="description" placeholder="e.g. Inverter shows fault code, zero power since morning"/>
+                    </group>
+                    <notebook>
+                        <page string="AI Diagnosis" name="ai">
+                            <field name="ai_diagnosis"/>
+                        </page>
+                        <page string="Parts &amp; Labour" name="parts">
+                            <field name="line_ids">
+                                <list editable="bottom">
+                                    <field name="product_id"/>
+                                    <field name="quantity"/>
+                                    <field name="price_unit"/>
+                                    <field name="new_lot_name"/>
+                                    <field name="subtotal" sum="Total"/>
+                                    <field name="cost" optional="hide"/>
+                                </list>
+                            </field>
+                            <group>
+                                <group>
+                                    <field name="labour_hours"/>
+                                    <field name="labour_rate"/>
+                                </group>
+                                <group>
+                                    <field name="customer_charge" class="fw-bold"/>
+                                    <field name="repair_cost"/>
+                                    <field name="invoice_id" readonly="1"/>
+                                    <field name="currency_id" invisible="1"/>
+                                </group>
+                            </group>
+                        </page>
+                        <page string="Resolution" name="resolution">
+                            <field name="resolution" placeholder="What was repaired or replaced?"/>
+                        </page>
+                        <page string="Photos" name="photos">
+                            <field name="photo_ids" widget="many2many_binary"/>
+                        </page>
+                    </notebook>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_solar_ticket_list" model="ir.ui.view">
+        <field name="name">solar.service.ticket.list</field>
+        <field name="model">solar.service.ticket</field>
+        <field name="arch" type="xml">
+            <list decoration-danger="days_open &gt; 3 and stage not in ('closed', 'cancel')">
+                <field name="priority" widget="priority"/>
+                <field name="name"/>
+                <field name="partner_id"/>
+                <field name="phone"/>
+                <field name="lot_id"/>
+                <field name="product_id"/>
+                <field name="under_warranty"/>
+                <field name="user_id" widget="many2one_avatar_user"/>
+                <field name="days_open"/>
+                <field name="customer_charge" sum="Total"/>
+                <field name="currency_id" column_invisible="1"/>
+                <field name="stage" widget="badge" decoration-success="stage == 'closed'"
+                       decoration-warning="stage == 'awaiting'" decoration-info="stage == 'new'"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_solar_ticket_kanban" model="ir.ui.view">
+        <field name="name">solar.service.ticket.kanban</field>
+        <field name="model">solar.service.ticket</field>
+        <field name="arch" type="xml">
+            <kanban default_group_by="stage" class="o_kanban_small_column">
+                <field name="under_warranty"/>
+                <templates>
+                    <t t-name="card">
+                        <div class="d-flex justify-content-between">
+                            <field name="name" class="fw-bold"/>
+                            <field name="priority" widget="priority"/>
+                        </div>
+                        <field name="partner_id"/>
+                        <field name="product_id" class="text-muted small"/>
+                        <field name="lot_id" class="small"/>
+                        <div class="d-flex justify-content-between mt-1">
+                            <span t-if="record.under_warranty.raw_value" class="badge text-bg-success">Warranty</span>
+                            <span t-else="" class="badge text-bg-warning">Billable</span>
+                            <field name="user_id" widget="many2one_avatar_user"/>
+                        </div>
+                    </t>
+                </templates>
+            </kanban>
+        </field>
+    </record>
+
+    <record id="view_solar_ticket_search" model="ir.ui.view">
+        <field name="name">solar.service.ticket.search</field>
+        <field name="model">solar.service.ticket</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="name"/>
+                <field name="partner_id" string="Customer / Phone"
+                       filter_domain="['|', ('partner_id', 'ilike', self), ('partner_id.phone', 'ilike', self)]"/>
+                <field name="lot_id" string="Serial Number"/>
+                <filter name="open" string="Open" domain="[('stage', 'not in', ('closed', 'cancel'))]"/>
+                <filter name="warranty" string="Under Warranty" domain="[('under_warranty', '=', True)]"/>
+                <filter name="billable" string="Billable" domain="[('under_warranty', '=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter name="g_stage" string="Stage" context="{'group_by': 'stage'}"/>
+                    <filter name="g_tech" string="Technician" context="{'group_by': 'user_id'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_solar_ticket" model="ir.actions.act_window">
+        <field name="name">Service Tickets</field>
+        <field name="res_model">solar.service.ticket</field>
+        <field name="view_mode">kanban,list,form</field>
+        <field name="context">{'search_default_open': 1}</field>
+    </record>
+
+    <!-- Find customer by phone or serial in seconds -->
+    <record id="view_solar_lot_finder" model="ir.ui.view">
+        <field name="name">stock.lot.finder</field>
+        <field name="model">stock.lot</field>
+        <field name="priority">50</field>
+        <field name="arch" type="xml">
+            <list create="0">
+                <field name="name" string="Serial"/>
+                <field name="product_id"/>
+                <field name="solar_partner_id"/>
+                <field name="warranty_end"/>
+            </list>
+        </field>
+    </record>
+    <record id="action_solar_lot_finder" model="ir.actions.act_window">
+        <field name="name">Find by Serial / Customer</field>
+        <field name="res_model">stock.lot</field>
+        <field name="view_mode">list,form</field>
+        <field name="domain">[('warranty_ids', '!=', False)]</field>
+        <field name="view_id" ref="view_solar_lot_finder"/>
+    </record>
+</odoo>

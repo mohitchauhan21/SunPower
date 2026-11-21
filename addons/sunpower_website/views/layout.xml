@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Shared page header used by every SunPower page.
+         Params: title, subtitle (optional), crumb (optional) -->
+    <template id="page_header" name="SunPower Page Header">
+        <section class="sp-page-header">
+            <div class="container">
+                <div t-if="crumb" class="sp-crumb">
+                    <a href="/">Home</a> / <span t-out="crumb"/>
+                </div>
+                <h1 class="sp-page-title" t-out="title"/>
+                <p t-if="subtitle" class="sp-page-sub" t-out="subtitle"/>
+            </div>
+        </section>
+    </template>
+
+    <!-- Status pill: label + tone (ok / warn / info / muted / danger) -->
+    <template id="pill" name="SunPower Pill">
+        <span t-attf-class="sp-pill sp-pill-#{tone or 'info'}" t-out="label"/>
+    </template>
+</odoo>
