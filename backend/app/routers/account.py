@@ -86,7 +86,7 @@ def overview(user=Depends(customer), db=Depends(get_db)):
             "product": t["product"], "serial": t["serial"], "reported": t["reported_on"], "closed": t["closed_on"],
             "description": t["description"] or "", "fault_code": t["fault_code"], "under_warranty": a["under_warranty"],
             "charge": a["customer_charge"], "technician": t["tech"], "resolution": t["resolution"],
-            "can_confirm": t["stage"] == "awaiting"})
+            "can_confirm": t["stage"] == "awaiting", "can_cancel": t["stage"] == "new"})
     return {
         "customer": {"name": cust["name"], "email": cust["email"], "phone": cust["phone"], "street": cust["street"],
                      "city": cust["city"]},
@@ -254,4 +254,31 @@ def password(request: Request, body: dict = Body(default={}), user=Depends(requi
         return {"ok": False, "field": "old", "error": "Your current password is not correct."}
     db.update("users", user["id"], {"password_hash": hash_password(new)})
     end_all_sessions(db, user["id"], keep_token=request.cookies.get(COOKIE))
+    return {"ok": True}
+
+
+# ---------------------------------------------------------- cancel own items
+@router.post("/ticket/cancel")
+def ticket_cancel(body: dict = Body(default={}), user=Depends(customer), db=Depends(get_db)):
+    """The customer withdraws a request that nobody has started on yet."""
+    t = _ticket(db, user, body.get("ticket_id"))
+    if t["stage"] != "new":
+        return {"ok": False, "error": "A technician is already working on this request. Please call us to stop it."}
+    db.update("tickets", t["id"], {"stage": "cancel", "closed_on": rules.now()})
+    db.note("ticket", t["id"], "Cancelled by the customer.", user["id"])
+    return {"ok": True}
+
+
+@router.post("/enquiry/cancel")
+def enquiry_cancel(body: dict = Body(default={}), user=Depends(customer), db=Depends(get_db)):
+    """The customer withdraws an enquiry before any quotation was sent."""
+    lead = db.one("SELECT * FROM leads WHERE id = ? AND customer_id = ?", int(body.get("lead_id") or 0), _cid(user))
+    if not lead or lead["stage"] in ("won", "lost"):
+        return {"ok": False, "error": "This enquiry can't be cancelled."}
+    if db.val("SELECT COUNT(*) FROM orders WHERE lead_id = ? AND state IN ('sent','sale')", lead["id"]):
+        return {"ok": False, "error": "A quotation is already with you; just don't accept it, or call us."}
+    db.update("leads", lead["id"], {"stage": "lost", "lost_reason": "Cancelled by the customer"})
+    db.exec("UPDATE surveys SET state = 'rejected', rejection_reason = 'Cancelled by the customer' "
+            "WHERE lead_id = ? AND state = 'scheduled'", lead["id"])
+    db.note("lead", lead["id"], "Cancelled by the customer from their account.", user["id"])
     return {"ok": True}

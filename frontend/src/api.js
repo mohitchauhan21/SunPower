@@ -35,6 +35,7 @@ export const get = (url, params) => call('GET', url + qs(params));
 export const post = (url, body = {}) => call('POST', url, body);
 export const patch = (url, body = {}) => call('PATCH', url, body);
 export const put = (url, body = {}) => call('PUT', url, body);
+export const del = (url) => call('DELETE', url);
 export const upload = (url, form) => call('POST', url, form, true);
 
 /** Calls that return {ok:false,error} turn into thrown errors. */
@@ -75,6 +76,8 @@ export const api = {
   myComplaint: (values) => post('/api/my/complaint', values),
   confirmFix: (ticket_id) => post('/api/my/ticket/confirm', { ticket_id }),
   reopenTicket: (ticket_id, note) => post('/api/my/ticket/reopen', { ticket_id, note }),
+  cancelTicket: (ticket_id) => post('/api/my/ticket/cancel', { ticket_id }),
+  cancelEnquiry: (lead_id) => post('/api/my/enquiry/cancel', { lead_id }),
   myProfile: (values) => post('/api/my/profile', values),
   myPassword: (old, next, confirm) => post('/api/my/password', { old, new: next, confirm }),
   // staff

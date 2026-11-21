@@ -146,6 +146,13 @@ function Users() {
     if (r) { setLink(r.link); setF({ name: '', email: '', phone: '', role: 'sales', hourly_rate: '' }); reload(); }
   };
   const change = (id, vals, msg) => run(`u${id}`, () => patch(`/api/staff/users/${id}`, vals), msg).then((r) => r && reload());
+  const [edit, setEdit] = useState(null);   // the account being edited: {id, name, email, phone, hourly_rate, role}
+  const saveEdit = async (e) => {
+    e.preventDefault();
+    const r = await run('edit', () => patch(`/api/staff/users/${edit.id}`, { name: edit.name, email: edit.email, phone: edit.phone,
+      ...(edit.role === 'technician' ? { hourly_rate: Number(edit.hourly_rate) || 0 } : {}) }), 'Account updated.');
+    if (r) { setEdit(null); reload(); }
+  };
   return (
     <div className="stack">
       <Section title="Add a staff member" className="ws-card--accent">
@@ -159,8 +166,20 @@ function Users() {
         </form>
         {link && <p className="form-hint">If email isn’t set up yet, send them this link to choose a password: <code className="breakall">{link}</code></p>}
       </Section>
+      {edit && (
+        <Section title={`Edit ${edit.name}`} className="ws-card--accent" actions={<button className="link link--btn" onClick={() => setEdit(null)}>Close</button>}>
+          <form className="ws-form" onSubmit={saveEdit}>
+            <F label="Name" value={edit.name} onChange={(v) => setEdit({ ...edit, name: v })} />
+            <F label="Email (their login)" type="email" value={edit.email} onChange={(v) => setEdit({ ...edit, email: v })} />
+            <F label="Phone" value={edit.phone || ''} onChange={(v) => setEdit({ ...edit, phone: v })} />
+            {edit.role === 'technician' && <F label="Hourly rate (₹)" type="number" value={edit.hourly_rate} onChange={(v) => setEdit({ ...edit, hourly_rate: v })} />}
+            <div className="field--full"><button className="btn btn--primary btn--sm" disabled={busy === 'edit'}>Save changes</button></div>
+          </form>
+        </Section>
+      )}
       <Table rows={data.rows} empty="No staff."
-        columns={[{ key: 'name', label: 'Name', render: (u) => <><strong>{u.name}</strong><div className="muted small">{u.email}</div></> },
+        columns={[{ key: 'name', label: 'Name', render: (u) => <><strong>{u.name}</strong><div className="muted small">{u.email}</div>
+          <button className="link link--btn small" onClick={() => setEdit({ ...u })}>Edit</button></> },
           { key: 'role', label: 'Role', render: (u) => (
             <select className="select select--sm" value={u.role} disabled={busy === `u${u.id}`} onChange={(e) => change(u.id, { role: e.target.value }, 'Role changed.')} aria-label={`Role of ${u.name}`}>
               {roles.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}

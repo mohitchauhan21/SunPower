@@ -2,6 +2,10 @@
 website builds its module navigation from the same table.
 
 rw = read & change, r = read only, own = only records assigned to them.
+
+Create / read / update follow ACCESS. Delete is stricter and listed separately in
+DELETE: only these roles may remove records, and every delete endpoint also
+refuses when removing the record would break history (e.g. a confirmed order).
 """
 from fastapi import HTTPException
 
@@ -14,12 +18,26 @@ ACCESS = {
     "stock": {"director": "rw", "warehouse": "rw", "sales": "r", "support": "r", "technician": "r"},
     "jobs": {"director": "rw", "sales": "r", "warehouse": "r", "support": "r", "technician": "own"},
     "tickets": {"director": "rw", "support": "rw", "sales": "r", "technician": "own"},
-    "warranties": {"director": "r", "sales": "r", "warehouse": "r", "support": "r", "technician": "own"},
-    "customers": {"director": "r", "sales": "r", "support": "r"},
+    "warranties": {"director": "rw", "sales": "r", "warehouse": "r", "support": "r", "technician": "own"},
+    "customers": {"director": "rw", "sales": "rw", "support": "rw"},
     "subsidies": {"director": "rw", "sales": "rw", "support": "r"},
     "insights": {"director": "rw"},
     "reports": {"director": "rw"},
     "settings": {"director": "rw"},
+}
+
+# Who may delete (or void / retire) records in each area.
+DELETE = {
+    "leads": ("director", "sales"),        # enquiries without a confirmed order
+    "surveys": ("director", "sales"),      # surveys not used by a quote
+    "orders": ("director", "sales"),       # draft / sent quotations only (confirmed: cancel instead)
+    "customers": ("director",),            # customers with no orders, enquiries or requests
+    "subsidies": ("director",),
+    "stock": ("director",),                # retire a product (kept for history, hidden from lists)
+    "jobs": ("director",),                 # planned jobs with no hours logged
+    "tickets": ("director", "support"),    # requests with no invoice
+    "money": ("director",),                # void a payment, cancel an unpaid invoice
+    "users": ("director",),                # staff accounts are switched off, never erased
 }
 
 # Website modules, in navigation order
@@ -60,6 +78,15 @@ def need(user, area, write=False):
     return lvl
 
 
+def can_delete(user, area):
+    return user["role"] in DELETE.get(area, ())
+
+
+def need_delete(user, area):
+    if not can_delete(user, area):
+        raise HTTPException(403, "You don't have permission to delete this.")
+
+
 def modules_for(user):
-    return [{"key": k, "label": l, "path": p, "level": level(user, k)}
+    return [{"key": k, "label": l, "path": p, "level": level(user, k), "delete": can_delete(user, k)}
             for k, l, p in MODULES if can_read(user, k)]

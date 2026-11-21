@@ -30,7 +30,8 @@ function Tracker({ steps }) {
   );
 }
 
-function Overview({ data }) {
+function Overview({ data, reload }) {
+  const toast = useToast();
   const { enquiries, orders } = data;
   if (!enquiries.length && !orders.length) {
     return (
@@ -102,6 +103,17 @@ function Overview({ data }) {
               ? `Survey: ${e.survey.state}${e.survey.technician ? ` · ${e.survey.technician}` : ''}`
               : 'An advisor will call you within two working hours to book your free roof survey.'}
           </p>
+          <div className="actions actions--left">
+            <button type="button" className="link--btn row-del" onClick={async () => {
+              if (!window.confirm('Cancel this enquiry? We won’t contact you about it again.')) return;
+              try {
+                const r = await api.cancelEnquiry(e.id);
+                if (!r?.ok) throw new Error(r?.error || 'Please try again.');
+                toast('Enquiry cancelled.');
+                reload();
+              } catch (err) { toast(err.message, 'error'); }
+            }}>Cancel this enquiry</button>
+          </div>
         </article>
       ))}
     </div>
@@ -157,6 +169,12 @@ function TicketCard({ t, reload }) {
       {t.fault_code && <p className="muted small">Error code: {t.fault_code}</p>}
       {t.resolution && <p className="ticket__fix"><strong>What we did:</strong> {t.resolution}</p>}
       <p className="muted small">{t.under_warranty ? 'Covered by warranty: no charge.' : t.charge ? `Charge: ${inr(t.charge)}` : 'Out of warranty: we’ll tell you the cost before any paid work.'}</p>
+      {t.can_cancel && (
+        <div className="actions actions--left">
+          <button type="button" className="link--btn row-del" disabled={busy}
+                  onClick={() => window.confirm('Cancel this request?') && act(() => api.cancelTicket(t.id), 'Request cancelled.')}>Cancel this request</button>
+        </div>
+      )}
       {t.can_confirm && !reopen && (
         <div className="confirm">
           <p><strong>Is everything working now?</strong></p>
@@ -322,7 +340,7 @@ export default function Account() {
           </div>
         )}
         {!data && !error && <div className="skeleton" aria-busy="true"><div /><div /><div /></div>}
-        {data && tab === 'overview' && <Overview data={data} />}
+        {data && tab === 'overview' && <Overview data={data} reload={load} />}
         {data && tab === 'warranties' && <Warranties data={data} onReport={report} />}
         {data && tab === 'service' && <Service data={data} reload={load} preselect={preselect} />}
         {data && tab === 'profile' && <Profile data={data} reload={load} />}

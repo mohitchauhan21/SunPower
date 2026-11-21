@@ -61,6 +61,16 @@ html, body { overflow-x: clip; }
 .link--btn { background: none; border: 0; padding: 0; font: inherit; cursor: pointer; }
 .auth__card .lead { font-size: 18px; }
 
+/* ---------- delete / remove actions (only shown to roles allowed to use them) ---------- */
+.btn--danger { background: var(--bad-soft); color: var(--bad); }
+.btn--danger:hover:not(:disabled) { background: var(--bad); color: #fff; transform: translateY(-1px); }
+.row-del { color: var(--bad); font-size: 13px; font-weight: 500; }
+.row-del:hover:not(:disabled) { text-decoration: underline; text-underline-offset: 3px; }
+.row-del:disabled { opacity: 0.4; cursor: default; }
+.row-acts { display: inline-flex; gap: 14px; align-items: center; }
+.note-act { font-size: 12px; color: var(--ink-2); }
+.note-act:hover { color: var(--ink); text-decoration: underline; }
+
 /* ---------- customer account ---------- */
 .add-system { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 14px 18px;
   border: 1px dashed var(--line-strong); border-radius: var(--radius); }

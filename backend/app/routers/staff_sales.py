@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Body, Depends, HTTPException
 
 from .. import rules
-from ..access import can_write, need
+from ..access import can_delete, can_write, need, need_delete
 from ..db import get_db, now
 from ..security import staff_only
 
@@ -26,7 +26,7 @@ def like(q):
 
 
 def notes_for(db, model, res_id):
-    return db.q("SELECT n.id, n.body, n.kind, n.created_at, u.name AS author FROM notes n LEFT JOIN users u ON u.id = n.author_id "
+    return db.q("SELECT n.id, n.body, n.kind, n.created_at, n.author_id, u.name AS author FROM notes n LEFT JOIN users u ON u.id = n.author_id "
                 "WHERE n.model = ? AND n.res_id = ? ORDER BY n.id DESC", model, res_id)
 
 
@@ -112,7 +112,8 @@ def lead(lid: int, user=Depends(staff_only), db=Depends(get_db)):
     for o in orders:
         o["state_label"] = rules.label(rules.ORDER_STATES, o["state"])
     return {**lead_row(db, l), "surveys": surveys, "orders": orders, "notes_log": notes_for(db, "lead", lid),
-            "has_approved_survey": bool(rules.approved_survey(db, lid)), "can_edit": can_write(user, "leads")}
+            "has_approved_survey": bool(rules.approved_survey(db, lid)), "can_edit": can_write(user, "leads"),
+            "can_delete": can_delete(user, "leads")}
 
 
 @router.patch("/leads/{lid}")
@@ -192,7 +193,7 @@ def survey(sid: int, user=Depends(staff_only), db=Depends(get_db)):
     s, lvl = _survey(db, user, sid)
     return {**s, "state_label": rules.label(rules.SURVEY_STATES, s["state"]), "max_kw_fit": round((s["usable_area_sqft"] or 0) / 100, 1),
             "notes_log": notes_for(db, "survey", sid), "can_edit": lvl in ("rw", "own"),
-            "can_approve": user["role"] in ("sales", "director")}
+            "can_approve": user["role"] in ("sales", "director"), "can_delete": can_delete(user, "surveys")}
 
 
 @router.patch("/surveys/{sid}")
@@ -275,6 +276,7 @@ def order(oid: int, user=Depends(staff_only), db=Depends(get_db)):
            "warranties": db.val("SELECT COUNT(*) FROM warranties WHERE order_id = ?", oid),
            "tickets": db.q("SELECT id, ref, stage FROM tickets WHERE order_id = ?", oid),
            "notes": notes_for(db, "order", oid), "can_edit": can_write(user, "orders"),
+           "can_delete": can_delete(user, "orders"), "can_money": can_delete(user, "money"),
            "print_url": "/print/quote/%s?token=%s" % (oid, o["access_token"]),
            "subsidy_expected": rules.subsidy_expected(o["kw"])}
     if user["role"] == "director":
@@ -322,6 +324,16 @@ def order_action(oid: int, action: str, body: dict = Body(default={}), user=Depe
         rules.final_invoice(db, o, user["id"])
     elif action == "estimate":
         rules.generation_estimate(db, o)
+    elif action == "add-line":
+        if o["state"] != "draft":
+            raise HTTPException(400, "Only draft quotations can be changed.")
+        p = db.get("products", int(body.get("product_id") or 0))
+        if not p or not p["active"]:
+            raise HTTPException(400, "Choose a product.")
+        db.insert("order_lines", {"order_id": oid, "product_id": p["id"], "description": p["name"],
+                                  "qty": max(float(body.get("qty") or 1), 0), "price_unit": p["price"],
+                                  "tax_rate": p["tax_rate"]})
+        rules.recompute_order(db, oid)
     else:
         raise HTTPException(404, "Unknown action.")
     return {"ok": True}
@@ -356,7 +368,8 @@ def customer(cid: int, user=Depends(staff_only), db=Depends(get_db)):
             "leads": db.q("SELECT id, ref, stage, created_at FROM leads WHERE customer_id = ? ORDER BY id DESC", cid),
             "warranties": db.q("SELECT w.*, p.name AS product, s.name AS serial FROM warranties w JOIN products p ON p.id = w.product_id "
                                "JOIN serials s ON s.id = w.serial_id WHERE w.customer_id = ? ORDER BY w.end_date", cid),
-            "has_login": bool(db.val("SELECT COUNT(*) FROM users WHERE customer_id = ?", cid))}
+            "has_login": bool(db.val("SELECT COUNT(*) FROM users WHERE customer_id = ?", cid)),
+            "can_edit": can_write(user, "customers"), "can_delete": can_delete(user, "customers")}
 
 
 # ---------------------------------------------------------------- subsidy
@@ -384,7 +397,7 @@ def subsidy(sid: int, user=Depends(staff_only), db=Depends(get_db)):
     if not s:
         raise HTTPException(404, "Subsidy file not found.")
     return {**s, "state_label": rules.label(rules.SUBSIDY_STATES, s["state"]), "notes": notes_for(db, "subsidy", sid),
-            "can_edit": can_write(user, "subsidies")}
+            "can_edit": can_write(user, "subsidies"), "can_delete": can_delete(user, "subsidies")}
 
 
 @router.patch("/subsidies/{sid}")
@@ -418,4 +431,175 @@ def subsidy_action(sid: int, action: str, user=Depends(staff_only), db=Depends(g
         vals["amount_received"] = s["amount_received"] or s["amount_expected"]
     db.update("subsidies", sid, vals)
     db.note("subsidy", sid, "Status: %s." % rules.label(rules.SUBSIDY_STATES, to), user["id"])
+    return {"ok": True}
+
+
+# ======================================================================
+# Delete / edit endpoints (CRUD). Permissions: access.ACCESS (write) and
+# access.DELETE (delete). Each one also refuses when it would break history.
+# ======================================================================
+def _delete_quote(db, oid):
+    """Remove a quotation that never became a real order (no money, no delivery, no job)."""
+    o = db.get("orders", oid)
+    for table, what in (("payments", "payments"), ("invoices", "invoices"), ("deliveries", "a delivery"),
+                        ("jobs", "an installation job"), ("subsidies", "a subsidy file")):
+        if db.val("SELECT COUNT(*) FROM %s WHERE order_id = ?" % table, oid):
+            raise HTTPException(400, "%s has %s, so it can't be deleted. Cancel it instead." % (o["ref"], what))
+    db.exec("DELETE FROM notes WHERE model = 'order' AND res_id = ?", oid)
+    db.exec("DELETE FROM order_lines WHERE order_id = ?", oid)
+    db.exec("DELETE FROM orders WHERE id = ?", oid)
+
+
+@router.delete("/leads/{lid}")
+def delete_lead(lid: int, user=Depends(staff_only), db=Depends(get_db)):
+    need(user, "leads", write=True)
+    need_delete(user, "leads")
+    found(db.get("leads", lid), "Enquiry not found.")
+    if db.val("SELECT COUNT(*) FROM orders WHERE lead_id = ? AND state = 'sale'", lid):
+        raise HTTPException(400, "This enquiry has a confirmed order, so it can't be deleted. Mark it lost or cancel the order.")
+    for o in db.q("SELECT id FROM orders WHERE lead_id = ?", lid):
+        _delete_quote(db, o["id"])
+    for s in db.q("SELECT id FROM surveys WHERE lead_id = ?", lid):
+        db.exec("DELETE FROM notes WHERE model = 'survey' AND res_id = ?", s["id"])
+    db.exec("DELETE FROM surveys WHERE lead_id = ?", lid)
+    db.exec("DELETE FROM notes WHERE model = 'lead' AND res_id = ?", lid)
+    db.exec("DELETE FROM leads WHERE id = ?", lid)
+    return {"ok": True}
+
+
+@router.delete("/surveys/{sid}")
+def delete_survey(sid: int, user=Depends(staff_only), db=Depends(get_db)):
+    need(user, "surveys", write=True)
+    need_delete(user, "surveys")
+    s = found(db.get("surveys", sid), "Survey not found.")
+    used = db.one("SELECT ref FROM orders WHERE survey_id = ? AND state != 'cancel'", sid)
+    if used:
+        raise HTTPException(400, "Quotation %s is based on this survey, so it can't be deleted." % used["ref"])
+    db.exec("UPDATE orders SET survey_id = NULL WHERE survey_id = ?", sid)
+    db.exec("DELETE FROM notes WHERE model = 'survey' AND res_id = ?", sid)
+    db.exec("DELETE FROM surveys WHERE id = ?", sid)
+    lead = db.get("leads", s["lead_id"])
+    if lead and lead["stage"] == "survey" and not db.val("SELECT COUNT(*) FROM surveys WHERE lead_id = ?", lead["id"]):
+        db.update("leads", lead["id"], {"stage": "contacted"})
+    db.note("lead", s["lead_id"], "Survey %s deleted." % s["ref"], user["id"])
+    return {"ok": True}
+
+
+@router.delete("/orders/{oid}")
+def delete_order(oid: int, user=Depends(staff_only), db=Depends(get_db)):
+    o = _order(db, user, oid, write=True)
+    need_delete(user, "orders")
+    if o["state"] == "sale":
+        raise HTTPException(400, "Confirmed orders can't be deleted. Cancel the order instead.")
+    _delete_quote(db, oid)
+    if o["lead_id"]:
+        lead = db.get("leads", o["lead_id"])
+        if lead and lead["stage"] == "quoted" and not db.val("SELECT COUNT(*) FROM orders WHERE lead_id = ?", lead["id"]):
+            db.update("leads", lead["id"], {"stage": "survey"})
+        db.note("lead", o["lead_id"], "Quotation %s deleted." % o["ref"], user["id"])
+    return {"ok": True}
+
+
+@router.delete("/orders/{oid}/lines/{line_id}")
+def delete_order_line(oid: int, line_id: int, user=Depends(staff_only), db=Depends(get_db)):
+    o = _order(db, user, oid, write=True)
+    if o["state"] != "draft":
+        raise HTTPException(400, "Only draft quotations can be changed.")
+    if db.val("SELECT COUNT(*) FROM order_lines WHERE order_id = ?", oid) <= 1:
+        raise HTTPException(400, "A quotation needs at least one line.")
+    db.exec("DELETE FROM order_lines WHERE id = ? AND order_id = ?", line_id, oid)
+    rules.recompute_order(db, oid)
+    return {"ok": True}
+
+
+CUSTOMER_FIELDS = ("name", "phone", "email", "street", "city")
+
+
+@router.post("/customers")
+def create_customer(body: dict = Body(default={}), user=Depends(staff_only), db=Depends(get_db)):
+    need(user, "customers", write=True)
+    vals = clean(body, CUSTOMER_FIELDS)
+    if not vals.get("name") or not vals.get("phone"):
+        raise HTTPException(400, "Enter at least the customer's name and phone.")
+    if vals.get("email"):
+        vals["email"] = vals["email"].lower()
+        if db.val("SELECT id FROM customers WHERE email = ? COLLATE NOCASE", vals["email"]):
+            raise HTTPException(400, "A customer with this email already exists.")
+    cid = db.insert("customers", {**vals, "created_at": now()})
+    return {"ok": True, "id": cid}
+
+
+@router.patch("/customers/{cid}")
+def update_customer(cid: int, body: dict = Body(default={}), user=Depends(staff_only), db=Depends(get_db)):
+    need(user, "customers", write=True)
+    c = found(db.get("customers", cid), "Customer not found.")
+    vals = clean(body, CUSTOMER_FIELDS)
+    if "name" in vals and not vals["name"]:
+        raise HTTPException(400, "The name can't be empty.")
+    if vals.get("email"):
+        vals["email"] = vals["email"].lower()
+        if vals["email"] != (c["email"] or "").lower():
+            if db.val("SELECT id FROM customers WHERE email = ? COLLATE NOCASE AND id != ?", vals["email"], cid):
+                raise HTTPException(400, "Another customer already uses this email.")
+            if db.val("SELECT COUNT(*) FROM users WHERE customer_id = ?", cid):
+                raise HTTPException(400, "This customer signs in with their email, so it can't be changed here.")
+    db.update("customers", cid, vals)
+    db.exec("UPDATE users SET name = COALESCE(?, name), phone = COALESCE(?, phone) WHERE customer_id = ?",
+            vals.get("name"), vals.get("phone"), cid)
+    return {"ok": True}
+
+
+@router.delete("/customers/{cid}")
+def delete_customer(cid: int, user=Depends(staff_only), db=Depends(get_db)):
+    need(user, "customers", write=True)
+    need_delete(user, "customers")
+    c = found(db.get("customers", cid), "Customer not found.")
+    for table, what in (("orders", "orders"), ("leads", "enquiries"), ("tickets", "service requests"),
+                        ("warranties", "warranties")):
+        if db.val("SELECT COUNT(*) FROM %s WHERE customer_id = ?" % table, cid):
+            raise HTTPException(400, "%s has %s, so the record must be kept." % (c["name"], what))
+    for u in db.q("SELECT id FROM users WHERE customer_id = ?", cid):
+        db.exec("DELETE FROM sessions WHERE user_id = ?", u["id"])
+        db.exec("DELETE FROM tokens WHERE user_id = ?", u["id"])
+        db.exec("DELETE FROM users WHERE id = ?", u["id"])
+    db.exec("DELETE FROM customers WHERE id = ?", cid)
+    return {"ok": True}
+
+
+@router.delete("/subsidies/{sid}")
+def delete_subsidy(sid: int, user=Depends(staff_only), db=Depends(get_db)):
+    need(user, "subsidies", write=True)
+    need_delete(user, "subsidies")
+    s = found(db.get("subsidies", sid), "Subsidy file not found.")
+    db.exec("DELETE FROM notes WHERE model = 'subsidy' AND res_id = ?", sid)
+    db.exec("DELETE FROM subsidies WHERE id = ?", sid)
+    db.note("order", s["order_id"], "Subsidy file %s deleted." % s["ref"], user["id"])
+    return {"ok": True}
+
+
+def _own_note(db, user, nid):
+    n = found(db.get("notes", nid), "Note not found.")
+    if n["kind"] != "note":
+        raise HTTPException(400, "Automatic history entries can't be changed.")
+    if n["author_id"] != user["id"] and user["role"] != "director":
+        raise HTTPException(403, "You can only change your own notes.")
+    return n
+
+
+@router.patch("/notes/{nid}")
+def update_note(nid: int, body: dict = Body(default={}), user=Depends(staff_only), db=Depends(get_db)):
+    n = _own_note(db, user, nid)
+    if n["author_id"] != user["id"]:
+        raise HTTPException(403, "You can only edit your own notes.")
+    text = (body.get("body") or "").strip()
+    if not text:
+        raise HTTPException(400, "Write something, or delete the note.")
+    db.exec("UPDATE notes SET body = ? WHERE id = ?", text[:2000], nid)
+    return {"ok": True}
+
+
+@router.delete("/notes/{nid}")
+def delete_note(nid: int, user=Depends(staff_only), db=Depends(get_db)):
+    _own_note(db, user, nid)
+    db.exec("DELETE FROM notes WHERE id = ?", nid)
     return {"ok": True}

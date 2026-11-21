@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { api, fmtDate, fmtLocal, get, inr, patch, post, put } from '../api.js';
+import { api, del, fmtDate, fmtLocal, get, inr, patch, post, put } from '../api.js';
 import { useAuth } from '../auth.jsx';
 import {
-  Chips, ErrorBox, F, KV, Loading, Notes, PageHead, Pill, Search, Section, Table, fromLocalInput, toLocalInput, useAction, useLoad
+  Chips, DeleteButton, ErrorBox, F, KV, Loading, Notes, PageHead, Pill, Search, Section, Table, fromLocalInput, toLocalInput,
+  useAction, useCan, useLoad
 } from './ui.jsx';
 
 const SYSTEM = [{ value: 'on_grid', label: 'On-Grid' }, { value: 'off_grid', label: 'Off-Grid (battery)' }];
@@ -132,6 +133,7 @@ export function Enquiry() {
             if (reason !== null) run('lost', () => post(`/api/staff/leads/${id}/lost`, { reason }), 'Marked lost.').then(reload);
           }}>Mark lost</button>
         )}
+        {l.can_delete && !l.orders.some((o) => o.state === 'sale') && <DeleteButton url={`/api/staff/leads/${id}`} what="this enquiry" after="/app/enquiries" />}
       </PageHead>
       {l.next_action && <div className="ws-banner">Next: {l.next_action}{l.next_action_due ? ` · due ${fmtDate(l.next_action_due)}` : ''}</div>}
       <div className="side-grid">
@@ -249,6 +251,7 @@ export function Survey() {
         {s.can_approve && s.state === 'done' && <button className="btn btn--primary btn--sm" disabled={!!busy} onClick={() => act('approve', 'Survey approved.')}>Approve</button>}
         {s.can_approve && ['scheduled', 'done'].includes(s.state) && <button className="btn btn--secondary btn--sm" disabled={!!busy} onClick={() => { const reason = window.prompt('Reason for rejecting?'); if (reason !== null) act('reject', 'Survey rejected.', { reason }); }}>Reject</button>}
         {s.can_approve && ['approved', 'rejected'].includes(s.state) && <button className="btn btn--secondary btn--sm" disabled={!!busy} onClick={() => act('reset', 'Survey reopened.')}>Reopen</button>}
+        {s.can_delete && <DeleteButton url={`/api/staff/surveys/${id}`} what="this survey" after="/app/surveys" />}
       </PageHead>
       <div className="side-grid">
         <Section title="Roof measurements" actions={open && <button className="btn btn--primary btn--sm" disabled={busy === 'save'} onClick={save}>Save</button>}>
@@ -327,13 +330,14 @@ export function Order() {
         {o.can_edit && ['draft', 'sent'].includes(o.state) && <button className="btn btn--secondary btn--sm" disabled={!!busy} onClick={() => act('send', 'Quotation sent to the customer.')}>{o.state === 'sent' ? 'Resend' : 'Send to customer'}</button>}
         {o.can_edit && ['draft', 'sent'].includes(o.state) && <button className="btn btn--primary btn--sm" disabled={!!busy} onClick={() => act('confirm', 'Order confirmed.')}>Confirm order</button>}
         {o.can_edit && o.state !== 'cancel' && <button className="btn btn--secondary btn--sm" disabled={!!busy} onClick={() => window.confirm('Cancel this order?') && act('cancel', 'Order cancelled.')}>Cancel</button>}
+        {o.can_delete && o.state !== 'sale' && <DeleteButton url={`/api/staff/orders/${id}`} what="this quotation" after="/app/orders" />}
       </PageHead>
       <div className="side-grid">
         <div className="stack">
           <Section title="Lines" actions={draft && <button className="btn btn--primary btn--sm" disabled={busy === 'lines'} onClick={saveLines}>Save lines</button>}>
             <div className="table-scroll">
               <table className="table">
-                <thead><tr><th>Description</th><th className="num">Qty</th><th className="num">Unit price</th><th className="num">Disc. %</th><th className="num">GST</th><th className="num">Amount</th></tr></thead>
+                <thead><tr><th>Description</th><th className="num">Qty</th><th className="num">Unit price</th><th className="num">Disc. %</th><th className="num">GST</th><th className="num">Amount</th>{draft && <th />}</tr></thead>
                 <tbody>
                   {o.lines.map((l) => (
                     <tr key={l.id}>
@@ -343,24 +347,35 @@ export function Order() {
                       <td className="num">{draft ? <input className="input input--xs" type="number" min="0" max={me.role === 'director' ? 100 : 10} value={l.discount} onChange={(e) => setLine(l.id, 'discount', e.target.value)} /> : l.discount || '—'}</td>
                       <td className="num">{l.tax_rate}%</td>
                       <td className="num">{inr(l.subtotal)}</td>
+                      {draft && <td><button type="button" className="link--btn row-del" aria-label={`Remove ${l.description}`} disabled={o.lines.length <= 1 || !!busy}
+                        onClick={() => window.confirm(`Remove ${l.description}?`) && run('rm', () => del(`/api/staff/orders/${id}/lines/${l.id}`), 'Line removed.').then((r) => r && reload())}>Remove</button></td>}
                     </tr>
                   ))}
-                  <tr className="tot"><td colSpan={5} className="num">Subtotal</td><td className="num">{inr(o.amount_untaxed)}</td></tr>
-                  <tr className="tot"><td colSpan={5} className="num">GST</td><td className="num">{inr(o.amount_tax)}</td></tr>
-                  <tr className="tot tot--grand"><td colSpan={5} className="num">Total</td><td className="num">{inr(o.amount_total)}</td></tr>
+                  <tr className="tot"><td colSpan={5} className="num">Subtotal</td><td className="num">{inr(o.amount_untaxed)}</td>{draft && <td />}</tr>
+                  <tr className="tot"><td colSpan={5} className="num">GST</td><td className="num">{inr(o.amount_tax)}</td>{draft && <td />}</tr>
+                  <tr className="tot tot--grand"><td colSpan={5} className="num">Total</td><td className="num">{inr(o.amount_total)}</td>{draft && <td />}</tr>
                 </tbody>
               </table>
             </div>
+            {draft && <AddLine onAdd={(product_id, qty) => act('add-line', 'Line added.', { product_id: Number(product_id), qty: Number(qty) || 1 })} />}
             {draft && me.role !== 'director' && <p className="form-hint">Discounts above 10% need the Director.</p>}
           </Section>
           <Section title="Payments & invoices">
             <KV items={[['Paid', <strong className="good" key="p">{inr(o.paid)}</strong>], [`Advance (${o.advance_pct}%)`, inr(o.advance_needed)],
               ['Advance still due', o.advance_due ? <strong className="bad" key="d">{inr(o.advance_due)}</strong> : 'Paid'], ['Balance', inr(o.amount_total - o.paid)]]} />
             {o.payments.length > 0 && (
-              <ul className="list">{o.payments.map((p) => <li key={p.id}>{p.ref} · {inr(p.amount)} · {p.method} · {fmtDate(p.date)} <Pill state={p.state}>{p.state}</Pill></li>)}</ul>
+              <ul className="list">{o.payments.map((p) => <li key={p.id}>{p.ref} · {inr(p.amount)} · {p.method} · {fmtDate(p.date)} <Pill state={p.state}>{p.state}</Pill>
+                {o.can_money && p.state === 'done' && <> <button type="button" className="link--btn row-del" disabled={!!busy} onClick={() => {
+                  const reason = window.prompt(`Void payment ${p.ref} of ${inr(p.amount)}? Give a reason (e.g. cheque bounced):`);
+                  if (reason) run('void', () => post(`/api/staff/payments/${p.id}/void`, { reason }), 'Payment voided.').then((r) => r && reload());
+                }}>Void</button></>}</li>)}</ul>
             )}
             {o.invoices.length > 0 && (
-              <ul className="list">{o.invoices.map((i) => <li key={i.id}>{i.ref} · {i.kind} · {inr(i.amount_total)} · paid {inr(i.amount_paid)} <Pill state={i.state}>{i.state}</Pill></li>)}</ul>
+              <ul className="list">{o.invoices.map((i) => <li key={i.id}>{i.ref} · {i.kind} · {inr(i.amount_total)} · paid {inr(i.amount_paid)} <Pill state={i.state}>{i.state}</Pill>
+                {o.can_money && i.state !== 'cancel' && i.amount_paid < 0.5 && <> <button type="button" className="link--btn row-del" disabled={!!busy} onClick={() => {
+                  const reason = window.prompt(`Cancel invoice ${i.ref}? Give a reason:`);
+                  if (reason) run('inv', () => post(`/api/staff/invoices/${i.id}/cancel`, { reason }), 'Invoice cancelled.').then((r) => r && reload());
+                }}>Cancel</button></>}</li>)}</ul>
             )}
             {o.can_edit && ['sales', 'director'].includes(me.role) && o.state !== 'cancel' && o.paid + 0.5 < o.amount_total && (
               <form className="ws-form ws-form--tight" onSubmit={(e) => { e.preventDefault(); act('payment', 'Payment recorded.', { ...pay, amount: Number(pay.amount) }).then(() => setPay({ amount: '', method: 'upi', reference: '' })); }}>
@@ -406,15 +421,60 @@ export function Order() {
   );
 }
 
+/** Draft quotation: add any active product as an extra line. */
+function AddLine({ onAdd }) {
+  const products = useLoad(() => get('/api/staff/products').catch(() => ({ rows: [] })), []);
+  const [pid, setPid] = useState('');
+  const [qty, setQty] = useState(1);
+  const rows = products.data?.rows || [];
+  return (
+    <div className="ws-form ws-form--tight">
+      <F label="Add a line" type="select" value={pid} onChange={setPid}
+         options={[{ value: '', label: 'Choose a product…' }, ...rows.map((p) => ({ value: String(p.id), label: `${p.name} (${inr(p.price)})` }))]} />
+      <F label="Quantity" type="number" min="1" value={qty} onChange={setQty} />
+      <div className="field--full"><button type="button" className="btn btn--secondary btn--sm" disabled={!pid} onClick={() => { onAdd(pid, qty); setPid(''); setQty(1); }}>Add line</button></div>
+    </div>
+  );
+}
+
+/** Create or edit a customer (name, phone, email, address). */
+function CustomerForm({ initial = {}, onSave, onCancel, saveLabel = 'Save', lockEmail }) {
+  const [f, setF] = useState({ name: '', phone: '', email: '', street: '', city: '', ...initial });
+  const set = (k) => (v) => setF((s) => ({ ...s, [k]: v }));
+  return (
+    <form className="ws-form" onSubmit={(e) => { e.preventDefault(); onSave(f); }}>
+      <F label="Name" value={f.name} onChange={set('name')} required />
+      <F label="Phone" type="tel" value={f.phone} onChange={set('phone')} required />
+      <F label="Email" type="email" value={f.email} onChange={set('email')} disabled={lockEmail} hint={lockEmail ? 'They sign in with this email, so it can’t be changed here.' : ''} />
+      <F label="City" value={f.city} onChange={set('city')} />
+      <F label="Address" full value={f.street} onChange={set('street')} />
+      <div className="field--full actions actions--left">
+        <button className="btn btn--primary btn--sm" disabled={!f.name || !f.phone}>{saveLabel}</button>
+        {onCancel && <button type="button" className="btn btn--secondary btn--sm" onClick={onCancel}>Cancel</button>}
+      </div>
+    </form>
+  );
+}
+
 /* =============================================================== customers */
 export function Customers() {
   const [q, setQ] = useParam('q');
   const { data, error, reload } = useLoad(() => get('/api/staff/customers', { q }), [q]);
+  const can = useCan('customers');
+  const [adding, setAdding] = useState(false);
+  const navigate = useNavigate();
+  const { run } = useAction();
+  const create = async (f) => {
+    const r = await run('c', () => post('/api/staff/customers', f), 'Customer added.');
+    if (r) navigate(`/app/customers/${r.id}`);
+  };
   return (
     <>
       <PageHead eyebrow="Customers" title="Find a customer" sub="Search by name, phone, email or the serial number of their equipment.">
         <Search value={q} onChange={setQ} placeholder="Name, phone, email or serial" />
+        {can.write && <button type="button" className="btn btn--primary btn--sm" onClick={() => setAdding(!adding)}>{adding ? 'Close' : 'New customer'}</button>}
       </PageHead>
+      {adding && <Section title="New customer" className="ws-card--accent"><CustomerForm onSave={create} saveLabel="Add customer" onCancel={() => setAdding(false)} /></Section>}
       {error ? <ErrorBox error={error} onRetry={reload} /> : !data ? <Loading /> : (
         <Table rows={data.rows} rowLink={(c) => `/app/customers/${c.id}`} empty="No customers match."
           columns={[{ key: 'name', label: 'Name' }, { key: 'phone', label: 'Phone' }, { key: 'email', label: 'Email' }, { key: 'city', label: 'City' },
@@ -427,16 +487,31 @@ export function Customers() {
 export function Customer() {
   const { id } = useParams();
   const { data: c, error, reload } = useLoad(() => get(`/api/staff/customers/${id}`), [id]);
+  const [editing, setEditing] = useState(false);
+  const { run } = useAction();
   if (error) return <ErrorBox error={error} onRetry={reload} />;
   if (!c) return <Loading />;
   const today = new Date().toISOString().slice(0, 10);
+  const save = async (f) => {
+    const body = { name: f.name, phone: f.phone, street: f.street, city: f.city, ...(c.has_login ? {} : { email: f.email }) };
+    if (await run('save', () => patch(`/api/staff/customers/${id}`, body), 'Customer updated.')) { setEditing(false); reload(); }
+  };
   return (
     <>
       <PageHead back={{ to: '/app/customers', label: 'Customers' }} eyebrow="Customer" title={c.name}
                 sub={[c.phone, c.email, [c.street, c.city].filter(Boolean).join(', ')].filter(Boolean).join(' · ')}>
         <Pill state={c.has_login ? 'active' : ''}>{c.has_login ? 'Has website login' : 'No login yet'}</Pill>
         {c.phone && <a className="btn btn--secondary btn--sm" href={`tel:${c.phone}`}>Call</a>}
+        {c.can_edit && <button type="button" className="btn btn--secondary btn--sm" onClick={() => setEditing(!editing)}>{editing ? 'Close' : 'Edit'}</button>}
+        {c.can_delete && !c.orders.length && !c.tickets.length && !c.leads.length && !c.warranties.length &&
+          <DeleteButton url={`/api/staff/customers/${id}`} what="this customer" after="/app/customers" />}
       </PageHead>
+      {editing && (
+        <Section title="Edit customer" className="ws-card--accent">
+          <CustomerForm initial={{ name: c.name || '', phone: c.phone || '', email: c.email || '', street: c.street || '', city: c.city || '' }}
+                        onSave={save} onCancel={() => setEditing(false)} lockEmail={c.has_login} />
+        </Section>
+      )}
       <div className="side-grid">
         <div className="stack">
           <Section title="Orders"><ul className="list">{c.orders.map((o) => <li key={o.id}><Link to={`/app/orders/${o.id}`}><strong>{o.ref}</strong> · {o.kw} kW · {inr(o.amount_total)}</Link> <Pill state={o.state}>{o.state_label}</Pill></li>)}{!c.orders.length && <li className="muted">No orders.</li>}</ul></Section>
@@ -489,6 +564,7 @@ export function Subsidy() {
         <Pill state={s.state}>{s.state_label}</Pill>
         {!ro && next && <button className="btn btn--primary btn--sm" disabled={!!busy} onClick={() => act(next[0], 'Status updated.')}>{next[1]}</button>}
         {!ro && !['disbursed', 'rejected'].includes(s.state) && <button className="btn btn--secondary btn--sm" disabled={!!busy} onClick={() => window.confirm('Mark this file rejected?') && act('reject', 'Marked rejected.')}>Rejected</button>}
+        {s.can_delete && <DeleteButton url={`/api/staff/subsidies/${id}`} what="this subsidy file" after="/app/subsidy" />}
       </PageHead>
       <div className="side-grid">
         <Section title="File" actions={!ro && <button className="btn btn--primary btn--sm" disabled={busy === 'save'} onClick={save}>Save</button>}>

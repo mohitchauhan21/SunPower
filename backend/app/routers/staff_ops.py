@@ -6,7 +6,8 @@ from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, UploadF
 from fastapi.responses import Response
 
 from .. import rules
-from ..access import can_write, need
+from ..access import can_delete, can_write, need, need_delete
+from ..catalog import CATEGORIES, GST_GOODS, GST_SERVICE
 from ..db import get_db, now
 from ..security import staff_only
 from .staff_sales import clean, found, like, notes_for
@@ -163,7 +164,7 @@ def job(jid: int, user=Depends(staff_only), db=Depends(get_db)):
             "warranties": db.q("SELECT w.end_date, p.name AS product, s.name AS serial FROM warranties w JOIN products p ON p.id = w.product_id "
                                "JOIN serials s ON s.id = w.serial_id WHERE w.order_id = ?", j["order_id"]),
             "dispatched": dispatched, "notes_log": notes_for(db, "job", jid), "can_edit": lvl in ("rw", "own"),
-            "can_assign": lvl == "rw",
+            "can_assign": lvl == "rw", "can_delete": can_delete(user, "jobs"),
             "certificate_url": "/print/certificate/%s?token=%s" % (jid, db.val("SELECT access_token FROM orders WHERE id = ?", j["order_id"]))
             if j["state"] == "done" else None}
 
@@ -296,6 +297,7 @@ def ticket(tid: int, user=Depends(staff_only), db=Depends(get_db)):
             "ai_diagnosis": json.loads(t["ai_diagnosis"]) if t["ai_diagnosis"] else None,
             "invoice": db.get("invoices", t["invoice_id"]) if t["invoice_id"] else None,
             "notes": notes_for(db, "ticket", tid), "can_edit": lvl in ("rw", "own"), "can_assign": lvl == "rw",
+            "can_delete": can_delete(user, "tickets"),
             "days_open": max((rules.parse_dt(t["closed_on"] or now()) - rules.parse_dt(t["reported_on"])).days, 0)}
 
 
@@ -370,3 +372,100 @@ def warranties(q: str = "", status: str = "", user=Depends(staff_only), db=Depen
     for r in rows:
         r["active"] = r["start_date"] <= t0 <= r["end_date"]
     return {"rows": rows}
+
+
+# ======================================================================
+# Create / edit / delete (CRUD) for products, jobs, tickets, warranties.
+# ======================================================================
+@router.post("/products")
+def create_product(body: dict = Body(default={}), user=Depends(staff_only), db=Depends(get_db)):
+    """New component (Director). Packages (kits) come from the catalogue, not from here."""
+    need(user, "stock", write=True)
+    if user["role"] != "director":
+        raise HTTPException(403, "Only the Director can add products.")
+    code = (body.get("code") or "").strip().upper()[:30]
+    name = (body.get("name") or "").strip()[:120]
+    category = body.get("category")
+    if not code or not name or category not in CATEGORIES or category in ("kit",):
+        raise HTTPException(400, "Enter a code, a name and a category.")
+    if db.val("SELECT id FROM products WHERE code = ?", code):
+        raise HTTPException(400, "Another product already uses code %s." % code)
+    tracking = body.get("tracking") if body.get("tracking") in ("none", "serial", "lot") else "none"
+
+    def number(k, default=0):
+        try:
+            return max(float(body.get(k) if body.get(k) not in (None, "") else default), 0)
+        except (TypeError, ValueError):
+            raise HTTPException(400, "%s must be a number." % k.replace("_", " "))
+    pid = db.insert("products", {
+        "code": code, "name": name, "category": category, "tracking": tracking,
+        "cost": number("cost"), "price": number("price"),
+        "tax_rate": number("tax_rate", GST_SERVICE if category == "service" else GST_GOODS),
+        "warranty_months": int(number("warranty_months", CATEGORIES[category][1])),
+        "min_qty": number("min_qty"), "is_service": 1 if category == "service" else 0})
+    return {"ok": True, "id": pid}
+
+
+@router.delete("/products/{pid}")
+def retire_product(pid: int, user=Depends(staff_only), db=Depends(get_db)):
+    """Products are never erased (old orders, serials and warranties point to them);
+    retiring hides them from lists and new quotes."""
+    need(user, "stock", write=True)
+    need_delete(user, "stock")
+    p = found(db.get("products", pid), "Product not found.")
+    if p["qty_on_hand"] > 0 and not p["is_kit"] and not p["is_service"]:
+        raise HTTPException(400, "%g of %s are still in stock. Use them up or adjust stock first." % (p["qty_on_hand"], p["name"]))
+    db.update("products", pid, {"active": 0})
+    return {"ok": True}
+
+
+@router.delete("/jobs/{jid}")
+def delete_job(jid: int, user=Depends(staff_only), db=Depends(get_db)):
+    """Remove a duplicate or no-longer-needed installation job (Director)."""
+    j, _techs, _lvl = _job(db, user, jid, write=True)
+    need_delete(user, "jobs")
+    if j["state"] != "planned":
+        raise HTTPException(400, "Only planned jobs can be deleted. This one has already started.")
+    if db.val("SELECT COUNT(*) FROM timesheets WHERE job_id = ?", jid):
+        raise HTTPException(400, "Hours are logged on this job, so it must be kept.")
+    order = db.get("orders", j["order_id"])
+    others = db.val("SELECT COUNT(*) FROM jobs WHERE order_id = ? AND id != ?", j["order_id"], jid)
+    if order["state"] == "sale" and not others:
+        raise HTTPException(400, "This is the only installation job for %s. Cancel the order instead, or reschedule the job." % order["ref"])
+    db.exec("DELETE FROM attachments WHERE owner_type = 'job' AND owner_id = ?", jid)
+    db.exec("DELETE FROM notes WHERE model = 'job' AND res_id = ?", jid)
+    db.exec("DELETE FROM jobs WHERE id = ?", jid)
+    db.note("order", j["order_id"], "Installation job %s deleted." % j["ref"], user["id"])
+    return {"ok": True}
+
+
+@router.delete("/tickets/{tid}")
+def delete_ticket(tid: int, user=Depends(staff_only), db=Depends(get_db)):
+    """Remove a request logged by mistake or twice (Director, Service desk)."""
+    t, _lvl = _ticket(db, user, tid, write=True)
+    need_delete(user, "tickets")
+    if t["invoice_id"]:
+        raise HTTPException(400, "This request has an invoice, so it must be kept. Cancel it instead.")
+    db.exec("DELETE FROM notes WHERE model = 'ticket' AND res_id = ?", tid)
+    db.exec("DELETE FROM tickets WHERE id = ?", tid)
+    return {"ok": True}
+
+
+@router.patch("/warranties/{wid}")
+def update_warranty(wid: int, body: dict = Body(default={}), user=Depends(staff_only), db=Depends(get_db)):
+    """Extend or correct a warranty (Director only, e.g. a goodwill extension)."""
+    need(user, "warranties", write=True)
+    if user["role"] != "director":
+        raise HTTPException(403, "Only the Director can change a warranty.")
+    w = found(db.get("warranties", wid), "Warranty not found.")
+    try:
+        months = int(body.get("months", w["months"]))
+        start = rules.date.fromisoformat(str(body.get("start_date", w["start_date"]))[:10])
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Enter the months as a number and the start as a date.")
+    if not 0 < months <= 600:
+        raise HTTPException(400, "Months must be between 1 and 600.")
+    db.update("warranties", wid, {"months": months, "start_date": start.isoformat(),
+                                  "end_date": rules.add_months(start, months).isoformat()})
+    db.note("order", w["order_id"], "Warranty of serial #%s changed to %s months from %s." % (w["serial_id"], months, start), user["id"])
+    return {"ok": True}

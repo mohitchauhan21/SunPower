@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { api, fmtDate, fmtLocal, get, inr, patch, post, upload } from '../api.js';
+import { api, del, fmtDate, fmtLocal, get, inr, patch, post, upload } from '../api.js';
 import { useAuth } from '../auth.jsx';
 import {
-  Chips, ErrorBox, F, KV, Loading, Notes, PageHead, Pill, Search, Section, Table, fromLocalInput, toLocalInput, useAction, useLoad
+  Chips, DeleteButton, ErrorBox, F, KV, Loading, Notes, PageHead, Pill, Search, Section, Table, fromLocalInput, toLocalInput,
+  useAction, useCan, useLoad
 } from './ui.jsx';
 
 function useParam(key, def = '') {
@@ -115,13 +116,20 @@ export function Stock() {
   const [tab, setTab] = useParam('tab', 'items');
   const { data, error, reload } = useLoad(() => (tab === 'serials' ? get('/api/staff/serials', { q }) : get('/api/staff/products', { q })), [q, tab]);
   const [receiving, setReceiving] = useState(null);
-  const canWrite = (me.modules || []).find((m) => m.key === 'stock')?.level === 'rw';
+  const [adding, setAdding] = useState(false);
+  const { run } = useAction();
+  const can = useCan('stock');
+  const canWrite = can.write;
+  const retire = (p) => window.confirm(`Retire ${p.name}? It disappears from lists and new quotes; old orders keep it.`) &&
+    run('r', () => del(`/api/staff/products/${p.id}`), `${p.name} retired.`).then((r) => r && reload());
   const rows = (data?.rows || []).filter((r) => tab === 'serials' || (!r.is_kit && !r.is_service));
   return (
     <>
       <PageHead eyebrow="Warehouse" title="Stock" sub="Components on hand, receiving new stock and every serial number.">
         <Search value={q} onChange={setQ} placeholder={tab === 'serials' ? 'Serial or customer' : 'Item or code'} />
+        {me.role === 'director' && <button type="button" className="btn btn--primary btn--sm" onClick={() => setAdding(!adding)}>{adding ? 'Close' : 'New product'}</button>}
       </PageHead>
+      {adding && <NewProduct onDone={() => { setAdding(false); reload(); }} />}
       <Chips value={tab} onChange={setTab} options={[{ value: 'items', label: 'Components' }, { value: 'serials', label: 'Serial numbers' }]} />
       {receiving && <Receive product={receiving} onDone={() => { setReceiving(null); reload(); }} />}
       {error ? <ErrorBox error={error} onRetry={reload} /> : !data ? <Loading /> : tab === 'serials' ? (
@@ -135,9 +143,42 @@ export function Stock() {
             { key: 'qty_on_hand', label: 'On hand', num: true, render: (p) => <span className={p.low ? 'bad' : ''}>{p.qty_on_hand}</span> },
             { key: 'min_qty', label: 'Minimum', num: true },
             { key: 'low', label: '', render: (p) => (p.low ? <Pill state="failed">Reorder</Pill> : null) },
-            ...(canWrite ? [{ key: 'act', label: '', render: (p) => <button className="link link--btn" onClick={() => setReceiving(p)}>Receive</button> }] : [])]} />
+            ...(canWrite ? [{ key: 'act', label: '', render: (p) => (
+              <span className="row-acts">
+                <button className="link link--btn" onClick={() => setReceiving(p)}>Receive</button>
+                {can.del && <button className="link--btn row-del" onClick={() => retire(p)}>Retire</button>}
+              </span>) }] : [])]} />
       )}
     </>
+  );
+}
+
+const CATS = [['panel', 'Solar panels'], ['inverter', 'Inverters'], ['battery', 'Batteries'], ['controller', 'Charge controllers'],
+  ['bos', 'Balance of system'], ['service', 'Services']].map(([value, label]) => ({ value, label }));
+
+/** Director: add a new component or service to the catalogue. */
+function NewProduct({ onDone }) {
+  const { busy, run } = useAction();
+  const [f, setF] = useState({ code: '', name: '', category: 'bos', tracking: 'none', cost: '', price: '', min_qty: '' });
+  const set = (k) => (v) => setF((x) => ({ ...x, [k]: v }));
+  const save = (e) => {
+    e.preventDefault();
+    run('p', () => post('/api/staff/products', f), `${f.name} added.`).then((r) => r && onDone());
+  };
+  return (
+    <Section title="New product" className="ws-card--accent" actions={<button className="link link--btn" onClick={onDone}>Close</button>}>
+      <form className="ws-form" onSubmit={save}>
+        <F label="Code" value={f.code} onChange={set('code')} placeholder="e.g. WIFI-1" />
+        <F label="Name" value={f.name} onChange={set('name')} />
+        <F label="Category" type="select" value={f.category} onChange={set('category')} options={CATS} hint="Sets the default warranty and GST." />
+        <F label="Tracking" type="select" value={f.tracking} onChange={set('tracking')}
+           options={[{ value: 'none', label: 'Not tracked' }, { value: 'serial', label: 'Serial number per unit' }, { value: 'lot', label: 'Batch / lot' }]} />
+        <F label="Cost (₹)" type="number" min="0" value={f.cost} onChange={set('cost')} />
+        <F label="Selling price (₹)" type="number" min="0" value={f.price} onChange={set('price')} />
+        <F label="Minimum stock" type="number" min="0" value={f.min_qty} onChange={set('min_qty')} />
+        <div className="field--full"><button className="btn btn--primary btn--sm" disabled={busy || !f.code || !f.name}>Add product</button></div>
+      </form>
+    </Section>
   );
 }
 
@@ -275,6 +316,7 @@ export function Job() {
         {j.phone && <a className="btn btn--secondary btn--sm" href={`tel:${j.phone}`}>Call customer</a>}
         {j.street && <a className="btn btn--secondary btn--sm" target="_blank" rel="noreferrer" href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([j.street, j.city].join(', '))}`}>Directions</a>}
         {j.certificate_url && <a className="btn btn--secondary btn--sm" href={j.certificate_url} target="_blank" rel="noreferrer">Certificate</a>}
+        {j.can_delete && j.state === 'planned' && <DeleteButton url={`/api/staff/jobs/${id}`} what="this installation job" after="/app/jobs" />}
       </PageHead>
       {!j.dispatched && j.state !== 'done' && <div className="ws-banner ws-banner--bad">The kit hasn’t been dispatched from the warehouse yet. You can start, but you can’t finish until it’s delivered.</div>}
       <div className="side-grid">
@@ -455,6 +497,7 @@ export function Ticket() {
         <Pill state={t.stage}>{t.stage_label}</Pill>
         {t.phone && <a className="btn btn--secondary btn--sm" href={`tel:${t.phone}`}>Call</a>}
         {t.can_edit && (T_NEXT[t.stage] || []).map(([a, label]) => <button key={a} className={`btn btn--sm ${a === 'reopen' ? 'btn--secondary' : 'btn--primary'}`} disabled={!!busy} onClick={() => act(a, `${label}.`)}>{label}</button>)}
+        {t.can_delete && !t.invoice && <DeleteButton url={`/api/staff/tickets/${id}`} what="this request" after="/app/service" />}
       </PageHead>
       <div className="side-grid">
         <div className="stack">
@@ -533,6 +576,12 @@ export function Warranties() {
   const [q, setQ] = useParam('q');
   const [status, setStatus] = useParam('status');
   const { data, error, reload } = useLoad(() => get('/api/staff/warranties', { q, status }), [q, status]);
+  const { me } = useAuth();
+  const { run } = useAction();
+  const extend = (w) => {
+    const v = window.prompt(`Warranty length for ${w.serial} in months (now ${w.months}):`, String(w.months + 12));
+    if (v && Number(v) > 0) run('w', () => patch(`/api/staff/warranties/${w.id}`, { months: Number(v) }), 'Warranty updated.').then((r) => r && reload());
+  };
   return (
     <>
       <PageHead eyebrow="Service" title="Warranty register" sub="Every serial with its customer and warranty end date. Search by serial, customer, phone or order.">
@@ -545,7 +594,8 @@ export function Warranties() {
             { key: 'customer', label: 'Customer', render: (w) => <Link to={`/app/customers/${w.customer_id}`}>{w.customer}</Link> }, { key: 'phone', label: 'Phone' },
             { key: 'order_ref', label: 'Order' }, { key: 'start_date', label: 'From', render: (w) => fmtDate(w.start_date) },
             { key: 'end_date', label: 'Until', render: (w) => fmtDate(w.end_date) },
-            { key: 'active', label: 'Status', render: (w) => <Pill state={w.active ? 'active' : 'expired'}>{w.active ? 'Active' : 'Expired'}</Pill> }]} />
+            { key: 'active', label: 'Status', render: (w) => <Pill state={w.active ? 'active' : 'expired'}>{w.active ? 'Active' : 'Expired'}</Pill> },
+            ...(me.role === 'director' ? [{ key: 'ext', label: '', render: (w) => <button className="link link--btn" onClick={() => extend(w)}>Change</button> }] : [])]} />
       )}
     </>
   );

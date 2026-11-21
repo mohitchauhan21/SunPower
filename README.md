@@ -85,6 +85,26 @@ The first start downloads about 2.2 GB of free models. Without the AI service ev
 - **Forgot password:** email + recovery code + new password (twice). Five wrong tries lock that email for 15 minutes. People without their code can still ask for an emailed reset link.
 - Change your password or recovery code: customers in My account → Profile, staff in Workspace → My account.
 
+## Who can do what (create, read, update, delete)
+
+The server enforces this for every request (`backend/app/access.py`); the website only shows the buttons a person may use.
+"Own" = only records assigned to them. Deletes are also refused when they would break history (e.g. a confirmed order, a customer with orders, a request with an invoice); use Cancel instead.
+
+| Records | Director | Sales | Warehouse | Service desk | Technician | Customer |
+|---|---|---|---|---|---|---|
+| Enquiries | CRUD | CRUD | – | read | – | create, cancel own |
+| Roof surveys | CRUD | CRUD | – | read | read + update own | – |
+| Quotes & orders (lines, payments) | CRUD, void payments, cancel invoices | CRUD (delete quotes only) | read | read | – | accept + pay own |
+| Customers | CRUD | create, read, update | – | create, read, update | – | update own profile |
+| Subsidy files | CRUD | create, read, update | – | read | – | read own |
+| Dispatch | read, update (+ override) | read | read, update | – | – | – |
+| Stock & products | CRUD (retire products) | read | read, update (receive) | read | read | – |
+| Installation jobs | CRUD | read | read | read | read + update own | read own |
+| Service requests | CRUD | read | – | CRUD | read + update own | create, cancel own |
+| Warranties | read, update (extend) | read | read | read | read own | read own |
+| Notes on records | add; edit own; delete any | add; edit/delete own | add; edit/delete own | add; edit/delete own | add; edit/delete own | – |
+| Staff accounts, settings, reports | CRUD (accounts are switched off, not erased) | – | – | – | – | – |
+
 ## The workspace: five groups
 
 | Group | Pages inside (tabs) |

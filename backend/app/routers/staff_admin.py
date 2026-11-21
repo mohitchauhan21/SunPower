@@ -258,6 +258,19 @@ def update_user(uid: int, body: dict = Body(default={}), user=Depends(director_o
     if target["role"] == "customer":
         raise HTTPException(400, "Customers are managed from their account.")
     vals = {}
+    if "name" in body:
+        if not (body.get("name") or "").strip():
+            raise HTTPException(400, "The name can't be empty.")
+        vals["name"] = body["name"].strip()[:120]
+    if "phone" in body:
+        vals["phone"] = (body.get("phone") or "").strip()[:40] or None
+    if "email" in body:
+        email = (body.get("email") or "").strip().lower()
+        if "@" not in email:
+            raise HTTPException(400, "Enter a valid email.")
+        if db.val("SELECT id FROM users WHERE email = ? COLLATE NOCASE AND id != ?", email, uid):
+            raise HTTPException(400, "Someone already uses this email.")
+        vals["email"] = email
     if "role" in body:
         if body["role"] not in STAFF:
             raise HTTPException(400, "Unknown role.")
@@ -452,3 +465,37 @@ def today_view(user=Depends(staff_only), db=Depends(get_db)):
               "/app/service?stage=awaiting")
     return {"date": day.isoformat(), "stats": stats, "groups": groups,
             "all_clear": not any(g["count"] for g in groups)}
+
+
+# ------------------------------------------------------------- money fixes
+@router.post("/payments/{pid}/void")
+def void_payment(pid: int, body: dict = Body(default={}), user=Depends(director_only), db=Depends(get_db)):
+    """Undo a payment recorded by mistake (Director). The record stays, marked void."""
+    p = found(db.get("payments", pid), "Payment not found.")
+    if p["state"] != "done":
+        raise HTTPException(400, "Only received payments can be voided.")
+    db.update("payments", pid, {"state": "void"})
+    if p["order_id"]:
+        rules.allocate_payments(db, p["order_id"])
+        rules.refresh_delivery_state(db, p["order_id"])
+        db.note("order", p["order_id"], "Payment %s of %s voided: %s" % (
+            p["ref"], rules.money(p["amount"]), (body.get("reason") or "no reason given")[:200]), user["id"])
+    return {"ok": True}
+
+
+@router.post("/invoices/{iid}/cancel")
+def cancel_invoice(iid: int, body: dict = Body(default={}), user=Depends(director_only), db=Depends(get_db)):
+    """Cancel an invoice that hasn't been paid yet (Director)."""
+    inv = found(db.get("invoices", iid), "Invoice not found.")
+    if inv["state"] == "cancel":
+        raise HTTPException(400, "This invoice is already cancelled.")
+    if inv["amount_paid"] > 0.5:
+        raise HTTPException(400, "Money has been received on this invoice. Void the payment first.")
+    db.update("invoices", iid, {"state": "cancel"})
+    if inv["ticket_id"]:
+        db.exec("UPDATE tickets SET invoice_id = NULL WHERE id = ?", inv["ticket_id"])
+    if inv["order_id"]:
+        rules.allocate_payments(db, inv["order_id"])
+        db.note("order", inv["order_id"], "Invoice %s cancelled: %s" % (inv["ref"], (body.get("reason") or "no reason given")[:200]),
+                user["id"])
+    return {"ok": True}

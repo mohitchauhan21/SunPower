@@ -1,8 +1,30 @@
 // Shared building blocks for the staff workspace (/app).
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { fmtDate, post } from '../api.js';
+import { Link, useNavigate } from 'react-router-dom';
+import { del, fmtDate, patch, post } from '../api.js';
+import { useAuth } from '../auth.jsx';
 import { useToast } from '../components/ui/Toast.jsx';
+
+/** What the signed-in person may do in a module: { read, write, del } (from me.modules). */
+export function useCan(key) {
+  const { me } = useAuth();
+  const m = (me?.modules || []).find((x) => x.key === key);
+  return { read: !!m, write: m?.level === 'rw', own: m?.level === 'own', del: !!m?.delete };
+}
+
+/** Red "Delete" button: asks to confirm, deletes, then goes to `after` (or calls onDone). */
+export function DeleteButton({ url, what, after, onDone, label = 'Delete', small = true }) {
+  const navigate = useNavigate();
+  const { busy, run } = useAction();
+  const go = async () => {
+    if (!window.confirm(`Delete ${what}? This can’t be undone.`)) return;
+    const r = await run('del', () => del(url), `Deleted ${what}.`);
+    if (!r) return;
+    if (onDone) onDone();
+    if (after) navigate(after, { replace: true });
+  };
+  return <button type="button" className={`btn btn--danger${small ? ' btn--sm' : ''}`} disabled={!!busy} onClick={go}>{label}</button>;
+}
 
 /** Load data from the server; reload() re-fetches. */
 export function useLoad(fn, deps = []) {
@@ -185,6 +207,16 @@ export function F({ label, value, onChange, type = 'text', options, disabled, hi
 export function Notes({ model, id, notes, reload }) {
   const [text, setText] = useState('');
   const { busy, run } = useAction();
+  const { me } = useAuth();
+  const editNote = async (n) => {
+    const body = window.prompt('Edit note', n.body);
+    if (body === null || body.trim() === n.body) return;
+    if (await run('note', () => patch(`/api/staff/notes/${n.id}`, { body }), 'Note updated.')) reload();
+  };
+  const removeNote = async (n) => {
+    if (!window.confirm('Delete this note?')) return;
+    if (await run('note', () => del(`/api/staff/notes/${n.id}`), 'Note deleted.')) reload();
+  };
   const add = async (e) => {
     e.preventDefault();
     if (!text.trim()) return;
@@ -200,12 +232,21 @@ export function Notes({ model, id, notes, reload }) {
         <button className="btn btn--secondary btn--sm" disabled={busy || !text.trim()}>Add</button>
       </form>
       <ol className="ws-timeline">
-        {(notes || []).map((n) => (
-          <li key={n.id} className={n.kind === 'note' ? 'is-note' : ''}>
-            <p>{n.body}</p>
-            <span className="muted small">{n.author || 'System'} · {fmtDate(n.created_at, true)}</span>
-          </li>
-        ))}
+        {(notes || []).map((n) => {
+          // Typed notes can be edited by their author and deleted by their author or the Director.
+          const mine = n.kind === 'note' && n.author_id === me?.id;
+          const canDel = n.kind === 'note' && (mine || me?.role === 'director');
+          return (
+            <li key={n.id} className={n.kind === 'note' ? 'is-note' : ''}>
+              <p>{n.body}</p>
+              <span className="muted small">
+                {n.author || 'System'} · {fmtDate(n.created_at, true)}
+                {mine && <> · <button type="button" className="link--btn note-act" onClick={() => editNote(n)}>Edit</button></>}
+                {canDel && <> · <button type="button" className="link--btn note-act" onClick={() => removeNote(n)}>Delete</button></>}
+              </span>
+            </li>
+          );
+        })}
         {!notes?.length && <li className="muted small">No activity yet.</li>}
       </ol>
     </Section>

@@ -87,6 +87,10 @@ def test_forgot_password_with_recovery_code(client):
         client.post("/api/auth/recover", json={**body, "code": "1111"}, headers=H)
     blocked = client.post("/api/auth/recover", json={**body, "code": DEMO_CODE}, headers=H).json()
     assert not blocked["ok"] and "Too many" in blocked["error"]
+    # put the demo password back so later tests (and other test files) can sign in
+    reset_rate_limits()
+    back = {"email": "warehouse@sunpower.demo", "code": DEMO_CODE, "password": DEMO_PASSWORD, "confirm": DEMO_PASSWORD}
+    assert client.post("/api/auth/recover", json=back, headers=H).json()["ok"]
 
 
 def test_public_enquiry_and_estimate(client):
@@ -128,7 +132,7 @@ def test_dispatch_blocked_without_advance(client):
     login(client, "sales@sunpower.demo")
     draft = client.get("/api/staff/orders?state=draft").json()["rows"][0]
     assert client.post("/api/staff/orders/%s/confirm" % draft["id"], headers=H).json()["ok"]
-    login(client, "warehouse@sunpower.demo", "Fresh#Pass9")
+    login(client, "warehouse@sunpower.demo")
     d = next(x for x in client.get("/api/staff/deliveries?state=waiting").json()["rows"])
     r = client.post("/api/staff/deliveries/%s/validate" % d["id"], json={"serials": {}}, headers=H)
     assert r.status_code == 400 and "advance" in r.json()["detail"]
