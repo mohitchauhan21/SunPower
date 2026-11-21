@@ -73,6 +73,40 @@ class SunpowerWebsite(http.Controller):
         })
 
 
+class SunpowerApi(http.Controller):
+    """JSON endpoints for the React website (frontend/). JSON-RPC needs a JSON body,
+    so a cross-site HTML form cannot reach these (browsers preflight the request)."""
+
+    @http.route("/api/sunpower/estimate", type="json", auth="public", csrf=False)
+    def api_estimate(self, units=0, bill=0, **kw):
+        return solar_estimate(_float(units), _float(bill)) or {}
+
+    @http.route("/api/sunpower/enquiry", type="json", auth="public", csrf=False)
+    def api_enquiry(self, name="", phone="", **post):
+        name = (name or "").strip()[:120]
+        phone = (phone or "").strip()[:40]
+        if not name or not phone:
+            return {"ok": False, "error": _("Please enter your name and phone number.")}
+        kw = min(_float(post.get("system_kw")), 500.0)
+        system_type = "off_grid" if post.get("system_type") == "off_grid" else "on_grid"
+        lead = request.env["crm.lead"].sudo().solar_create_enquiry({
+            "name": _("%(kw)s kW %(t)s – %(n)s", kw=("%g" % kw) if kw else "?",
+                      t="Off-Grid" if system_type == "off_grid" else "On-Grid", n=name),
+            "contact_name": name,
+            "phone": phone,
+            "email_from": (post.get("email") or "").strip()[:120] or False,
+            "street": (post.get("street") or "").strip()[:200] or False,
+            "city": (post.get("city") or "").strip()[:80] or False,
+            "requested_kw": kw,
+            "system_type": system_type,
+            "subsidy_requested": bool(post.get("subsidy")),
+            "monthly_bill": _float(post.get("monthly_bill")),
+            "roof_area_sqft": _float(post.get("roof_area")),
+            "description": (post.get("notes") or "").strip()[:2000] or False,
+        }, channel="web")
+        return {"ok": True, "id": lead.id, "contact": name}
+
+
 class SunpowerCustomerPortal(http.Controller):
 
     def _partner(self):
