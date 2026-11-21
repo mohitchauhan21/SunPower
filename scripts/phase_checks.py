@@ -5,7 +5,7 @@ Run inside the Odoo shell, e.g. for phase 1:
       "C:\\Users\\Ankit Kumar\\odoo18\\odoo\\odoo-bin" shell -c "C:\\Users\\Ankit Kumar\\odoo18\\odoo.conf" -d sunpower
 Set PHASES below to choose which phases to run.
 """
-PHASES = [1, 2, 3, 4, 5, 6, 7]
+PHASES = [1, 2, 3, 4, 5, 6, 7, 8]
 
 results = []
 
@@ -387,6 +387,34 @@ def phase7(env):
         env.flush_all()
         sp.rollback()
     env.invalidate_all()
+
+
+def phase8(env):
+    """AI helpers (needs ai_service running on :8000) + clean fallback when it is down."""
+    import requests
+    from odoo.exceptions import UserError
+    ai = env["solar.ai.client"]
+    try:
+        up = requests.get(ai._base_url() + "/health", timeout=10).json().get("ok")
+    except Exception:
+        up = False
+    check(8, "AI service is up", up, ai._base_url())
+    if up:
+        res = ai.call("/lead/parse", data={"text": "Hi, Ravi Shah from Surat, need 5 kW off grid with battery, 9898012345"})
+        check(8, "WhatsApp text -> structured enquiry", res.get("phone", "").endswith("9898012345")
+              and res.get("intent") == "new_enquiry", "%s %s %s" % (res.get("name"), res.get("system_kw"), res.get("system_type")))
+        res = ai.call("/fault/diagnose", json={"fault_code": "E-07", "description": "no power after rain"})
+        check(8, "Fault code -> cause + safe steps", bool(res.get("likely_cause") and res.get("steps")),
+              res.get("likely_cause"))
+    icp = env["ir.config_parameter"]
+    old = icp.get_param("sunpower_ai.url")
+    icp.set_param("sunpower_ai.url", "http://localhost:8999")
+    try:
+        ai.call("/fault/diagnose", json={"fault_code": "E-07"})
+        check(8, "AI down -> friendly 'fill in manually' message", False)
+    except UserError as e:
+        check(8, "AI down -> friendly 'fill in manually' message", "manually" in e.args[0])
+    icp.set_param("sunpower_ai.url", old or "")
 
 
 for p in PHASES:

@@ -27,8 +27,9 @@ dbservice.exp_create_database(DB, False, "en_US", "admin", "admin", "in", None)
 registry = odoo.modules.registry.Registry(DB)
 modules = ["sunpower_solar"]
 addons_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "addons")
-if os.path.isdir(os.path.join(addons_dir, "sunpower_website")):
-    modules.append("sunpower_website")
+for extra in ("sunpower_website", "sunpower_ai"):
+    if os.path.isdir(os.path.join(addons_dir, extra)):
+        modules.append(extra)
 
 with registry.cursor() as cr:
     env = odoo.api.Environment(cr, odoo.SUPERUSER_ID, {})

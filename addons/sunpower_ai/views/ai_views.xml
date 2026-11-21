@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="crm_lead_form_ai" model="ir.ui.view">
+        <field name="name">crm.lead.form.sunpower.ai</field>
+        <field name="model">crm.lead</field>
+        <field name="inherit_id" ref="sunpower_solar.crm_lead_view_form_solar"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='bill_filename']" position="after">
+                <button name="action_ai_read_bill" type="object" string="✨ Read bill with AI"
+                        class="btn-secondary" invisible="not bill_attachment" colspan="2"/>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="enquiry_wizard_form_ai" model="ir.ui.view">
+        <field name="name">solar.enquiry.wizard.form.ai</field>
+        <field name="model">solar.enquiry.wizard</field>
+        <field name="inherit_id" ref="sunpower_solar.view_solar_enquiry_wizard_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//div[@name='ai_buttons']" position="inside">
+                <button name="action_ai_fill" type="object" string="✨ Fill with AI"
+                        class="btn-secondary mb-2"/>
+                <field name="ai_note" class="text-muted ms-2" invisible="not ai_note"/>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="ticket_form_ai" model="ir.ui.view">
+        <field name="name">solar.service.ticket.form.ai</field>
+        <field name="model">solar.service.ticket</field>
+        <field name="inherit_id" ref="sunpower_solar.view_solar_ticket_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//header" position="inside">
+                <button name="action_ai_diagnose" type="object" string="✨ AI Diagnose"
+                        invisible="stage in ('closed', 'cancel')"/>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="installation_task_form_ai" model="ir.ui.view">
+        <field name="name">project.task.installation.form.ai</field>
+        <field name="model">project.task</field>
+        <field name="inherit_id" ref="sunpower_solar.view_installation_task_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='install_photo_ids']" position="after">
+                <button name="action_ai_check_photos" type="object"
+                        string="✨ Check photos with AI" class="btn-secondary"
+                        invisible="not install_photo_ids"/>
+            </xpath>
+        </field>
+    </record>
+</odoo>
