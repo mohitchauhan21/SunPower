@@ -46,7 +46,9 @@ You need **Python 3.11–3.13**, **Node 18+**, **PostgreSQL 14+** and **Odoo 18 
    ```
    `run_odoo.ps1` and `scripts\rebuild_db.py` expect Odoo in `%USERPROFILE%\odoo18` (with `odoo\`, `venv\` and `odoo.conf` inside). Set `ODOO_HOME` if yours is somewhere else.
 
-**Demo logins:** `admin` / `admin` (director); technicians `tech01@sunpower.demo` … `tech15@sunpower.demo` / `sunpower`.
+**Demo logins** (password `sunpower`): `director@`, `sales@`, `warehouse@`, `support@`, `tech01@` … `tech15@`, `customer01@sunpower.demo`; `admin` / `admin` is also a director.
+
+The full user journey, page list, routes, role access, design rules and project tracker are in [docs/WORKFLOW.md](docs/WORKFLOW.md).
 
 ### 2. React website (optional, the public site and staff console)
 

@@ -8,15 +8,20 @@ export const NAV_ITEMS = [
   { label: 'Savings', path: '/estimate' },
   { label: 'Quote', path: '/quote' }
 ];
-// Only directors see the Console link (the page itself is also role-guarded)
-const DIRECTOR_ITEMS = [{ label: 'Console', path: '/console' }];
+// Role links (the pages themselves are also role-guarded)
+const ROLE_ITEMS = {
+  director: [{ label: 'Console', path: '/console' }],
+  customer: [{ label: 'My account', path: '/account' }]
+};
 
 export default function Nav() {
   const { me, signOut } = useAuth();
   const navigate = useNavigate();
-  const items = me?.role === 'director' ? [...NAV_ITEMS, ...DIRECTOR_ITEMS] : NAV_ITEMS;
+  const items = [...NAV_ITEMS, ...(ROLE_ITEMS[me?.role] || [])];
+  const staffHome = me?.authenticated && me.home && !me.home.startsWith('/') ? me.home : null;
   const out = async () => { await signOut(); navigate('/'); };
-  const mobileItems = [...items, me?.authenticated ? { label: 'Sign out', path: '/login' } : { label: 'Sign in', path: '/login' }];
+  const mobileItems = [...items, ...(staffHome ? [{ label: 'My screen', path: staffHome }] : []),
+    me?.authenticated ? { label: 'Sign out', path: '/logout' } : { label: 'Sign in', path: '/login' }];
   return (
     <>
       <header className="nav">
@@ -28,12 +33,11 @@ export default function Nav() {
                 {i.label}
               </NavLink>
             ))}
-            <a className="nav__link" href="http://localhost:8069/my/solar">My Solar</a>
           </nav>
           <div className="nav__actions">
             {me?.authenticated ? (
               <>
-                {me.role !== 'director' && me.home && !me.home.startsWith('/') && <a className="nav__link" href={me.home}>My screen</a>}
+                {staffHome && <a className="nav__link" href={staffHome}>My screen</a>}
                 <span className="nav__user" title={me.login}>{me.name?.split(' ')[0]}</span>
                 <button type="button" className="nav__link nav__btn" onClick={out}>Sign out</button>
               </>

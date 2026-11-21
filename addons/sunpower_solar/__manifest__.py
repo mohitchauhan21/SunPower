@@ -45,6 +45,7 @@
     "assets": {
         "web.assets_backend": [
             "sunpower_solar/static/src/dashboard/**/*",
+            "sunpower_solar/static/src/branding.js",
         ],
     },
     "post_init_hook": "post_init_hook",

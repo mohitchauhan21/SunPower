@@ -120,6 +120,9 @@ class SaleOrder(models.Model):
                     "amount_expected": self.env["solar.subsidy.application"]
                     ._expected_subsidy(order.solar_kw),
                 })
+            # customer gets a website account to follow the job
+            if not self.env.context.get("sunpower_no_invite"):
+                order.partner_id.commercial_partner_id._sunpower_invite_customer()
             pickings = order.picking_ids.filtered(lambda p: p.state not in
                                                   ("done", "cancel"))
             order.message_post(body=_(

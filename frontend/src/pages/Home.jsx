@@ -36,11 +36,11 @@ const STEPS = [
 ];
 
 const GALLERY = [
-  { image: '/img/hero.svg', label: 'Bopal · 5 kW', link: '/quote' },
-  { image: '/img/noon.svg', label: 'SG Highway · 3 kW', link: '/quote' },
-  { image: '/img/dawn.svg', label: 'Satellite · 2 kW', link: '/quote' },
-  { image: '/img/dusk.svg', label: 'Gota · 4 kW', link: '/quote' },
-  { image: '/img/factory.svg', label: 'Sanand · Commercial', link: '/quote' }
+  { image: '/img/home-rooftop.jpg', label: 'Independent homes · 2–5 kW', link: '/estimate' },
+  { image: '/img/city-rooftops.jpg', label: 'Apartments & societies', link: '/quote' },
+  { image: '/img/crew-installing.jpg', label: 'Installed by our own crew', link: '/quote' },
+  { image: '/img/panel-rows.jpg', label: 'Flat RCC roofs', link: '/estimate' },
+  { image: '/img/commercial-array.jpg', label: 'Shops, offices & factories', link: '/quote' }
 ];
 
 export default function Home() {
@@ -59,7 +59,7 @@ export default function Home() {
             </div>
           </Reveal>
           <Reveal className="hero__media" delay={150}>
-            <img src="/img/hero.svg" alt="Solar panels on a rooftop at sunrise" />
+            <img src="/img/hero-rooftop-sunrise.jpg" alt="Rows of solar panels on a rooftop at sunrise" width="1600" height="1067" fetchpriority="high" />
           </Reveal>
         </div>
       </section>
@@ -82,7 +82,7 @@ export default function Home() {
           <div className="section__head">
             <MaskedHeading
               text="Made for Indian rooftops."
-              src="/img/noon.svg"
+              src="/img/panel-closeup.jpg"
               tag="h2"
               weight={700}
               textScale={0.075}
@@ -159,7 +159,8 @@ export default function Home() {
         <div className="wrap">
           <div className="section__head">
             <span className="eyebrow">Installations</span>
-            <h2 className="headline">On rooftops across Ahmedabad.</h2>
+            <h2 className="headline">For every kind of rooftop.</h2>
+            <p className="lead">Homes, housing societies and businesses across Ahmedabad.</p>
           </div>
           <AccordionGallery items={GALLERY} height={460} radius={24} gap={12} accentColor="#ffffff" overlayColor="#1d1d1f" grayscale={false} tilt={0} />
         </div>

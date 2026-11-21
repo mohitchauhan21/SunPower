@@ -3,7 +3,10 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api.js';
 import { goHome, useAuth } from '../auth.jsx';
 
-const GoogleMark = () => (
+// Pages a ?next= may send a user back to, by role
+const NEXT_ROLES = { '/console': ['director'], '/account': ['customer'] };
+
+export const GoogleMark = () => (
   <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
     <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/>
     <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/>
@@ -27,7 +30,7 @@ export default function Login() {
 
   // Already signed in? Go straight to your own screen.
   useEffect(() => {
-    if (me?.authenticated) goHome(navigate, next && next.startsWith('/') && me.role === 'director' ? next : me.home);
+    if (me?.authenticated) goHome(navigate, next && next.startsWith('/') && !next.startsWith('//') && NEXT_ROLES[next]?.includes(me.role) ? next : me.home);
   }, [me, next, navigate]);
 
   const submit = async (e) => {
@@ -79,7 +82,7 @@ export default function Login() {
             {busy ? 'Signing in…' : 'Sign in'}
           </button>
         </form>
-        <p className="auth__foot muted">New customer? <Link to="/quote" className="auth__small">Book a free survey</Link></p>
+        <p className="auth__foot muted">New to SunPower? <Link to="/signup" className="auth__small">Create an account</Link></p>
       </div>
     </section>
   );

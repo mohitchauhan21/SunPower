@@ -8,7 +8,7 @@
 
     <menuitem id="menu_sp_sales" groups="sunpower_solar.group_sales,sunpower_solar.group_support" name="Sales" parent="menu_sunpower_root" sequence="10"/>
     <menuitem id="menu_sp_pipeline" groups="sunpower_solar.group_sales,sunpower_solar.group_support" name="Enquiry Pipeline" parent="menu_sp_sales"
-              action="crm.crm_lead_action_pipeline" sequence="1"/>
+              action="action_solar_pipeline" sequence="1"/>
     <menuitem id="menu_sp_log_enquiry" groups="sunpower_solar.group_sales,sunpower_solar.group_support" name="Log WhatsApp / Call" parent="menu_sp_sales"
               action="action_solar_enquiry_wizard" sequence="2"/>
     <menuitem id="menu_sp_surveys" groups="sunpower_solar.group_sales,sunpower_solar.group_support" name="Site Surveys" parent="menu_sp_sales"

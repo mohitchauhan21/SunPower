@@ -104,7 +104,12 @@ class SunpowerApi(http.Controller):
             "roof_area_sqft": _float(post.get("roof_area")),
             "description": (post.get("notes") or "").strip()[:2000] or False,
         }, channel="web")
-        return {"ok": True, "id": lead.id, "contact": name}
+        user = request.env.user
+        if not user._is_public() and user.share:
+            # signed-in customer: the enquiry shows up in their account
+            lead.partner_id = user.partner_id.commercial_partner_id
+        return {"ok": True, "id": lead.id, "contact": name,
+                "signed_in": not user._is_public()}
 
 
 class SunpowerCustomerPortal(http.Controller):

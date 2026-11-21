@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import Logo from './Logo.jsx';
+import { ENGINE } from '../config.js';
 
 export default function Footer() {
   return (
@@ -16,12 +17,17 @@ export default function Footer() {
             <h4>Explore</h4>
             <Link to="/estimate">Savings estimate</Link>
             <Link to="/quote">Get a quote</Link>
-            <Link to="/login">Staff sign-in</Link>
           </div>
           <div>
             <h4>Customers</h4>
-            <a href="http://localhost:8069/my/solar">My Solar portal</a>
-            <a href="http://localhost:8069/technician">Crew app</a>
+            <Link to="/account">My account</Link>
+            <Link to="/signup">Create an account</Link>
+            <Link to="/account?tab=service">Report a problem</Link>
+          </div>
+          <div>
+            <h4>Team</h4>
+            <Link to="/login">Staff sign-in</Link>
+            <a href={`${ENGINE}/technician`}>Crew app</a>
           </div>
           <div>
             <h4>Contact</h4>

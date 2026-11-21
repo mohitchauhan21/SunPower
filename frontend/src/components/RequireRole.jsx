@@ -1,5 +1,7 @@
-import { Navigate, useLocation } from 'react-router-dom';
+import { Link, Navigate, useLocation } from 'react-router-dom';
 import { useAuth, ROLE_LABELS } from '../auth.jsx';
+
+const AREA = { director: 'directors', customer: 'customers' };
 
 /** Shows children only to users with one of `roles`; visitors go to /login. */
 export default function RequireRole({ roles, children }) {
@@ -11,13 +13,15 @@ export default function RequireRole({ roles, children }) {
     return <Navigate to={`/login?next=${encodeURIComponent(location.pathname)}`} replace />;
   }
   if (!roles.includes(me.role)) {
-    const own = me.home && !me.home.startsWith('/') ? me.home : '/';
+    const home = me.home || '/';
     return (
       <section className="wrap login">
         <span className="eyebrow">{ROLE_LABELS[me.role] || 'Signed in'}</span>
-        <h1 className="headline">This area is for directors.</h1>
+        <h1 className="headline">This area is for {roles.map((r) => AREA[r] || r).join(' and ')}.</h1>
         <p className="lead">You’re signed in as {me.name}. Your work lives on your own screen.</p>
-        <a className="btn btn--primary" href={own}>Go to my screen</a>
+        {home.startsWith('/')
+          ? <Link className="btn btn--primary" to={home}>Go to my screen</Link>
+          : <a className="btn btn--primary" href={home}>Go to my screen</a>}
       </section>
     );
   }

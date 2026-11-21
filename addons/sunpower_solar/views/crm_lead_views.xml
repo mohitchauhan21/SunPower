@@ -94,4 +94,14 @@
             </xpath>
         </field>
     </record>
+
+    <!-- Whole team's pipeline (the standard one opens on "My Pipeline" only) -->
+    <record id="action_solar_pipeline" model="ir.actions.act_window">
+        <field name="name">Enquiry Pipeline</field>
+        <field name="res_model">crm.lead</field>
+        <field name="view_mode">kanban,list,form,calendar,activity</field>
+        <field name="domain">[('type', '=', 'opportunity')]</field>
+        <field name="context">{'default_type': 'opportunity'}</field>
+        <field name="search_view_id" ref="crm.view_crm_case_opportunities_filter"/>
+    </record>
 </odoo>

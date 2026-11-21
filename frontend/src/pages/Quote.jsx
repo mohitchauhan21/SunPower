@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useAuth } from '../auth.jsx';
 import { api } from '../api.js';
 import Tabs from '../components/ui/Tabs.jsx';
 import Switch from '../components/ui/Switch.jsx';
@@ -16,6 +17,12 @@ export default function Quote() {
   const [f, setF] = useState(EMPTY);
   const [sending, setSending] = useState(false);
   const [done, setDone] = useState(null);
+  const { me } = useAuth();
+
+  // Signed-in customer: start with their name and email
+  useEffect(() => {
+    if (me?.role === 'customer') setF((s) => ({ ...s, name: s.name || me.name || '', email: s.email || me.login || '' }));
+  }, [me]);
 
   const set = (k) => (e) => setF((s) => ({ ...s, [k]: e.target.value }));
   const put = (k, v) => setF((s) => ({ ...s, [k]: v }));

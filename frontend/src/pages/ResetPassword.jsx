@@ -14,6 +14,7 @@ const strength = (p) => {
 export default function ResetPassword() {
   const [params] = useSearchParams();
   const token = params.get('token') || '';
+  const welcome = params.get('welcome') === '1';
   const [state, setState] = useState('checking'); // checking | ready | invalid | done
   const [name, setName] = useState('');
   const [password, setPassword] = useState('');
@@ -60,14 +61,14 @@ export default function ResetPassword() {
         {state === 'done' && (
           <>
             <h1 className="headline">All set.</h1>
-            <p className="lead">Your password has been changed. Sign in with your new password.</p>
+            <p className="lead">{welcome ? 'Your password is saved. Sign in to see your account.' : 'Your password has been changed. Sign in with your new password.'}</p>
             <Link to="/login" className="btn btn--primary btn--block">Sign in</Link>
           </>
         )}
         {state === 'ready' && (
           <>
-            <h1 className="headline">New password</h1>
-            <p className="lead">for {name}.</p>
+            <h1 className="headline">{welcome ? 'Welcome to SunPower.' : 'New password'}</h1>
+            <p className="lead">{welcome ? `Choose a password for your account, ${name}.` : `for ${name}.`}</p>
             <form className="form" onSubmit={submit}>
               {error && <div className="form-error" role="alert">{error}</div>}
               <div className="field">
@@ -81,7 +82,7 @@ export default function ResetPassword() {
                 <input id="r-confirm" className="input" type="password" required autoComplete="new-password"
                        value={confirm} onChange={(e) => setConfirm(e.target.value)} />
               </div>
-              <button className="btn btn--primary btn--block" disabled={busy}>{busy ? 'Saving…' : 'Change password'}</button>
+              <button className="btn btn--primary btn--block" disabled={busy}>{busy ? 'Saving…' : welcome ? 'Save password' : 'Change password'}</button>
             </form>
           </>
         )}

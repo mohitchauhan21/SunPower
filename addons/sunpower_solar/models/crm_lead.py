@@ -137,6 +137,9 @@ class CrmLead(models.Model):
     def solar_create_enquiry(self, vals, channel="web"):
         """Single entry point for web form / WhatsApp / AI intake so that an
         enquiry is never lost: lead + salesperson + call activity."""
+        # queue staff notification emails instead of sending them while the
+        # customer waits for the form to answer
+        self = self.with_context(mail_notify_force_send=False)
         team = self.env.ref("sales_team.team_sales_department",
                             raise_if_not_found=False)
         vals = dict(vals, enquiry_channel=channel, type="opportunity")

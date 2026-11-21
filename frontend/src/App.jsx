@@ -11,10 +11,13 @@ import Console from './console/Console.jsx';
 import Login from './pages/Login.jsx';
 import ForgotPassword from './pages/ForgotPassword.jsx';
 import ResetPassword from './pages/ResetPassword.jsx';
+import Signup from './pages/Signup.jsx';
+import Account from './pages/Account.jsx';
+import Logout from './pages/Logout.jsx';
 import RequireRole from './components/RequireRole.jsx';
 import { AuthProvider } from './auth.jsx';
 
-const TITLES = { '/': 'Rooftop solar', '/estimate': 'Savings estimate', '/quote': 'Get a quote', '/console': 'Console', '/login': 'Sign in', '/forgot-password': 'Forgot password', '/reset-password': 'New password' };
+const TITLES = { '/': 'Rooftop solar', '/estimate': 'Savings estimate', '/quote': 'Get a quote', '/console': 'Console', '/login': 'Sign in', '/forgot-password': 'Forgot password', '/reset-password': 'New password', '/signup': 'Create account', '/account': 'My account' };
 
 export default function App() {
   const { pathname } = useLocation();
@@ -34,6 +37,9 @@ export default function App() {
           <Route path="/estimate" element={<Estimate />} />
           <Route path="/console" element={<RequireRole roles={['director']}><Console /></RequireRole>} />
           <Route path="/login" element={<Login />} />
+          <Route path="/signup" element={<Signup />} />
+          <Route path="/logout" element={<Logout />} />
+          <Route path="/account" element={<RequireRole roles={['customer']}><Account /></RequireRole>} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="*" element={<NotFound />} />

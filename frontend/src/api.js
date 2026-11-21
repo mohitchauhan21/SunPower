@@ -1,4 +1,4 @@
-// Talks to the SunPower business engine (Odoo, /api + /web) and the AI service (/ai)
+// Talks to the SunPower back office (/api + /web) and the AI service (/ai)
 // through the dev-server proxy, so the browser only ever sees one origin.
 async function rpc(url, params = {}) {
   const res = await fetch(url, {
@@ -26,6 +26,13 @@ export const api = {
   requestReset: (email) => rpc('/api/sunpower/auth/reset', { email }),
   checkReset: (token) => rpc('/api/sunpower/auth/reset/check', { token }),
   confirmReset: (token, password) => rpc('/api/sunpower/auth/reset/confirm', { token, password }),
+  signup: (values) => rpc('/api/sunpower/auth/signup', values),
+  myOverview: () => rpc('/api/sunpower/my/overview'),
+  myComplaint: (values) => rpc('/api/sunpower/my/complaint', values),
+  confirmFix: (ticket_id) => rpc('/api/sunpower/my/ticket/confirm', { ticket_id }),
+  reopenTicket: (ticket_id, note) => rpc('/api/sunpower/my/ticket/reopen', { ticket_id, note }),
+  myProfile: (values) => rpc('/api/sunpower/my/profile', values),
+  myPassword: (old, next) => rpc('/api/sunpower/my/password', { old, new: next }),
   dashboard: (period) =>
     rpc('/web/dataset/call_kw/solar.dashboard/get_data', {
       model: 'solar.dashboard', method: 'get_data', args: [period], kwargs: {}
@@ -49,4 +56,9 @@ export const api = {
 };
 
 export const inr = (v) => '₹' + new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(v || 0);
+export const fmtDate = (v, withTime = false) => {
+  if (!v) return '';
+  const d = new Date(v.replace(' ', 'T') + (v.length > 10 ? 'Z' : ''));
+  return d.toLocaleDateString('en-IN', withTime ? { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' } : { day: 'numeric', month: 'short', year: 'numeric' });
+};
 export const num = (v) => new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(v || 0);

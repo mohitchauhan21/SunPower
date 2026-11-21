@@ -36,6 +36,7 @@ class TestSunpowerAccess(TransactionCase):
         self.assertEqual(self.tech._sunpower_role(), "technician")
         self.assertEqual(self.customer._sunpower_role(), "customer")
         self.assertEqual(self.director._sunpower_home(), "/console")
+        self.assertEqual(self.customer._sunpower_home(), "/account")
 
     def test_technician_only_own_work(self):
         Survey = self.env["solar.site.survey"].with_user(self.tech)
@@ -88,3 +89,17 @@ class TestSunpowerAccess(TransactionCase):
             self.env["product.category"].with_user(self.sales).create({"name": "x", "solar_warranty_months": 1})
         self.assertTrue(self.director.has_group("base.group_system"))
         self.assertFalse(self.sales.has_group("base.group_system"))
+
+    def test_invite_customer_once(self):
+        partner = self.env["res.partner"].create({"name": "New Buyer", "email": "buyer@x.test"})
+        partner._sunpower_invite_customer()
+        user = partner.user_ids
+        self.assertEqual(len(user), 1)
+        self.assertEqual(user._sunpower_role(), "customer")
+        self.assertEqual(partner.signup_type, "reset", "a set-password link was prepared")
+        partner._sunpower_invite_customer()
+        self.assertEqual(len(partner.user_ids), 1)
+        # no email -> no account
+        silent = self.env["res.partner"].create({"name": "No Mail"})
+        silent._sunpower_invite_customer()
+        self.assertFalse(silent.user_ids)

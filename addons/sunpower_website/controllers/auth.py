@@ -11,8 +11,6 @@ Security notes:
 import logging
 import time
 from collections import defaultdict, deque
-from html import escape
-from urllib.parse import urlencode
 
 from odoo import _, http
 from odoo.exceptions import UserError
@@ -90,34 +88,10 @@ class SunpowerAuthApi(http.Controller):
         user = Users.search(["|", ("login", "=ilike", email), ("email", "=ilike", email)], limit=1)
         if user and user.active and user.email:
             try:
-                partner = user.partner_id
-                partner.signup_prepare(signup_type="reset")
-                token = partner._generate_signup_token()
-                link = "%s/reset-password?%s" % (_frontend_url(), urlencode({"token": token}))
-                self._send_reset_email(user, link)
+                user._sunpower_send_account_email("reset")
             except Exception:  # never reveal internals to the caller
                 _logger.exception("SunPower: password reset email failed for user %s", user.id)
         return {"ok": True, "message": GENERIC_RESET_MSG}
-
-    def _send_reset_email(self, user, link):
-        company = user.company_id or request.env.company
-        body = (
-            '<div style="font-family:-apple-system,Segoe UI,Inter,sans-serif;max-width:520px;margin:auto;color:#1d1d1f">'
-            '<p style="font-size:20px;font-weight:600">Reset your SunPower password</p>'
-            "<p>Hi %s,</p><p>Someone (hopefully you) asked to reset the password for your SunPower account. "
-            "The link works once and expires in 24 hours.</p>"
-            '<p><a href="%s" style="display:inline-block;background:#1d1d1f;color:#fff;padding:12px 22px;'
-            'border-radius:999px;text-decoration:none;font-weight:600">Choose a new password</a></p>'
-            '<p style="color:#6e6e73;font-size:13px">If you didn\'t ask for this, you can ignore this email; '
-            "your password stays the same.</p></div>"
-        ) % (escape(user.name), escape(link))
-        request.env["mail.mail"].sudo().create({
-            "subject": "Reset your SunPower password",
-            "email_from": company.email_formatted or company.partner_id.email_formatted,
-            "email_to": user.email_formatted or user.email,
-            "body_html": body,
-            "auto_delete": True,
-        }).send()
 
     @http.route("/api/sunpower/auth/reset/check", type="json", auth="public", csrf=False)
     def reset_check(self, token="", **kw):

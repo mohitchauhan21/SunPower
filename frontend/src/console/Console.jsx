@@ -11,7 +11,7 @@ const PERIODS = [
   { value: 'month', label: 'Month' },
   { value: 'year', label: 'Year' }
 ];
-const ENGINE = 'http://localhost:8069';
+import { ENGINE } from '../config.js';
 
 const stageTone = (s = '') => (/completed|closed/i.test(s) ? 'pill--ok' : /awaiting|dispatched|confirmed/i.test(s) ? 'pill--warn' : '');
 
@@ -83,7 +83,7 @@ export default function Console() {
         </div>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
           <Tabs label="Period" value={period} onChange={setPeriod} items={PERIODS} />
-          <a className="btn btn--secondary btn--sm" href={`${ENGINE}/odoo/action-sunpower_solar.action_solar_dashboard`}>Open in Odoo</a>
+          <a className="btn btn--secondary btn--sm" href={`${ENGINE}/odoo/action-sunpower_solar.action_solar_dashboard`}>Open back office</a>
           <button className="btn btn--secondary btn--sm" onClick={logout}>Sign out</button>
         </div>
       </div>

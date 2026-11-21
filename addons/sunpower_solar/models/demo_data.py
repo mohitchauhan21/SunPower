@@ -207,7 +207,7 @@ class SolarDemoData(models.AbstractModel):
             if plan.get("loss"):
                 for line in order.order_line:
                     line.discount = 22
-            order.action_confirm()
+            order.with_context(sunpower_no_invite=True).action_confirm()
             order.date_order = when
             lead.stage_id = won_stage
             stage = plan.get("stage", "installed")
