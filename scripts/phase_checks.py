@@ -5,7 +5,7 @@ Run inside the Odoo shell, e.g. for phase 1:
       "C:\\Users\\Ankit Kumar\\odoo18\\odoo\\odoo-bin" shell -c "C:\\Users\\Ankit Kumar\\odoo18\\odoo.conf" -d sunpower
 Set PHASES below to choose which phases to run.
 """
-PHASES = [1]
+PHASES = [1, 2]
 
 results = []
 
@@ -43,9 +43,9 @@ def phase1(env):
     serial = env["product.product"].search([("tracking", "=", "serial")]).mapped("default_code")
     check(1, "Inverters, batteries, controllers tracked by serial",
           {"MPPT-60", "BAT-150", "INV-3KW"} <= set(serial), ", ".join(sorted(serial)))
-    techs = env["res.users"].search_count([("login", "like", "@sunpower.demo")])
+    techs = env["res.users"].search_count([("login", "=like", "tech%@sunpower.demo")])
     check(1, "15 technician logins", techs == 15, techs)
-    no_cost = env["hr.employee"].search([("user_id.login", "like", "@sunpower.demo"),
+    no_cost = env["hr.employee"].search([("user_id.login", "=like", "tech%@sunpower.demo"),
                                          ("hourly_cost", "=", 0)])
     check(1, "Every technician has an hourly cost", not no_cost, len(no_cost))
     menus = env.ref("sunpower_solar.menu_sunpower_root").child_id.mapped("name")
@@ -53,6 +53,57 @@ def phase1(env):
           ", ".join(menus))
     jobs = env["sale.order"].search_count([("is_solar_job", "=", True), ("state", "=", "sale")])
     check(1, "Sample data loaded (40 jobs)", jobs == 40, jobs)
+
+
+def phase2(env):
+    """Enquiry -> screening -> survey -> quote gate. Runs inside a savepoint and
+    rolls back, so it leaves no data behind."""
+    from odoo.exceptions import UserError
+    Lead = env["crm.lead"]
+    with env.cr.savepoint(flush=False) as sp:
+        lead = Lead.solar_create_enquiry({
+            "name": "P2 check", "contact_name": "Phase Two", "phone": "+91 90000 00002",
+            "requested_kw": 3, "system_type": "on_grid", "monthly_bill": 3200,
+            "roof_area_sqft": 420}, channel="web")
+        check(2, "Website enquiry becomes an opportunity", lead.type == "opportunity")
+        check(2, "Enquiry is assigned to a salesperson", bool(lead.user_id), lead.user_id.name)
+        act = lead.activity_ids.filtered(lambda a: "2 hours" in (a.summary or ""))
+        check(2, "'Call within 2 hours' reminder created", bool(act), act.date_deadline)
+        check(2, "Suggested size from bill (₹3,200 -> 3 kW)", lead.recommended_kw == 3,
+              lead.recommended_kw)
+        try:
+            lead.action_schedule_survey()
+            check(2, "Survey refused before grid check", False)
+        except UserError:
+            check(2, "Survey refused before grid check", True)
+        try:
+            lead.action_new_quotation()
+            check(2, "Quote refused with no survey", False)
+        except UserError:
+            check(2, "Quote refused with no survey", True)
+        lead.grid_suitable = "yes"
+        lead.action_schedule_survey()
+        survey = lead.survey_ids[:1]
+        check(2, "Survey created and pre-filled", survey and survey.usable_area_sqft == 420
+              and survey.recommended_kw == 3, survey.name)
+        check(2, "Max kW that fits (420 sq ft -> 4.2)", survey.max_kw_fit == 4.2,
+              survey.max_kw_fit)
+        try:
+            survey.action_mark_done()
+            check(2, "Visit refused without roof direction", False)
+        except UserError:
+            check(2, "Visit refused without roof direction", True)
+        survey.write({"roof_direction": "S", "roof_tilt": 15})
+        survey.action_mark_done()
+        survey.action_approve()
+        check(2, "Survey approved -> enquiry shows approved", lead.survey_state == "approved")
+        ctx = lead._prepare_opportunity_quotation_context()
+        tmpl = env["sale.order.template"].browse(ctx.get("default_sale_order_template_id"))
+        check(2, "Quote picks the 3 kW On-Grid template", tmpl.solar_kw == 3 and
+              tmpl.solar_system_type == "on_grid", tmpl.name)
+        check(2, "Quotation templates switched on (so template applies)",
+              env.user.has_group("sale_management.group_sale_order_template"))
+        sp.rollback()
 
 
 for p in PHASES:

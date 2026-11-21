@@ -5,6 +5,10 @@
         <field name="model">crm.lead</field>
         <field name="inherit_id" ref="crm.crm_lead_view_form"/>
         <field name="arch" type="xml">
+            <!-- No quote before the roof survey is approved: hide the button entirely -->
+            <xpath expr="//button[@name='action_sale_quotations_new']" position="attributes">
+                <attribute name="invisible">type == 'lead' or probability == 0 and not active or not approved_survey_id</attribute>
+            </xpath>
             <xpath expr="//header" position="inside">
                 <button name="action_schedule_survey" string="Schedule Roof Survey"
                         type="object" class="btn-primary"

@@ -44,6 +44,16 @@ def _ref(env, name):
     return env.ref("sunpower_solar.%s" % name, raise_if_not_found=False)
 
 
+def enable_settings(env):
+    """Serial/lot tracking + quotation templates (needed so the quote picks the
+    right package automatically) + down payments."""
+    env["res.config.settings"].create({
+        "group_stock_production_lot": True,
+        "group_stock_tracking_lot": False,
+        "group_sale_order_template": True,
+    }).execute()
+
+
 def post_init_hook(env):
     company = env.company
     if company.name in ("My Company", "YourCompany"):
@@ -55,11 +65,7 @@ def post_init_hook(env):
                        "city": "Ahmedabad", "state_id": gujarat.id,
                        "country_id": env.ref("base.in").id})
 
-    # Enable serial/lot tracking + kits + project task creation
-    env["res.config.settings"].create({
-        "group_stock_production_lot": True,
-        "group_stock_tracking_lot": False,
-    }).execute()
+    enable_settings(env)
 
     cats = {}
     parent = env["product.category"].create({"name": "SunPower"})
