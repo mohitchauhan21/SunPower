@@ -5,7 +5,7 @@ Run inside the Odoo shell, e.g. for phase 1:
       "C:\\Users\\Ankit Kumar\\odoo18\\odoo\\odoo-bin" shell -c "C:\\Users\\Ankit Kumar\\odoo18\\odoo.conf" -d sunpower
 Set PHASES below to choose which phases to run.
 """
-PHASES = [1, 2, 3, 4]
+PHASES = [1, 2, 3, 4, 5]
 
 results = []
 
@@ -259,6 +259,50 @@ def phase4(env):
         check(4, "Job moves to 'Dispatched'", (so._solar_refresh_job_financials() or True)
               and so.job_stage == "dispatched", so.job_stage)
         check(4, "Material cost counted on the job", so.job_material_cost > 0, so.job_material_cost)
+        env.flush_all()
+        sp.rollback()
+    env.invalidate_all()
+
+
+def phase5(env):
+    """Crew form rules, timesheets, certificate e-mail. Savepoint + rollback."""
+    import base64
+    from odoo.exceptions import UserError
+    tech = env["res.users"].search([("login", "=", "tech01@sunpower.demo")])
+    with env.cr.savepoint(flush=False) as sp:
+        so = _confirmed_job(env, 3)
+        so.partner_id.email = "check.customer@example.com"
+        _dispatch(so)
+        task = so.tasks_ids.filtered("is_installation")
+        task.user_ids = tech
+        t = task.with_user(tech)
+        check(5, "Technician sees the job in My Jobs", t in env["project.task"].with_user(tech).search(
+            [("is_installation", "=", True), ("user_ids", "in", tech.id)]))
+        t.action_start_work()
+        refused = 0
+        for vals in [{}, {"chk_stands": True, "chk_panels": True, "chk_wiring": True,
+                          "chk_earthing": True, "chk_generation": True},
+                     {"install_photo_ids": [(0, 0, {"name": "p.png", "datas": base64.b64encode(b"x")})]},
+                     {"installation_kw_confirmed": 3}]:
+            t.write(vals)
+            try:
+                t.action_finish_work()
+            except UserError:
+                refused += 1
+        check(5, "Finish refused until checklist, photo, kW and signature", refused == 4, refused)
+        t.write({"customer_signature": base64.b64encode(b"sig"), "signed_by": "Check"})
+        t.action_finish_work()
+        check(5, "Technician (no e-mail of own) can finish the job", task.installation_state == "done")
+        lines = env["account.analytic.line"].search([("task_id", "=", task.id)])
+        check(5, "Hours logged per technician on the job", len(lines) == 1 and lines.amount < 0,
+              "%s line(s), cost %s" % (len(lines), sum(lines.mapped("amount"))))
+        msg = env["mail.message"].search([("model", "=", "project.task"), ("res_id", "=", task.id),
+                                          ("attachment_ids", "!=", False)], limit=1)
+        check(5, "Certificate e-mailed to customer with PDF attached", bool(msg),
+              msg.attachment_ids.mapped("name"))
+        so._solar_refresh_job_financials()
+        check(5, "Job moves to 'Installed' with labour cost", so.job_stage == "installed"
+              and so.job_labour_cost > 0, "%s / %s" % (so.job_stage, so.job_labour_cost))
         env.flush_all()
         sp.rollback()
     env.invalidate_all()

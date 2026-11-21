@@ -116,8 +116,19 @@ class ProjectTask(models.Model):
         template = self.env.ref("sunpower_solar.mail_template_installation_done",
                                 raise_if_not_found=False)
         for t in self:
+            t = t.sudo()
+            company = t.company_id or self.env.company
+            note = _("Installation completed and accepted by %s.",
+                     t.signed_by or t.partner_id.name)
             if template and t.partner_id.email:
-                t.message_post_with_source(template, subtype_xmlid="mail.mt_comment")
-            else:
-                t.message_post(body=_("Installation completed and accepted by %s.",
-                                      t.signed_by or t.partner_id.name))
+                try:
+                    # sent from the company, never from the technician's own address
+                    with self.env.cr.savepoint():
+                        t.message_post_with_source(
+                            template, subtype_xmlid="mail.mt_comment",
+                            author_id=company.partner_id.id,
+                            email_from=company.email_formatted or company.partner_id.email_formatted)
+                    continue
+                except Exception as e:  # never block job completion on e-mail
+                    note += " " + _("Certificate e-mail could not be sent: %s", e)
+            t.message_post(body=note, author_id=company.partner_id.id)

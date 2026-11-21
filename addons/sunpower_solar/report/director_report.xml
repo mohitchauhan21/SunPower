@@ -37,7 +37,7 @@
                                     <td class="text-end" t-out="'{:,.0f}'.format(j['material'])"/>
                                     <td class="text-end" t-out="'{:,.0f}'.format(j['labour'])"/>
                                     <td class="text-end" t-out="'{:,.0f}'.format(j['profit'])"/>
-                                    <td class="text-end" t-out="'%.1f%%' % j['margin']"/>
+                                    <td class="text-end"><t t-out="'%.1f' % j['margin']"/>%</td>
                                     <td t-out="j['pending']"/>
                                 </tr>
                             </tbody>

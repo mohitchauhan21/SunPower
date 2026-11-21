@@ -14,8 +14,8 @@
                             <tr><th>System installed</th><td><t t-out="task.installation_kw_confirmed"/> kW
                                 (<t t-out="dict(task.sale_order_id._fields['solar_system_type'].selection).get(task.sale_order_id.solar_system_type)"/>)</td></tr>
                             <tr><th>Generation at test</th><td><t t-out="task.generation_reading_kw"/> kW</td></tr>
-                            <tr><th>Work started</th><td t-field="task.site_start"/></tr>
-                            <tr><th>Work finished</th><td t-field="task.site_end"/></tr>
+                            <tr><th>Work started</th><td><span t-field="task.site_start"/></td></tr>
+                            <tr><th>Work finished</th><td><span t-field="task.site_end"/></td></tr>
                             <tr><th>Crew</th><td t-out="', '.join(task.user_ids.mapped('name'))"/></tr>
                         </table>
 
@@ -26,8 +26,8 @@
                                 <tr t-foreach="task.sale_order_id.warranty_ids" t-as="w">
                                     <td t-out="w.product_id.display_name"/>
                                     <td t-out="w.serial"/>
-                                    <td t-field="w.start_date"/>
-                                    <td t-field="w.end_date"/>
+                                    <td><span t-field="w.start_date"/></td>
+                                    <td><span t-field="w.end_date"/></td>
                                 </tr>
                             </tbody>
                         </table>

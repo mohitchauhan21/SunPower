@@ -120,6 +120,24 @@ class TestSolarFlow(TransactionCase):
         self.assertTrue(paid.invoice_id)
         self.assertEqual(paid.invoice_id.state, "posted")
 
+    def test_06_reports_render(self):
+        """Quote, installation certificate and director report all build."""
+        survey = self._approved_survey()
+        so = self._order(survey)
+        so.action_confirm()
+        self._deliver(so)
+        task = so.tasks_ids.filtered("is_installation")
+        task.write({"site_start": fields.Datetime.now(), "site_end": fields.Datetime.now(),
+                    "signed_by": "Test", "installation_kw_confirmed": 3})
+        Report = self.env["ir.actions.report"]
+        for xmlid, ids in [("sale.action_report_saleorder", so.ids),
+                           ("sunpower_solar.action_report_installation_certificate", task.ids)]:
+            html = Report._render_qweb_html(xmlid, ids)[0]
+            self.assertTrue(html)
+        wiz = self.env["solar.director.report"].create({"period": "month"})
+        html = Report._render_qweb_html("sunpower_solar.action_report_director", wiz.ids)[0]
+        self.assertIn(b"Profit by job", html)
+
     def test_05_no_dispatch_before_advance(self):
         self.env.company.solar_min_advance_pct = 30
         survey = self._approved_survey()
