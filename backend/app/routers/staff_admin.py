@@ -104,6 +104,9 @@ def summary(user=Depends(staff_only), db=Depends(get_db)):
         add("Surveys to approve", db.val("SELECT COUNT(*) FROM surveys WHERE state = 'done'"), "/app/surveys?state=done", "warn")
         add("Draft quotes to send", db.val("SELECT COUNT(*) FROM orders WHERE state = 'draft'"), "/app/orders?state=draft")
         add("Quotes awaiting customer", db.val("SELECT COUNT(*) FROM orders WHERE state = 'sent'"), "/app/orders?state=sent")
+        add("Installations to schedule", db.val("SELECT COUNT(*) FROM jobs j JOIN orders o ON o.id = j.order_id "
+                                                "WHERE j.state = 'planned' AND j.scheduled_at IS NULL AND o.state = 'sale'"),
+            "/app/orders?state=sale", "warn")
     if role in ("warehouse", "director"):
         add("Ready to dispatch", db.val("SELECT COUNT(*) FROM deliveries WHERE state = 'ready'"), "/app/dispatch?state=ready", "warn")
         add("Waiting for advance", db.val("SELECT COUNT(*) FROM deliveries WHERE state = 'waiting'"), "/app/dispatch?state=waiting")
@@ -175,8 +178,9 @@ def share_report(body: dict = Body(default={}), user=Depends(director_only), db=
 # ---------------------------------------------------------------- settings
 PUBLIC_SETTINGS = ("company_name", "company_phone", "company_email", "company_address", "company_gstin", "frontend_url",
                    "advance_pct", "quote_valid_days", "labour_rate", "quote_note", "smtp_enabled", "smtp_host", "smtp_port",
-                   "smtp_user", "smtp_from", "google_client_id", "razorpay_key_id", "test_payments", "ai_url")
-SECRET_SETTINGS = ("smtp_password", "google_client_secret", "razorpay_key_secret")
+                   "smtp_user", "smtp_from", "google_client_id", "razorpay_key_id", "test_payments", "ai_url",
+                   "payment_required")
+SECRET_SETTINGS = ("smtp_password", "google_client_secret", "razorpay_key_secret", "razorpay_webhook_secret")
 
 
 @router.get("/settings")
@@ -186,6 +190,7 @@ def get_settings(user=Depends(director_only), db=Depends(get_db)):
     out["mail"] = {s["state"]: s["n"] for s in db.q("SELECT state, COUNT(*) AS n FROM mail_queue GROUP BY state")}
     out["smtp_last_error"] = db.setting("smtp_last_error") or ""
     out["google_redirect_uri"] = rules.frontend(db) + "/api/auth/google/callback"
+    out["razorpay_webhook_url"] = rules.frontend(db) + "/api/sunpower/razorpay/webhook"
     return out
 
 
@@ -221,22 +226,6 @@ def put_settings(body: dict = Body(default={}), user=Depends(director_only), db=
 def send_mail_now(user=Depends(director_only)):
     sent, failed = mailer.send_pending()
     return {"ok": True, "sent": sent, "failed": failed}
-
-
-@router.patch("/products/{pid}")
-def update_product(pid: int, body: dict = Body(default={}), user=Depends(director_only), db=Depends(get_db)):
-    found(db.get("products", pid), "Product not found.")
-    vals = {}
-    for k in ("price", "cost", "warranty_months", "min_qty", "tax_rate"):
-        if k in body:
-            try:
-                vals[k] = max(rules.as_float(body[k], k), 0)
-            except rules.RuleError:
-                raise HTTPException(400, "%s must be a number." % k)
-    if rules.text(body.get("name")).strip():
-        vals["name"] = rules.text(body.get("name")).strip()[:120]
-    db.update("products", pid, vals)
-    return {"ok": True}
 
 
 @router.get("/kits/{pid}")
@@ -491,7 +480,7 @@ def today_view(user=Depends(staff_only), db=Depends(get_db)):
         ]
         # Each card links to its list with the same filter, so the counts match (e.g. 3 here = "Scheduled 3" there).
         group("jobs", "My installations", "Start on site, then checklist, photos and the customer's signature.", mine_jobs, "/app/jobs?state=open")
-        group("visits", "My roof surveys", "Measure the roof and mark the visit done.", visits(mine=True), "/app/surveys?state=scheduled")
+        group("visits", "My roof surveys", "Fill in the site survey and submit the visit.", visits(mine=True), "/app/surveys?state=scheduled")
         group("repairs", "My repairs", "Fix, add parts and hours, then ask the customer to confirm.",
               tickets("t.stage NOT IN ('closed','cancel','awaiting')", mine=True), "/app/service?stage=active")
     elif role == "support":

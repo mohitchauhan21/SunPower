@@ -499,11 +499,237 @@ def schedule_survey(db, lead, technician_id, survey_date, actor_id, slot=None, a
 
 
 # Technician (or Sales) marks the visit done; needs at least the roof direction and area.
-def survey_mark_done(db, survey, actor_id):
+# ------------------------------------------------------------ site survey form
+# key: (section, kind, options or (min, max), required). Kinds: choice, multi, num, bool, text.
+# Contact details, address, bill and consumer number already live on the enquiry, so they're not repeated.
+SURVEY_FIELDS_SPEC = {
+    # 1 Roof
+    "property_type": ("roof", "choice", ["house", "apartment", "commercial", "industrial"], True),
+    "ownership": ("roof", "choice", ["owned", "rented", "society"], True),
+    "roof_condition": ("roof", "choice", ["good", "average", "poor"], True),
+    "roof_azimuth_deg": ("roof", "num", (0, 360), False),   # exact facing, degrees from north (90 = east, 180 = south)
+    "roof_length_m": ("roof", "num", (0, 500), False),
+    "roof_width_m": ("roof", "num", (0, 500), False),
+    "roof_height_m": ("roof", "num", (0, 200), True),
+    "parapet_height_m": ("roof", "num", (0, 5), False),
+    "roof_defects": ("roof", "multi", ["cracks", "leakage", "dampness", "water_stagnation", "rusted_sheets", "loose_tiles"], False),
+    "obstacles": ("roof", "multi", ["water_tank", "staircase_room", "ac_units", "dish_antenna", "solar_heater", "chimney", "skylight"], False),
+    # 2 Shade
+    "shade_morning": ("shade", "bool", None, False),
+    "shade_midday": ("shade", "bool", None, False),
+    "shade_afternoon": ("shade", "bool", None, False),
+    "shade_sources": ("shade", "multi", ["trees", "buildings", "water_tank", "walls", "poles", "towers"], False),
+    "future_shading": ("shade", "bool", None, False),
+    # 3 Electrical
+    "discom": ("electrical", "text", 80, False),
+    "consumer_no": ("electrical", "text", 40, False),
+    "phase": ("electrical", "choice", ["single", "three"], True),
+    "sanctioned_load_kw": ("electrical", "num", (0, 1000), True),
+    "meter_type": ("electrical", "choice", ["digital", "smart", "prepaid", "electromechanical"], False),
+    "net_meter_space": ("electrical", "bool", None, True),
+    "db_condition": ("electrical", "choice", ["good", "needs_upgrade"], True),
+    "db_spare_way": ("electrical", "bool", None, True),
+    "existing_earth_pits": ("electrical", "num", (0, 20), False),
+    "earth_resistance_ohm": ("electrical", "num", (0, 1000), False),
+    "lightning_protection": ("electrical", "bool", None, False),
+    "existing_equipment": ("electrical", "multi", ["home_inverter_ups", "generator", "existing_solar", "ev_charger", "solar_water_heater"], False),
+    # 4 Cabling & mounting (these become parts on the quote)
+    "inverter_location": ("cabling", "choice", ["indoor_wall", "outdoor_wall", "utility_room"], True),
+    "inverter_conditions_ok": ("cabling", "bool", None, False),
+    "internet": ("cabling", "choice", ["wifi", "mobile", "ethernet", "none"], False),
+    "dc_cable_m": ("cabling", "num", (1, 300), True),
+    "ac_cable_m": ("cabling", "num", (1, 300), True),
+    "earth_cable_m": ("cabling", "num", (1, 300), True),
+    "conduit_needed": ("cabling", "bool", None, False),
+    "mounting_type": ("cabling", "choice", ["rcc_anchored", "ballasted", "metal_clamp", "elevated"], True),
+    "structure_height_m": ("cabling", "num", (0, 10), False),
+    "wind_exposure": ("cabling", "choice", ["low", "medium", "high"], False),
+    "waterproofing_needed": ("cabling", "bool", None, False),
+    # 5 Battery (off-grid only)
+    "backup_hours": ("battery", "num", (0, 48), False),
+    "essential_load_w": ("battery", "num", (0, 50000), False),
+    "battery_location_ok": ("battery", "bool", None, False),
+    # 6 Site & safety
+    "access": ("site", "choice", ["stairs", "ladder", "lift", "crane_needed"], True),
+    "material_route_ok": ("site", "bool", None, False),
+    "hazards": ("site", "multi", ["no_edge_protection", "fragile_roof", "overhead_lines", "slippery_surface"], False),
+    "dust": ("site", "choice", ["low", "medium", "high"], False),
+    "corrosion_risk": ("site", "choice", ["low", "medium", "high"], False),
+    "monkey_bird_activity": ("site", "bool", None, False),
+    # 8 Summary
+    "structural_review": ("summary", "bool", None, False),
+    "civil_work": ("summary", "bool", None, False),
+    "electrical_work": ("summary", "bool", None, False),
+    "customer_present": ("summary", "bool", None, False),
+    "declaration": ("summary", "bool", None, True),
+}
+SURVEY_SECTIONS = [("roof", "Roof"), ("shade", "Shade"), ("electrical", "Electrical"), ("cabling", "Cabling & mounting"),
+                   ("battery", "Battery"), ("site", "Site & safety"), ("summary", "Issues & summary")]
+# Photos are taken while filling the section they prove: (category, label, required, section).
+SURVEY_PHOTOS = [("roof", "Whole roof", True, "roof"), ("shadow_free", "Shadow-free area", True, "roof"),
+                 ("meter", "Meter + nameplate", True, "electrical"), ("db", "Distribution board", True, "electrical"),
+                 ("earthing", "Earth pit", False, "electrical"), ("inverter_spot", "Inverter location", True, "cabling"),
+                 ("cable_route", "Cable route", False, "cabling"), ("access", "Roof access", False, "site"),
+                 ("issue", "Problem found", False, "summary")]
+ISSUE_TYPES = ["weak_structure", "insufficient_area", "heavy_shading", "roof_damage", "no_inverter_spot", "electrical_upgrade",
+               "no_earthing", "cable_route", "meter_incompatible", "no_permission", "missing_documents", "unsafe_access", "other"]
+SURVEY_RESULTS = [("feasible", "Feasible"), ("conditional", "Feasible with conditions"), ("not_feasible", "Not feasible")]
+
+
+def survey_details(survey):
+    try:
+        return json.loads(survey.get("details") or "{}")
+    except (TypeError, ValueError):
+        return {}
+
+
+def clean_survey_details(raw, old):
+    """Keep only known fields with valid values; issues are a short list of typed rows."""
+    out = dict(old)
+    for key, (_sec, kind, opts, _req) in SURVEY_FIELDS_SPEC.items():
+        if key not in raw:
+            continue
+        v = raw[key]
+        if v in (None, ""):
+            out.pop(key, None)
+            continue
+        if kind == "choice":
+            if v not in opts:
+                raise RuleError("Choose a valid option for %s." % _field_label(key))
+        elif kind == "multi":
+            if not isinstance(v, list) or any(x not in opts for x in v):
+                raise RuleError("Invalid choices for %s." % _field_label(key))
+        elif kind == "num":
+            try:
+                v = float(v)
+            except (TypeError, ValueError):
+                raise RuleError("%s must be a number." % _field_label(key))
+            if v != v or not opts[0] <= v <= opts[1]:
+                raise RuleError("%s must be between %g and %g." % (_field_label(key), opts[0], opts[1]))
+        elif kind == "bool":
+            v = bool(v)
+        elif kind == "text":
+            v = str(v).strip()[:opts]
+        out[key] = v
+    if "issues" in raw:
+        issues = []
+        for i in (raw.get("issues") or [])[:20]:
+            if not isinstance(i, dict) or i.get("type") not in ISSUE_TYPES or i.get("severity") not in ("critical", "high", "medium", "low"):
+                raise RuleError("Each problem needs a type and a severity.")
+            issues.append({"type": i["type"], "severity": i["severity"], "note": str(i.get("note") or "").strip()[:300]})
+        out["issues"] = issues
+    return out
+
+
+# Names as the technician sees them on the form (anything not listed is spelled out from its key).
+FIELD_LABELS = {"roof_height_m": "Height from ground (m)", "dc_cable_m": "DC cable run (m)", "ac_cable_m": "AC cable run (m)",
+                "earth_cable_m": "Earthing run (m)", "earth_resistance_ohm": "Earth resistance (ohm)",
+                "roof_azimuth_deg": "Facing (degrees)", "backup_hours": "Backup needed (hours)",
+                "essential_load_w": "Essential load (W)", "phase": "Supply", "db_condition": "Distribution board",
+                "db_spare_way": "Spare way in DB", "access": "Roof access", "property_type": "Property"}
+
+
+def _field_label(key):
+    """roof_height_m -> "Height from ground (m)" for messages."""
+    if key in FIELD_LABELS:
+        return FIELD_LABELS[key]
+    for suf, unit in (("_m", " (m)"), ("_kw", " (kW)"), ("_ohm", " (ohm)"), ("_w", " (W)")):
+        if key.endswith(suf):
+            return key[:-len(suf)].replace("_", " ").capitalize() + unit
+    return key.replace("_", " ").capitalize()
+
+
+def survey_missing(db, survey, system_type=None):
+    """What still has to be filled in before the visit can be submitted: [(section, label, key)]."""
+    d = survey_details(survey)
+    missing = []
+    for col, label in (("roof_type", "Roof type"), ("roof_direction", "Roof facing"), ("usable_area_sqft", "Shadow-free area"),
+                       ("recommended_kw", "Recommended kW")):
+        if not survey.get(col):
+            missing.append(("roof" if col != "recommended_kw" else "summary", label, col))
+    for key, (sec, kind, _o, req) in SURVEY_FIELDS_SPEC.items():
+        if req and (key not in d or (kind == "bool" and sec == "summary" and not d[key])):
+            missing.append((sec, _field_label(key), key))
+    if (system_type or "") == "off_grid":
+        for key in ("backup_hours", "essential_load_w"):
+            if key not in d:
+                missing.append(("battery", _field_label(key), key))
+    have = {r["note"] for r in db.q("SELECT note FROM attachments WHERE owner_type = 'survey' AND owner_id = ?", survey["id"])}
+    for cat, label, req, sec in SURVEY_PHOTOS:
+        if req and cat not in have:
+            missing.append((sec, "Photo: %s" % label, "photo_" + cat))
+    if not survey.get("result"):
+        missing.append(("summary", "Survey result", "result"))
+    return missing
+
+
+def survey_parts(db, survey, kit):
+    """Extra parts this roof needs beyond the standard package: [(product, qty, reason)].
+    Cable runs measured on site replace the package's standard lengths when they are longer."""
+    d = survey_details(survey)
+    if not d:
+        return []
+    std = {r["code"]: r["qty"] for r in db.q("SELECT p.code, kl.qty FROM kit_lines kl JOIN products p ON p.id = kl.product_id "
+                                            "WHERE kl.kit_id = ?", kit["id"])}
+    out = []
+
+    def add(code, qty, reason):
+        p = db.one("SELECT * FROM products WHERE code = ? AND active = 1", code)
+        qty = round(qty)
+        if p and qty > 0:
+            out.append((p, qty, reason))
+    if d.get("dc_cable_m"):   # + and − runs, 10% slack
+        add("CBL-DC4", d["dc_cable_m"] * 2 * 1.1 - std.get("CBL-DC4", 0), "DC run %g m" % d["dc_cable_m"])
+    if d.get("ac_cable_m"):
+        add("CBL-AC4", d["ac_cable_m"] * 1.1 - std.get("CBL-AC4", 0), "AC run %g m" % d["ac_cable_m"])
+    if d.get("earth_cable_m"):
+        add("ERT-CBL", d["earth_cable_m"] * 1.1, "earthing run %g m" % d["earth_cable_m"])
+    if d.get("conduit_needed"):
+        add("CND-25", ((d.get("dc_cable_m") or 0) + (d.get("ac_cable_m") or 0)) * 1.1, "conduit along cable routes")
+    if d.get("mounting_type") == "elevated":
+        add("STR-ELV", kit["kw"], "elevated structure%s" % (" %g m" % d["structure_height_m"] if d.get("structure_height_m") else ""))
+    if d.get("mounting_type") == "metal_clamp":
+        add("CLMP-MTL", kit["kw"], "metal-sheet roof")
+    if d.get("waterproofing_needed") or d.get("mounting_type") == "rcc_anchored":
+        add("WPF-KIT", 1, "anchors on RCC roof")
+    return out
+
+
+def check_survey_size(db, survey, system_type=None):
+    """The recommended size must be one we sell and must fit the shadow-free area (about 100 sq ft per kW)."""
+    kw = survey.get("recommended_kw") or 0
+    area = survey.get("usable_area_sqft") or 0
+    if area and area < 100:
+        raise RuleError("The shadow-free area is only %g sq ft, too small for our smallest (1 kW) system, which needs "
+                        "about 100 sq ft. Re-measure the roof, or set the survey result to Not feasible." % area)
+    from .catalog import MAX_PACKAGE_KW, ensure_package
+    if not 1 <= kw <= MAX_PACKAGE_KW:
+        raise RuleError("This survey recommends %g kW. We quote rooftop systems from 1 to %d kW. Change Recommended size "
+                        "(Issues & summary tab)." % (kw, MAX_PACKAGE_KW))
+    if not ensure_package(db, kw, system_type):   # sizes without a package yet get one, built from the same parts
+        raise RuleError("No package could be prepared for %g kW." % kw)
+    if area and kw > area / 100.0 + 0.01:
+        raise RuleError("The shadow-free area (%g sq ft) fits about %g kW, not %g kW. Lower Recommended size "
+                        "or re-measure the roof." % (area, round(area / 100.0, 1), kw))
+
+
+def survey_mark_done(db, survey, actor_id, strict=False):
+    """strict (the technician's Submit): every required field and photo must be in."""
     if survey["state"] != "scheduled":
         raise RuleError("Only scheduled surveys can be marked visited.")
     if not (survey["roof_direction"] and survey["usable_area_sqft"]):
         raise RuleError("Record at least the roof direction and shadow-free area first.")
+    if strict:
+        lead = db.get("leads", survey["lead_id"]) or {}
+        missing = survey_missing(db, survey, lead.get("system_type"))
+        if missing:
+            raise RuleError("Still to fill in: %s." % ", ".join(m[1] for m in missing[:8]) + (" …" if len(missing) > 8 else ""))
+        if survey.get("result") != "not_feasible":
+            check_survey_size(db, survey, lead.get("system_type"))
+        if survey.get("result") == "not_feasible":
+            db.update("surveys", survey["id"], {"state": "done"})
+            db.note("survey", survey["id"], "Site visited: NOT feasible. Sales to contact the customer.", actor_id)
+            return
     db.update("surveys", survey["id"], {"state": "done"})
     db.note("survey", survey["id"], "Site visited.", actor_id)
 
@@ -543,16 +769,19 @@ def package_for(db, kw, system_type):
 
 # Turn an enquiry with an approved survey into a draft quotation:
 # the matching package + installation (kW x price per kW). Returns the order id.
-def quote_from_survey(db, survey, actor):
+def quote_from_survey(db, survey, actor, strict=False):
     """The technician (or Sales) turns a visited survey into the customer's quote. Building the
     quote approves the survey's recommended size; prices come from the catalogue."""
+    if survey.get("result") == "not_feasible":
+        raise RuleError("The survey says the site is not feasible, so no quote can be built. Submit the visit instead.")
     if survey["state"] == "scheduled":
-        survey_mark_done(db, survey, actor["id"])
+        survey_mark_done(db, survey, actor["id"], strict=strict)
         survey = db.get("surveys", survey["id"])
     if survey["state"] not in ("done", "approved"):
         raise RuleError("Only a visited survey can be quoted.")
     if not survey["recommended_kw"]:
         raise RuleError("Set the recommended system size (kW) first.")
+    check_survey_size(db, survey, db.val("SELECT system_type FROM leads WHERE id = ?", survey["lead_id"]))
     if db.val("SELECT COUNT(*) FROM orders WHERE lead_id = ? AND state != 'cancel'", survey["lead_id"]):
         raise RuleError("This customer already has a quotation. Open it from the enquiry.")
     if survey["state"] == "done":
@@ -561,6 +790,7 @@ def quote_from_survey(db, survey, actor):
         db.note("survey", survey["id"], "Survey completed and quoted (%s kW)." % survey["recommended_kw"], actor["id"])
     oid = create_quote(db, db.get("leads", survey["lead_id"]), actor["id"])
     db.update("orders", oid, {"created_by": actor["id"]})
+    send_quote(db, db.get("orders", oid), actor["id"])   # straight to the customer for confirmation
     return oid
 
 
@@ -618,6 +848,9 @@ def create_quote(db, lead, actor_id, kw=None, system_type=None):
                               "price_unit": kit["price"], "tax_rate": GST_GOODS})
     db.insert("order_lines", {"order_id": oid, "product_id": install["id"], "description": install["name"],
                               "qty": kit["kw"], "price_unit": install["price"], "tax_rate": GST_SERVICE})
+    for part, qty, reason in survey_parts(db, survey, kit):   # what this particular roof needs on top
+        db.insert("order_lines", {"order_id": oid, "product_id": part["id"], "description": "%s (site: %s)" % (part["name"], reason),
+                                  "qty": qty, "price_unit": part["price"], "tax_rate": part["tax_rate"]})
     recompute_order(db, oid)
     db.update("leads", lead["id"], {"stage": "quoted"})
     db.note("lead", lead["id"], "Quotation prepared.", actor_id)
@@ -628,6 +861,14 @@ def create_quote(db, lead, actor_id, kw=None, system_type=None):
 # Yearly generation and payback for an order: asks PVGIS (a free EU solar calculator)
 # for the surveyed roof; if that fails (no internet), uses 1450 kWh per kW per year.
 # httpx is the HTTP client library used to call other websites.
+def _pvgis_aspect(survey, by_direction):
+    """PVGIS wants 0 = south, -90 = east, 90 = west. Use the measured angle when the survey has one."""
+    az = survey_details(survey or {}).get("roof_azimuth_deg") if survey else None
+    if az is not None:
+        return round(float(az) % 360 - 180)
+    return by_direction.get((survey or {}).get("roof_direction") or "S", 0)
+
+
 def generation_estimate(db, order):
     """Yearly generation from PVGIS (EU JRC) for the surveyed roof, with an
     offline rule of thumb."""
@@ -640,7 +881,7 @@ def generation_estimate(db, order):
     try:
         r = httpx.get("https://re.jrc.ec.europa.eu/api/v5_2/PVcalc", timeout=12, params={
             "lat": lat, "lon": lon, "peakpower": kw, "loss": 14, "angle": (survey or {}).get("roof_tilt") or 20,
-            "aspect": aspect.get((survey or {}).get("roof_direction") or "S", 0), "outputformat": "json"})
+            "aspect": _pvgis_aspect(survey, aspect), "outputformat": "json"})
         r.raise_for_status()
         kwh = r.json()["outputs"]["totals"]["fixed"]["E_y"]
         source = "PVGIS (EU JRC) for %.4f, %.4f" % (lat, lon)
@@ -728,22 +969,18 @@ def confirm_order(db, order, actor_id=None, invite=True, accepted_by=None):
     # delivery order for the warehouse (kit exploded into components)
     did = db.insert("deliveries", {"ref": db.next_ref("delivery", "DEL-"), "order_id": order["id"],
                                    "state": "waiting", "created_at": now()})
-    for line in db.q("SELECT ol.* FROM order_lines ol JOIN products p ON p.id = ol.product_id "
-                     "WHERE ol.order_id = ? AND p.is_service = 0", order["id"]):
-        prod = db.get("products", line["product_id"])
-        if prod["is_kit"]:
-            for kl in db.q("SELECT * FROM kit_lines WHERE kit_id = ?", prod["id"]):
-                db.insert("delivery_lines", {"delivery_id": did, "product_id": kl["product_id"],
-                                             "qty": kl["qty"] * line["qty"]})
-        else:
-            db.insert("delivery_lines", {"delivery_id": did, "product_id": prod["id"], "qty": line["qty"]})
+    for pid, qty in order_components(db, order["id"]):
+        db.insert("delivery_lines", {"delivery_id": did, "product_id": pid, "qty": qty})
     # installation job on the crew schedule
-    when = (datetime.now() + timedelta(days=7)).replace(hour=10, minute=0, second=0).strftime("%Y-%m-%d %H:%M:%S")
+    when = None   # installation date: pending until Sales schedules it (schedule_installation)
     label_type = "On-Grid" if order["system_type"] == "on_grid" else "Off-Grid"
     jid = db.insert("jobs", {"ref": db.next_ref("job", "JOB-"), "order_id": order["id"],
                              "customer_id": order["customer_id"], "kw_planned": order["kw"],
                              "scheduled_at": when, "state": "planned", "created_at": now(),
                              "notes": "Install %g kW %s – %s" % (order["kw"], label_type, cust["name"])})
+    surveyor = db.val("SELECT technician_id FROM surveys WHERE id = ?", order["survey_id"]) if order["survey_id"] else None
+    if surveyor and is_active_role(db, surveyor, ("technician",)):   # the technician who surveyed the roof installs it
+        db.insert("job_techs", {"job_id": jid, "user_id": surveyor})
     # subsidy paperwork
     lead = db.get("leads", order["lead_id"]) if order["lead_id"] else None
     if lead and lead["subsidy_requested"] and order["system_type"] == "on_grid":  # PM Surya Ghar: grid-connected only
@@ -801,6 +1038,12 @@ def advance_needed(db, order):
 
 
 # How much of the advance is still missing (never below 0).
+def payment_required(db):
+    """Settings: payment_required. While "0" the payment step is skipped: the customer's acceptance
+    confirms the order and the warehouse can ship without an advance."""
+    return str(db.setting("payment_required", "0")) == "1"
+
+
 def advance_due(db, order):
     return max(r2(advance_needed(db, order) - order_paid(db, order["id"])), 0)
 
@@ -815,9 +1058,36 @@ def _split_tax(order, amount):
 # Create an invoice of `kind` (advance / final / service) for `amount` including GST.
 def create_invoice(db, order, kind, amount):
     untaxed, tax = _split_tax(order, amount)
-    return db.insert("invoices", {"ref": db.next_ref("invoice", "INV-"), "order_id": order["id"],
-                                  "customer_id": order["customer_id"], "kind": kind, "amount_untaxed": untaxed,
-                                  "amount_tax": tax, "amount_total": r2(amount), "date": today()})
+    iid = db.insert("invoices", {"ref": db.next_ref("invoice", "INV-"), "order_id": order["id"],
+                                 "customer_id": order["customer_id"], "kind": kind, "amount_untaxed": untaxed,
+                                 "amount_tax": tax, "amount_total": r2(amount), "date": today()})
+    return iid
+
+
+def invoice_url(db, inv):
+    """Link the customer opens (and can print / save as PDF). Order invoices carry the order's secret
+    token so they open from an email; service invoices open from the signed-in portal."""
+    token = db.val("SELECT access_token FROM orders WHERE id = ?", inv["order_id"]) if inv.get("order_id") else None
+    return "/print/invoice/%s%s" % (inv["id"], "?token=%s" % token if token else "")
+
+
+def email_invoice(db, iid, note=None):
+    """Queue the invoice email to the customer (only when they have an email address)."""
+    inv = db.get("invoices", iid)
+    cust = db.get("customers", inv["customer_id"]) if inv else None
+    if not cust or not cust.get("email"):
+        return
+    balance = r2(inv["amount_total"] - inv["amount_paid"])
+    lines = ["Hi %s," % cust["name"],
+             "Your %s %s for %s is ready." % (INVOICE_KIND.get(inv["kind"], "invoice").lower(), inv["ref"], money(inv["amount_total"])),
+             ("It is fully paid. Thank you!" if balance <= 0.5 else "Amount still to pay: %s." % money(balance))]
+    if note:
+        lines.append(note)
+    html = mailer.branded(db, "Invoice %s" % inv["ref"], lines, "View invoice", frontend(db) + invoice_url(db, inv))
+    mailer.queue(db, cust["email"], "Invoice %s – %s" % (inv["ref"], db.setting("company_name") or "SunPower"), html)
+
+
+INVOICE_KIND = {"advance": "Advance receipt", "final": "Tax invoice", "service": "Service invoice"}
 
 
 # Invoice whatever part of the order hasn't been invoiced yet.
@@ -831,6 +1101,7 @@ def final_invoice(db, order, actor_id):
         raise RuleError("The full order value is already invoiced.")
     iid = create_invoice(db, order, "final", rest)
     allocate_payments(db, order["id"])
+    email_invoice(db, iid, "You can pay the balance online from your SunPower account.")
     db.note("order", order["id"], "Final invoice %s issued for %s." % (
         db.val("SELECT ref FROM invoices WHERE id = ?", iid), money(rest)), actor_id)
     return iid
@@ -874,9 +1145,17 @@ def record_payment(db, order, amount, method, actor_id=None, provider_ref=None, 
         order = db.get("orders", order["id"])
         open_amount = r2(db.val("SELECT COALESCE(SUM(amount_total - amount_paid), 0) FROM invoices "
                                 "WHERE order_id = ? AND state = 'posted' AND kind != 'service'", order["id"]))
+    new_invoice = None
     if amount > open_amount + 0.5:
-        create_invoice(db, order, "advance" if purpose == "advance" else "final", r2(amount - open_amount))
+        new_invoice = create_invoice(db, order, "advance" if purpose == "advance" else "final", r2(amount - open_amount))
     allocate_payments(db, order["id"])
+    if new_invoice:
+        email_invoice(db, new_invoice, "We received your payment of %s. Thank you!" % money(amount))
+    else:   # paid an open invoice: send its updated copy
+        last = db.val("SELECT id FROM invoices WHERE order_id = ? AND state != 'cancel' AND kind != 'service' ORDER BY id DESC LIMIT 1",
+                      order["id"])
+        if last:
+            email_invoice(db, last, "We received your payment of %s. Thank you!" % money(amount))
     db.note("order", order["id"], "Payment of %s received (%s)." % (money(amount), method), actor_id)
     if order["state"] in ("draft", "sent") and order_paid(db, order["id"]) + 0.5 >= advance_needed(db, order):  # advance paid on a quote -> confirm the order
         confirm_order(db, order, actor_id, accepted_by=order.get("accepted_by"))
@@ -890,7 +1169,7 @@ def record_payment(db, order, amount, method, actor_id=None, provider_ref=None, 
 # A delivery is "ready" when the advance is fully paid, otherwise "waiting".
 def refresh_delivery_state(db, order_id):
     order = db.get("orders", order_id)
-    ready = advance_due(db, order) == 0
+    ready = advance_due(db, order) == 0 or not payment_required(db)
     db.exec("UPDATE deliveries SET state = ? WHERE order_id = ? AND state IN ('waiting', 'ready')",
             "ready" if ready else "waiting", order_id)
 
@@ -920,8 +1199,8 @@ def receive_stock(db, product, qty, serials, actor_id, note=None):
 # a serial for every tracked unit. Then takes the stock out and starts a warranty
 # for every delivered serial/batch. Returns the list of serials whose warranty started.
 def validate_delivery(db, delivery, serials_by_line, actor, override=False):
-    """Dispatch: advance paid, stock available, a serial for every tracked unit.
-    Starts the warranty of every delivered serial/lot."""
+    """Dispatch: advance paid (when payments are on), stock available, the unique serial / batch of
+    every tracked unit. Warranties start later, when the installation is completed (job_finish)."""
     if delivery["state"] in ("done", "delivered"):
         raise RuleError("Already shipped.")
     order = db.get("orders", delivery["order_id"])
@@ -929,7 +1208,7 @@ def validate_delivery(db, delivery, serials_by_line, actor, override=False):
         raise RuleError("%s is not a confirmed order." % order["ref"])
     if not claim(db, "deliveries", delivery["id"], ("waiting", "ready", "packed"), "done"):
         raise RuleError("This kit was just shipped by someone else.")
-    due = advance_due(db, order)
+    due = advance_due(db, order) if payment_required(db) else 0
     if due > 0 and not (override and actor["role"] == "director"):  # only the Director may dispatch without the advance
         raise RuleError("%s cannot be dispatched yet: %s%% advance (%s) is required, %s received so far." % (
             order["ref"], db.setting("advance_pct"), money(advance_needed(db, order)), money(order_paid(db, order["id"]))))
@@ -965,18 +1244,11 @@ def validate_delivery(db, delivery, serials_by_line, actor, override=False):
                 sid = db.insert("serials", {"name": name, "product_id": l["product_id"], "state": "delivered",
                                             "delivery_id": delivery["id"], "customer_id": order["customer_id"],
                                             "order_id": order["id"], "created_at": now()})
-            if l["warranty_months"] and not db.one("SELECT id FROM warranties WHERE serial_id = ? AND customer_id = ?",
-                                                   sid, order["customer_id"]):
-                end = add_months(date.fromisoformat(start), l["warranty_months"]).isoformat()
-                db.insert("warranties", {"serial_id": sid, "product_id": l["product_id"],
-                                         "customer_id": order["customer_id"], "order_id": order["id"],
-                                         "delivery_id": delivery["id"], "start_date": start,
-                                         "months": l["warranty_months"], "end_date": end})
-                started.append(name)
+            started.append(name)
     db.update("deliveries", delivery["id"], {"state": "done", "date_done": now(), "done_by": actor["id"]})
     msg = "Kit dispatched."
     if started:
-        msg += " Warranty started for %d serial/lot numbers: %s." % (len(started), ", ".join(started))
+        msg += " Serial / batch numbers: %s. Their warranty starts when the installation is completed." % ", ".join(started)
     db.note("delivery", delivery["id"], msg, actor["id"])
     db.note("order", order["id"], msg, actor["id"])
     return started
@@ -1003,6 +1275,90 @@ def deliver_delivery(db, delivery, actor, note=None):
     db.note("order", delivery["order_id"], msg, actor["id"])
 
 
+def components_of(db, product_id, qty):
+    """[(product_id, qty)] a line really takes from the shelves: a package becomes its components,
+    services take nothing, anything else is itself."""
+    prod = db.get("products", product_id)
+    if not prod or prod["is_service"]:
+        return []
+    if prod["is_kit"]:
+        return [(kl["product_id"], kl["qty"] * qty) for kl in db.q("SELECT * FROM kit_lines WHERE kit_id = ?", product_id)]
+    return [(product_id, qty)]
+
+
+def order_components(db, order_id):
+    out = []
+    for line in db.q("SELECT product_id, qty FROM order_lines WHERE order_id = ? AND product_id IS NOT NULL", order_id):
+        out += components_of(db, line["product_id"], line["qty"])
+    return out
+
+
+def survey_demand(db):
+    """What visited surveys will need before any order is confirmed (the earliest demand tier).
+    Uses the draft quote when there is one (it may have been edited), else the package for the
+    recommended size plus the parts the survey measured. Confirmed orders are counted by their delivery instead."""
+    rows = db.q("SELECT s.*, l.contact_name, l.city, l.ref AS lead_ref, l.system_type, l.requested_kw, u.name AS technician "
+                "FROM surveys s JOIN leads l ON l.id = s.lead_id LEFT JOIN users u ON u.id = s.technician_id "
+                "WHERE s.state IN ('done', 'approved') AND COALESCE(s.result, '') != 'not_feasible' AND l.stage != 'lost' "
+                "AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.lead_id = l.id AND o.state = 'sale') ORDER BY s.id")
+    out = []
+    for s in rows:
+        quote = db.one("SELECT id, ref FROM orders WHERE lead_id = ? AND state IN ('draft', 'sent') ORDER BY id DESC LIMIT 1",
+                       s["lead_id"])
+        items, problem = {}, None
+        if quote:
+            parts = order_components(db, quote["id"])
+        else:
+            kit = package_for(db, s["recommended_kw"] or s["requested_kw"], s["system_type"])
+            if not kit:
+                problem = "No package for %s kW" % (s["recommended_kw"] or s["requested_kw"] or "?")
+                parts = []
+            else:
+                parts = components_of(db, kit["id"], 1) + [(p["id"], q) for p, q, _r in survey_parts(db, s, kit)]
+        for pid, q in parts:
+            items[pid] = items.get(pid, 0) + q
+        out.append({"survey_id": s["id"], "ref": s["ref"], "lead_ref": s["lead_ref"], "customer": s["contact_name"],
+                    "city": s["city"], "kw": s["recommended_kw"], "system_type": s["system_type"], "state": s["state"],
+                    "technician": s["technician"], "quote": quote, "problem": problem, "items": items})
+    return out
+
+
+def adjust_stock(db, product, counted, reason, actor_id):
+    """Correct the count after a stock check (damage, loss, miscount). Serial-tracked items are
+    corrected unit by unit instead (scrap_serial), so every serial stays accounted for."""
+    if product["is_kit"] or product["is_service"]:
+        raise RuleError("Packages and services have no stock of their own.")
+    if product["tracking"] == "serial":
+        raise RuleError("For serial-numbered items, remove the exact unit from the serial list instead.")
+    counted = as_float(counted, "counted quantity")
+    if counted < 0:
+        raise RuleError("The count can't be below zero.")
+    reason = text(reason).strip()[:200]
+    if not reason:
+        raise RuleError("Say why the stock is being corrected.")
+    change = counted - product["qty_on_hand"]
+    if not change:
+        raise RuleError("That's already the stock on hand.")
+    db.update("products", product["id"], {"qty_on_hand": counted})
+    db.insert("stock_moves", {"product_id": product["id"], "qty": change, "kind": "adjust", "note": reason,
+                              "user_id": actor_id, "date": now()})
+    return change
+
+
+def scrap_serial(db, serial, reason, actor_id):
+    """Take one serial-numbered unit out of stock (damaged, lost, returned to supplier)."""
+    if serial["state"] != "in_stock":
+        raise RuleError("Only units still in the warehouse can be removed.")
+    reason = text(reason).strip()[:200]
+    if not reason:
+        raise RuleError("Say why this unit is being removed.")
+    if not claim(db, "serials", serial["id"], ("in_stock",), "scrapped"):
+        raise RuleError("This unit was just changed by someone else.")
+    db.exec("UPDATE products SET qty_on_hand = MAX(qty_on_hand - 1, 0) WHERE id = ?", serial["product_id"])
+    db.insert("stock_moves", {"product_id": serial["product_id"], "qty": -1, "kind": "adjust",
+                              "note": "Serial %s removed: %s" % (serial["name"], reason), "user_id": actor_id, "date": now()})
+
+
 def reserved_stock(db):
     """{product_id: qty} held for paid orders not yet shipped (ready or packed)."""
     return {r["product_id"]: r["q"] for r in db.q(
@@ -1019,11 +1375,41 @@ def unpaid_demand(db):
 
 # --------------------------------------------------------------------- jobs
 # Technician starts the installation on site.
+def schedule_installation(db, job, when, actor):
+    """Sales (or the Director) sets or moves the installation date of a job that hasn't started."""
+    if job["state"] != "planned":
+        raise RuleError("This installation has already started, so its date can't change.")
+    when = as_local_datetime(when, "installation date")
+    if not when:
+        raise RuleError("Choose the installation date and time.")
+    if when[:10] < today():
+        raise RuleError("The installation can't be scheduled in the past.")
+    first = not job["scheduled_at"]
+    db.update("jobs", job["id"], {"scheduled_at": when})
+    msg = "Installation %s for %s." % ("scheduled" if first else "moved", when[:16])
+    db.note("job", job["id"], msg, actor["id"])
+    db.note("order", job["order_id"], msg, actor["id"])
+    cust = db.get("customers", job["customer_id"])
+    if cust and cust.get("email"):
+        html = mailer.branded(db, "Your installation date", [
+            "Hi %s," % cust["name"],
+            "Your solar installation is %s for %s. Our crew will call you before arriving." % (
+                "booked" if first else "now", datetime.strptime(when[:16], "%Y-%m-%d %H:%M").strftime("%d %b %Y at %H:%M"))],
+            "Track my installation", frontend(db) + "/account")
+        mailer.queue(db, cust["email"], "Installation date – %s" % (db.setting("company_name") or "SunPower"), html)
+
+
 def job_start(db, job, actor_id):
     if job["state"] == "done":
         raise RuleError("This job is already completed.")
     if db.val("SELECT state FROM orders WHERE id = ?", job["order_id"]) != "sale":
         raise RuleError("This order is not active, so the job can't start.")
+    if not job["scheduled_at"]:
+        raise RuleError("Sales hasn't scheduled this installation yet.")
+    if job["scheduled_at"][:10] > today():
+        raise RuleError("This installation is scheduled for %s. It can start on that day." % job["scheduled_at"][:10])
+    if not db.val("SELECT COUNT(*) FROM deliveries WHERE order_id = ? AND state IN ('done', 'delivered')", job["order_id"]):
+        raise RuleError("The kit hasn't been shipped yet, so the installation can't start.")
     db.update("jobs", job["id"], {"state": "in_progress", "site_start": job["site_start"] or now()})
     db.note("job", job["id"], "Work started on site.", actor_id)
 
@@ -1031,7 +1417,10 @@ def job_start(db, job, actor_id):
 # Finish an installation. Refused until: checklist complete, a roof photo,
 # the installed kW, the customer's signature and the kit dispatched. Then logs
 # each technician's hours (labour cost) and emails the certificate link.
-def job_finish(db, job, actor):
+def job_finish(db, job, actor, allow_early=False):
+    """allow_early: demo data only (installations recorded after the fact)."""
+    if not allow_early and job["state"] == "planned" and job["scheduled_at"] and job["scheduled_at"][:10] > today():
+        raise RuleError("This installation is scheduled for %s. It can be completed from that day." % job["scheduled_at"][:10])
     missing = [lbl for f, lbl in CHECKLIST if not job[f]]
     if missing:
         raise RuleError("Checklist incomplete: %s." % ", ".join(missing))
@@ -1050,6 +1439,12 @@ def job_finish(db, job, actor):
     hours = max((parse_dt(end) - parse_dt(start)).total_seconds() / 3600.0, 0.25)  # time on site in hours, at least a quarter hour
     db.update("jobs", job["id"], {"state": "done", "site_start": start, "site_end": end,
                                   "signed_on": job["signed_on"] or end})
+    started = start_warranties(db, db.get("orders", job["order_id"]), end[:10])
+    ordr = db.get("orders", job["order_id"])
+    billed = r2(db.val("SELECT COALESCE(SUM(amount_total), 0) FROM invoices WHERE order_id = ? AND state != 'cancel' "
+                       "AND kind != 'service'", ordr["id"]))
+    if ordr["amount_total"] - billed > 0.5:   # installed: invoice whatever hasn't been invoiced yet
+        final_invoice(db, ordr, actor["id"])
     techs = db.q("SELECT u.* FROM job_techs jt JOIN users u ON u.id = jt.user_id WHERE jt.job_id = ?", job["id"]) or [actor]
     for t in techs:
         db.insert("timesheets", {"job_id": job["id"], "user_id": t["id"], "hours": round(hours, 2),
@@ -1064,8 +1459,34 @@ def job_finish(db, job, actor):
             "Your installation certificate and the warranty of every panel and inverter are in your account."],
             "View my certificate", "%s/print/certificate/%s?token=%s" % (frontend(db), job["id"], order["access_token"]))
         mailer.queue(db, cust["email"], "Installation complete – SunPower certificate", html)
-    db.note("job", job["id"], "Installation completed and accepted by %s." % (job["signed_by"] or cust["name"]), actor["id"])
+    db.note("job", job["id"], "Installation completed and accepted by %s.%s" % (
+        job["signed_by"] or cust["name"], " Warranty started for %d units." % started if started else ""), actor["id"])
     db.note("order", job["order_id"], "Installation completed (%s)." % job["ref"], actor["id"])
+
+
+def start_warranties(db, order, start):
+    """Every unit delivered for the order (by its unique serial / batch) gets its warranty from `start`
+    (the installation day). Returns how many started."""
+    n = 0
+    # Read the numbers from this order's own delivery lines: a panel batch can be shared by several orders.
+    units = []
+    for l in db.q("SELECT dl.serials, dl.product_id, dl.delivery_id, p.warranty_months FROM delivery_lines dl "
+                  "JOIN deliveries d ON d.id = dl.delivery_id JOIN products p ON p.id = dl.product_id "
+                  "WHERE d.order_id = ? AND d.state IN ('done', 'delivered') AND dl.serials IS NOT NULL", order["id"]):
+        for name in json.loads(l["serials"] or "[]"):
+            sid = db.val("SELECT id FROM serials WHERE name = ? AND product_id = ?", name, l["product_id"])
+            if sid:
+                units.append((sid, l))
+    for sid, l in units:
+        if not l["warranty_months"] or db.one("SELECT id FROM warranties WHERE serial_id = ? AND customer_id = ?",
+                                              sid, order["customer_id"]):
+            continue
+        db.insert("warranties", {"serial_id": sid, "product_id": l["product_id"], "customer_id": order["customer_id"],
+                                 "order_id": order["id"], "delivery_id": l["delivery_id"], "start_date": start,
+                                 "months": l["warranty_months"],
+                                 "end_date": add_months(date.fromisoformat(start), l["warranty_months"]).isoformat()})
+        n += 1
+    return n
 
 
 # ------------------------------------------------------------------ tickets
@@ -1133,6 +1554,7 @@ def ticket_resolve(db, ticket, actor_id):
                                      "order_id": ticket["order_id"], "customer_id": ticket["customer_id"],
                                      "kind": "service", "amount_untaxed": untaxed, "amount_tax": tax,
                                      "amount_total": r2(untaxed + tax), "date": today()})
+        email_invoice(db, iid)
         db.update("tickets", ticket["id"], {"invoice_id": iid})
         db.note("ticket", ticket["id"], "Out of warranty: invoice %s created for %s." % (
             db.val("SELECT ref FROM invoices WHERE id = ?", iid), money(untaxed + tax)), actor_id)

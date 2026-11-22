@@ -17,6 +17,7 @@ from app.seed import DEMO_PASSWORD  # noqa: E402
 from app.security import reset_rate_limits  # noqa: E402
 
 H = {"X-SunPower": "1"}
+from .survey_helper import fill_survey, payments_on  # noqa: E402,F401
 PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 64
 SIGNATURE = "data:image/png;base64,iVBORw0KGgo="
 
@@ -41,7 +42,7 @@ def ok(r):
     return body
 
 
-def test_full_customer_journey(client):
+def test_full_customer_journey(client, payments_on):
     global TECH01
     as_(client, "tech01")
     TECH01 = client.get("/api/auth/me").json()["id"]
@@ -65,8 +66,7 @@ def test_full_customer_journey(client):
     assert lead["stage"] == "survey"
 
     # 3. Survey visited and approved, quote drafted, sent
-    ok(client.patch("/api/staff/surveys/%s" % sid, json={"roof_direction": "S", "usable_area_sqft": 340,
-                                                          "recommended_kw": 3}, headers=H))
+    fill_survey(client, sid, 3, area=340)
     ok(client.post("/api/staff/surveys/%s/done" % sid, headers=H))
     ok(client.post("/api/staff/surveys/%s/approve" % sid, headers=H))
     oid = ok(client.post("/api/staff/leads/%s/quote" % lid, headers=H))["id"]
@@ -108,13 +108,15 @@ def test_full_customer_journey(client):
         elif l["tracking"] == "lot":
             serials[str(l["id"])] = (l["available"] or ["LOT-WF"])[:1]
     r = ok(client.post("/api/staff/deliveries/%s/validate" % d["id"], json={"serials": serials}, headers=H))
-    assert r["warranties"] > 0
+    assert r["units"] > 0
     ok(client.post("/api/staff/deliveries/%s/deliver" % d["id"], json={"note": "Left with owner"}, headers=H))
     assert ok(client.get("/api/staff/deliveries/%s" % d["id"]))["state"] == "delivered"
     # a delivered kit can't be dispatched again
     assert client.post("/api/staff/deliveries/%s/validate" % d["id"], json={"serials": serials}, headers=H).status_code == 400
 
-    # 7. The assigned technician installs and finishes
+    # 7. Installation day comes (moved to today for the test); the assigned technician installs and finishes
+    as_(client, "director")
+    ok(client.patch("/api/staff/jobs/%s" % job["id"], json={"scheduled_at": date.today().isoformat() + "T09:00"}, headers=H))
     as_(client, "tech01")
     jid = job["id"]
     ok(client.post("/api/staff/jobs/%s/start" % jid, headers=H))
@@ -201,7 +203,7 @@ def _draft_quote(client, name):
     ok(client.patch("/api/staff/leads/%s" % lid, json={"roof_area_sqft": 300, "grid_suitable": "yes"}, headers=H))
     sid = ok(client.post("/api/staff/leads/%s/survey" % lid, json={"technician_id": client.get("/api/staff/people").json()[0]["id"],
                          "survey_date": (date.today() + timedelta(days=2)).isoformat(), "slot": "morning"}, headers=H))["id"]
-    ok(client.patch("/api/staff/surveys/%s" % sid, json={"roof_direction": "S", "usable_area_sqft": 300, "recommended_kw": 2}, headers=H))
+    fill_survey(client, sid, 2)
     ok(client.post("/api/staff/surveys/%s/done" % sid, headers=H))
     ok(client.post("/api/staff/surveys/%s/approve" % sid, headers=H))
     return ok(client.get("/api/staff/orders/%s" % ok(client.post("/api/staff/leads/%s/quote" % lid, headers=H))["id"]))
@@ -237,7 +239,7 @@ def test_job_kw_and_dates_are_validated(client):
     ok(client.patch("/api/staff/jobs/%s" % job["id"], json={"scheduled_at": "2030-01-05 10:30:00", "notes": "same date"}, headers=H))
 
 
-def test_acceptance_is_kept_when_online_payment_is_off(client):
+def test_acceptance_is_kept_when_online_payment_is_off(client, payments_on):
     """Accepting a quote is saved even when payment can't start (online payment switched off)."""
     from app.db import session
     oid = _draft_quote(client, "Accept Test")["id"]
@@ -336,3 +338,117 @@ def test_technician_dashboard_matches_the_linked_lists(client):
             assert "· ·" not in it["sub"]
             assert it["tag"] in ("Today", "Tomorrow", "On site", "Not scheduled", "Urgent") or it["tag"].startswith(("In ", "Overdue")) \
                 or it["tag"].endswith("d open"), it["tag"]
+
+
+def test_survey_to_warranty_without_payment(client):
+    """Payment step skipped (the default for now): survey -> quote sent automatically -> customer accepts =
+    confirmed -> warehouse ships with serials, no advance -> surveyor installs on the day -> warranties start."""
+    as_(client, "tech01")
+    tech_id = client.get("/api/auth/me").json()["id"]
+    as_(client, "customer")
+    day = (date.today() + timedelta(days=3)).isoformat()
+    lid = ok(client.post("/api/sunpower/enquiry", json={
+        "name": "Flow Customer", "phone": "9822003344", "state": "Gujarat", "city": "Surat", "system_kw": 3,
+        "monthly_bill": 3000, "preferred_date": day, "preferred_slot": "morning"}, headers=H))["id"]
+    as_(client, "sales")
+    sid = ok(client.post("/api/staff/leads/%s/survey" % lid, json={"technician_id": tech_id, "survey_date": day,
+                                                                    "slot": "morning"}, headers=H))["id"]
+    as_(client, "tech01")
+    fill_survey(client, sid, 3)
+    oid = ok(client.post("/api/staff/surveys/%s/quote" % sid, headers=H))["id"]
+    assert ok(client.get("/api/staff/orders/%s" % oid))["state"] == "sent"          # straight to the customer
+
+    as_(client, "customer")
+    r = ok(client.post("/api/my/quote/%s/accept" % oid, json={"name": "Flow Customer", "plan": "advance"}, headers=H))
+    assert r["confirmed"]
+
+    as_(client, "director")
+    order = ok(client.get("/api/staff/orders/%s" % oid))
+    assert order["state"] == "sale"
+    job = next(j for j in ok(client.get("/api/staff/jobs"))["rows"] if j["order_ref"] == order["ref"])
+    assert tech_id in [t["id"] for t in ok(client.get("/api/staff/jobs/%s" % job["id"]))["techs"]]   # surveyor installs
+    assert not job["scheduled_at"]                                                     # waits for Sales
+    as_(client, "sales")
+    day = (date.today() + timedelta(days=4)).isoformat()
+    ok(client.post("/api/staff/orders/%s/schedule-installation" % oid, json={"scheduled_at": day + "T10:00"}, headers=H))
+    assert ok(client.get("/api/staff/jobs/%s" % job["id"]))["scheduled_at"].startswith(day)
+    past = client.post("/api/staff/orders/%s/schedule-installation" % oid, json={"scheduled_at": "2020-01-01T10:00"}, headers=H)
+    assert past.status_code == 400
+    as_(client, "tech01")
+    assert client.post("/api/staff/orders/%s/schedule-installation" % oid, json={"scheduled_at": day + "T10:00"},
+                       headers=H).status_code in (403, 404)
+
+    as_(client, "warehouse")
+    d = next(x for x in ok(client.get("/api/staff/deliveries"))["rows"] if x["order_ref"] == order["ref"])
+    assert d["state"] == "ready"                                                      # no advance needed for now
+    det = ok(client.get("/api/staff/deliveries/%s" % d["id"]))
+    serials = {}
+    for l in det["lines"]:
+        if l["tracking"] == "serial":
+            serials[str(l["id"])] = l["available"][:int(l["qty"])]
+        elif l["tracking"] == "lot":
+            serials[str(l["id"])] = (l["available"] or ["LOT-FLOW"])[:1]
+    assert ok(client.post("/api/staff/deliveries/%s/validate" % d["id"], json={"serials": serials}, headers=H))["units"] > 0
+    as_(client, "director")
+    assert not [w for w in ok(client.get("/api/staff/warranties"))["rows"] if w.get("order_ref") == order["ref"]]  # not yet
+
+    as_(client, "tech01")
+    early = client.post("/api/staff/jobs/%s/start" % job["id"], headers=H)
+    assert early.status_code == 400 and "scheduled" in early.json()["detail"]
+    as_(client, "director")
+    ok(client.patch("/api/staff/jobs/%s" % job["id"], json={"scheduled_at": date.today().isoformat() + "T09:00"}, headers=H))
+    as_(client, "tech01")
+    jid = job["id"]
+    ok(client.post("/api/staff/jobs/%s/start" % jid, headers=H))
+    ok(client.patch("/api/staff/jobs/%s" % jid, json={"chk_stands": True, "chk_panels": True, "chk_wiring": True,
+                                                       "chk_earthing": True, "chk_generation": True, "kw_confirmed": 3,
+                                                       "signed_by": "Flow Customer", "signature": "data:image/png;base64,iVBORw0KGgo="},
+                    headers=H))
+    ok(client.post("/api/staff/jobs/%s/photos" % jid, files={"file": ("roof.png", PNG, "image/png")}, headers=H))
+    ok(client.post("/api/staff/jobs/%s/finish" % jid, headers=H))
+    as_(client, "director")
+    ws = [w for w in ok(client.get("/api/staff/warranties"))["rows"] if w.get("order_ref") == order["ref"]]
+    assert ws and all(w["start_date"] == date.today().isoformat() for w in ws)        # warranties start at installation
+    invs = ok(client.get("/api/staff/orders/%s" % oid))["invoices"]
+    assert any(i["kind"] == "final" for i in invs)                                      # installed -> final invoice
+    assert abs(sum(i["amount_total"] for i in invs if i["state"] != "cancel") - order["amount_total"]) < 1
+
+
+def test_invoice_page_and_customer_access(client):
+    as_(client, "customer")
+    mine = ok(client.get("/api/my/overview"))
+    inv = next(i for o in mine["orders"] for i in o["invoices"])
+    page = client.get(inv["url"])
+    assert page.status_code == 200 and inv["ref"] in page.text and "rupees only" in page.text and "GST" in page.text
+    client.cookies.clear()
+    assert client.get(inv["url"]).status_code == 200                       # the emailed link works without signing in
+    assert client.get(inv["url"].split("?")[0]).status_code == 403         # but not without its token
+    assert client.get(inv["url"].split("?")[0] + "?token=wrong").status_code == 403
+
+
+def test_razorpay_webhook_confirms_payment(client):
+    import hashlib
+    import hmac
+    import json as _json
+    from app.db import session
+    with session() as db:
+        db.set_setting("razorpay_webhook_secret", "whsec_test")
+        o = db.one("SELECT * FROM orders WHERE state = 'sale' AND amount_total > 1000 ORDER BY id DESC LIMIT 1")
+        pid = db.insert("payments", {"ref": "PAY-WH1", "order_id": o["id"], "customer_id": o["customer_id"], "amount": 500,
+                                     "method": "razorpay", "provider_ref": "order_WH1", "state": "pending", "purpose": "balance",
+                                     "date": "2026-11-22 10:00:00"})
+    body = _json.dumps({"event": "payment.captured", "payload": {"payment": {"entity": {
+        "id": "pay_WH1", "order_id": "order_WH1", "amount": 50000}}}}).encode()
+    bad = client.post("/api/sunpower/razorpay/webhook", content=body, headers={"X-Razorpay-Signature": "forged"})
+    assert bad.status_code == 400
+    sig = hmac.new(b"whsec_test", body, hashlib.sha256).hexdigest()
+    r = client.post("/api/sunpower/razorpay/webhook", content=body, headers={"X-Razorpay-Signature": sig})
+    assert r.status_code == 200, r.text
+    with session() as db:
+        assert not db.one("SELECT id FROM payments WHERE id = ? AND state = 'pending'", pid)
+        assert db.one("SELECT id FROM payments WHERE provider_ref = 'pay_WH1' AND state = 'done'")
+        email = db.val("SELECT email FROM customers WHERE id = ?", o["customer_id"])
+        if email:   # the customer gets the invoice by email
+            assert db.val("SELECT COUNT(*) FROM mail_queue WHERE email_to = ? AND subject LIKE 'Invoice %'", email)
+    again = client.post("/api/sunpower/razorpay/webhook", content=body, headers={"X-Razorpay-Signature": sig})
+    assert again.status_code == 200                                         # repeated events are harmless

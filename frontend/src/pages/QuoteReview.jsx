@@ -39,6 +39,11 @@ export default function QuoteReview() {
         if (r?.accepted) reload();   // the acceptance was saved; only the payment couldn't start
         throw new Error(r?.error || 'Please try again.');
       }
+      if (r.confirmed) {   // payment step skipped for now: accepting confirms the order
+        toast('Thank you! Your order is confirmed and your installation is being scheduled.');
+        reload();
+        return;
+      }
       if (r.mode === 'razorpay') {
         await loadRazorpay();
         new window.Razorpay({

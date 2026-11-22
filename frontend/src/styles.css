@@ -461,11 +461,12 @@ p { margin: 0; }
 .search { min-height: 36px; padding: 6px 14px; border-radius: 980px; font-size: 14px; background: var(--bg-alt); border-color: transparent; max-width: 260px; }
 
 /* ---------- footer ---------- */
-.footer { background: var(--bg-alt); border-top: 1px solid var(--line); color: var(--ink-2); font-size: 12px; padding: 40px 0 24px; }
-.footer__grid { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 1.4fr; gap: 24px; padding-bottom: 24px; border-bottom: 1px solid var(--line-strong); }
-.footer h4 { font-size: 12px; font-weight: 600; color: var(--ink); margin-bottom: 10px; letter-spacing: -0.01em; }
+.footer { background: #111113; border-top: 1px solid #000; color: rgba(255,255,255,0.66); font-size: 12px; padding: 40px 0 24px; }
+.footer__grid { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 1.4fr; gap: 24px; padding-bottom: 24px; border-bottom: 1px solid rgba(255,255,255,0.14); }
+.footer h4 { font-size: 12px; font-weight: 600; color: #fff; margin-bottom: 10px; letter-spacing: -0.01em; }
 .footer a, .footer span { display: block; margin-bottom: 8px; line-height: 1.4; }
-.footer a:hover { color: var(--ink); text-decoration: underline; }
+.footer a:hover { color: #fff; text-decoration: underline; }
+.footer .logo__word { color: #fff; }
 .footer__legal { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding-top: 16px; }
 
 /* ---------- not found ---------- */
@@ -614,3 +615,9 @@ p { margin: 0; }
 .demo-logins { display: grid; gap: 8px; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
 .demo-logins__list { display: flex; flex-wrap: wrap; gap: 8px; }
 .demo-logins__list .is-active { box-shadow: 0 0 0 2px var(--accent, #0071e3) inset; }
+
+/* customer invoices */
+.invoices { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); display: grid; gap: 6px; }
+.invoices ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.invoices li { display: grid; grid-template-columns: 1fr auto auto auto; gap: 12px; align-items: center; font-size: 14px; }
+@media (max-width: 600px) { .invoices li { grid-template-columns: 1fr auto; } }

@@ -116,6 +116,10 @@ function Company({ connect }) {
         <div className="ws-form">
           <F label="Razorpay key id" value={s.razorpay_key_id} onChange={set('razorpay_key_id')} />
           {secret('razorpay_key_secret', 'Razorpay key secret')}
+          {secret('razorpay_webhook_secret', 'Razorpay webhook secret')}
+          <F label="Webhook URL (paste in Razorpay → Webhooks)" value={s.razorpay_webhook_url || ''} disabled onChange={() => {}}
+             hint="Events: payment.captured. Use the same secret as above. Confirms payments even if the customer closes the window." />
+          <F label="Payment required" type="checkbox" value={s.payment_required === '1'} onChange={(v) => set('payment_required')(v ? '1' : '0')} hint="Off: the customer's acceptance confirms the order and the warehouse can ship without an advance. Turn on once online payment is set up." />
           <F label="Test payments (for demos)" type="checkbox" value={s.test_payments === '1'} onChange={(v) => set('test_payments')(v ? '1' : '0')} hint="Customers can pay with a test card. Turn off when Razorpay is live." />
         </div>
       </Section>

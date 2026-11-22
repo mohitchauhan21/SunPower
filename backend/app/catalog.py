@@ -15,9 +15,9 @@ import math                       # math.ceil = round up to the next whole numbe
 
 PANEL_W = 540                     # watts per solar panel (a 540 W panel)
 
-# category -> (label, default warranty months). 240 months = 20 years.
+# category -> (label, default warranty months). 180 months = 15 years.
 CATEGORIES = {
-    "panel": ("Solar panels", 240),
+    "panel": ("Solar panels", 180),
     "inverter": ("Inverters", 24),
     "battery": ("Batteries", 24),
     "controller": ("Charge controllers", 24),
@@ -45,7 +45,7 @@ COMPONENTS = [
 # Inverter cost by size in kW (one inverter per package, sized to the package).
 INVERTER_COST = {1: 9000, 2: 14000, 3: 19000, 4: 24000, 5: 28000}
 
-GST_GOODS = 12.0     # solar kits and components
+GST_GOODS = 5.0      # solar kits and components (cut from 12% to 5% on 22 Sep 2025)
 GST_SERVICE = 18.0   # installation and repair labour
 
 INSTALL_CODE = "SRV-INSTALL"          # product code of the installation service line on every quote
@@ -74,6 +74,8 @@ DEFAULT_SETTINGS = {
     "smtp_user": "", "smtp_password": "", "smtp_from": "",
     "google_client_id": "", "google_client_secret": "",                         # Google sign-in
     "razorpay_key_id": "", "razorpay_key_secret": "",                           # online payments
+    "razorpay_webhook_secret": "",                                              # confirms payments if the customer closes the window
+    "payment_required": "0",   # 0 = payment step skipped for now: acceptance confirms, dispatch needs no advance
     "test_payments": "0",   # fake test cards: only for demos (the demo data switches it on)                                                       # allow test cards
     "ai_url": "http://localhost:8000",
 }
@@ -95,6 +97,24 @@ def kit_lines(kw, system_type):
     if system_type == "off_grid":
         lines.append(("BAT-150", 2 * kw))
     return lines
+
+
+# Site-specific parts a survey can add to a quote (code, name, category, cost, price).
+SURVEY_PARTS = [
+    ("STR-ELV", "Elevated structure add-on (per kW)", "bos", 3500, 5000),
+    ("CND-25", "PVC conduit 25 mm (m)", "bos", 35, 60),
+    ("ERT-CBL", "Earthing wire 6 sq mm (m)", "bos", 40, 65),
+    ("WPF-KIT", "Roof waterproofing kit (anchors)", "bos", 900, 1500),
+    ("CLMP-MTL", "Metal-roof clamp set (per kW)", "bos", 1200, 1800),
+]
+
+
+def ensure_survey_parts(db):
+    """Add the survey parts to an existing catalogue (safe to run every start)."""
+    for code, name, cat, cost, price in SURVEY_PARTS:
+        if not db.val("SELECT id FROM products WHERE code = ?", code):
+            db.insert("products", {"code": code, "name": name, "category": cat, "tracking": "none", "cost": cost,
+                                   "price": price, "tax_rate": GST_GOODS, "min_qty": 10})
 
 
 def seed_catalog(db):
@@ -133,6 +153,47 @@ def seed_catalog(db):
         "code": INSTALL_CODE, "name": "Solar Installation & Commissioning (per kW)",
         "category": "service", "cost": 0, "price": INSTALL_PRICE_PER_KW, "tax_rate": GST_SERVICE,
         "is_service": 1})
+
+
+MAX_PACKAGE_KW = 100   # largest rooftop system we quote (shops, offices, factories)
+
+
+def inverter_cost(kw):
+    """Cost of an inverter of `kw` (list above up to 5 kW, then about Rs 5,600 per kW)."""
+    return INVERTER_COST.get(kw) or round(5600 * kw, -2)
+
+
+def ensure_package(db, kw, system_type):
+    """The package for a whole-kW size, created on demand (same parts list and margins as the
+    standard 1-5 kW packages) so a survey can recommend any size up to MAX_PACKAGE_KW.
+    Returns the kit product, or None if the size is outside 1..MAX_PACKAGE_KW."""
+    kw = int(round(kw or 0))
+    system_type = system_type if system_type in ("on_grid", "off_grid") else "on_grid"
+    if not 1 <= kw <= MAX_PACKAGE_KW:
+        return None
+    kit = db.one("SELECT * FROM products WHERE is_kit = 1 AND active = 1 AND kw = ? AND system_type = ?", kw, system_type)
+    if kit:
+        return kit
+    inv_code = "INV-%sKW" % kw
+    if not db.val("SELECT id FROM products WHERE code = ?", inv_code):
+        cost = inverter_cost(kw)
+        db.insert("products", {"code": inv_code, "name": "Solar Inverter %s kW%s" % (kw, " (Hybrid)" if kw <= 5 else ""),
+                               "category": "inverter", "tracking": "serial", "cost": cost, "price": round(cost * 1.3, -2),
+                               "tax_rate": GST_GOODS, "warranty_months": CATEGORIES["inverter"][1], "min_qty": 0})
+    lines = [(db.one("SELECT id, cost FROM products WHERE code = ?", c), q) for c, q in kit_lines(kw, system_type)]
+    if any(p is None for p, _q in lines):
+        return None
+    cost = sum(p["cost"] * q for p, q in lines)
+    label = "On-Grid" if system_type == "on_grid" else "Off-Grid"
+    code = "KIT-%s-%sKW" % ("ON" if system_type == "on_grid" else "OFF", kw)
+    if db.val("SELECT id FROM products WHERE code = ?", code):   # a retired package of that size: don't reuse its code
+        code += "-%s" % db.val("SELECT COUNT(*) FROM products WHERE code LIKE ?", code + "%")
+    kid = db.insert("products", {"code": code, "name": "%s Solar System %s kW" % (label, kw), "category": "kit",
+                                 "tracking": "none", "cost": cost, "price": round(cost * 1.22, -3), "tax_rate": GST_GOODS,
+                                 "is_kit": 1, "kw": kw, "system_type": system_type})
+    for p, q in lines:
+        db.insert("kit_lines", {"kit_id": kid, "product_id": p["id"], "qty": q})
+    return db.get("products", kid)
 
 
 def seed_settings(db):

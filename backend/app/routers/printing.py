@@ -75,6 +75,14 @@ def _lt(v, with_time=True):
     return dt.strftime("%d %b %Y, %H:%M" if with_time else "%d %b %Y")
 
 
+def _day(v):
+    """"2026-11-08" -> "08 Nov 2026"."""
+    try:
+        return datetime.strptime(str(v)[:10], "%Y-%m-%d").strftime("%d %b %Y")
+    except ValueError:
+        return str(v or "")
+
+
 def _m(v):
     return escape(rules.money(v))
 
@@ -120,6 +128,116 @@ def quote(order_id: int, request: Request, token: str = "", db=Depends(get_db)):
         _m(rules.advance_needed(db, o)), rows, _m(o["amount_untaxed"]), _m(o["amount_tax"]), _m(o["amount_total"]), est,
         escape(o["note"] or ""),
         ("<p><b>Accepted by %s</b> on %s</p>" % (escape(o["accepted_by"]), _lt(o["accepted_at"]))) if o["accepted_by"] else "")
+    return _page(db, title, body)
+
+
+def _words(n):
+    """Rupees in words, Indian numbering (lakh, crore): 175400 -> "One lakh seventy-five thousand four hundred"."""
+    ones = ("zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen "
+            "seventeen eighteen nineteen").split()
+    tens = "_ _ twenty thirty forty fifty sixty seventy eighty ninety".split()
+
+    def two(x):
+        return ones[x] if x < 20 else tens[x // 10] + ("-" + ones[x % 10] if x % 10 else "")
+
+    def three(x):
+        return (ones[x // 100] + " hundred" + (" " + two(x % 100) if x % 100 else "")) if x >= 100 else two(x)
+    n = int(round(n))
+    if n == 0:
+        return "Zero"
+    parts = []
+    for size, name in ((10000000, "crore"), (100000, "lakh"), (1000, "thousand")):
+        if n >= size:
+            q = n // size
+            parts.append("%s %s" % (three(q) if q < 1000 else _words(q).lower(), name))
+            n %= size
+    if n:
+        parts.append(three(n))
+    out = " ".join(parts)
+    return out[0].upper() + out[1:]
+
+
+@router.get("/invoice/{invoice_id}")
+def invoice(invoice_id: int, request: Request, token: str = "", db=Depends(get_db)):
+    """GST invoice for the customer (advance receipt, final tax invoice or service invoice)."""
+    from ..subsidy import GST_CODES, GST_CODE_OF
+    inv = db.get("invoices", invoice_id)
+    if not inv:
+        raise HTTPException(404, "Not found.")
+    o = None
+    if inv["order_id"]:
+        o = _order_access(db, request, inv["order_id"], token, staff_areas=("orders", "tickets"))
+    else:
+        from ..access import can_read
+        user = session_user(db, request)
+        if not (user and ((user["role"] in STAFF and can_read(user, "tickets"))
+                          or (user["role"] == "customer" and user.get("customer_id") == inv["customer_id"]))):
+            raise HTTPException(403, "This link is not valid.")
+    c = db.get("customers", inv["customer_id"])
+    kind = rules.INVOICE_KIND.get(inv["kind"], "Invoice")
+    title = "%s %s" % (kind, inv["ref"])
+    # Place of supply: same state as our GSTIN -> CGST + SGST, another state -> IGST.
+    ours = GST_CODES.get((db.setting("company_gstin") or "")[:2])
+    theirs = (rules.lead_state(db, o) if o else None) or c.get("state") or ours
+    same = (theirs or "").lower() == (ours or "").lower()
+    code = GST_CODE_OF.get((theirs or "").lower(), "")
+    tax = inv["amount_tax"]
+    if same:
+        half = rules.r2(tax / 2)
+        tax_rows = ("<tr><td colspan='3' class='num'>CGST</td><td class='num'>%s</td></tr>"
+                    "<tr><td colspan='3' class='num'>SGST</td><td class='num'>%s</td></tr>") % (_m(half), _m(tax - half))
+    else:
+        tax_rows = "<tr><td colspan='3' class='num'>IGST</td><td class='num'>%s</td></tr>" % _m(tax)
+    project = db.val("SELECT project_ref FROM leads WHERE id = ?", o["lead_id"]) if o and o["lead_id"] else None
+    detail = ""
+    if inv["kind"] == "service":
+        t = db.one("SELECT ref FROM tickets WHERE id = ?", inv["ticket_id"]) if inv["ticket_id"] else None
+        desc = "Service visit and repair%s" % (" · request %s" % t["ref"] if t else "")
+    elif inv["kind"] == "advance":
+        desc = "Advance against order %s · %g kW %s rooftop solar system" % (
+            o["ref"], o["kw"] or 0, "On-Grid" if o["system_type"] == "on_grid" else "Off-Grid")
+    else:
+        desc = "Order %s%s" % (o["ref"], " (balance)" if db.val(
+            "SELECT COUNT(*) FROM invoices WHERE order_id = ? AND id < ? AND state != 'cancel' AND kind != 'service'",
+            o["id"], inv["id"]) else "")
+        lines = db.q("SELECT * FROM order_lines WHERE order_id = ? ORDER BY id", o["id"])
+        earlier = db.q("SELECT ref, kind, amount_total FROM invoices WHERE order_id = ? AND id < ? AND state != 'cancel' "
+                       "AND kind != 'service' ORDER BY id", o["id"], inv["id"])
+        rows = "".join(
+            "<tr><td>%s</td><td class='num'>%g</td><td class='num'>%s</td><td class='num'>%g%%</td><td class='num'>%s</td></tr>" % (
+                escape(l["description"] or ""), l["qty"], _m(l["price_unit"]), l["tax_rate"], _m(l["subtotal"])) for l in lines)
+        less = "".join("<tr><td colspan='4' class='num'>Less %s %s</td><td class='num'>− %s</td></tr>" % (
+            escape(rules.INVOICE_KIND.get(e["kind"], "invoice").lower()), escape(e["ref"]), _m(e["amount_total"])) for e in earlier)
+        detail = ("<h2>Order %s</h2><table><thead><tr><th>Description</th><th class='num'>Qty</th><th class='num'>Rate</th>"
+                  "<th class='num'>GST</th><th class='num'>Amount</th></tr></thead><tbody>%s"
+                  "<tr class='tot'><td colspan='4' class='num'>Order total (incl. GST)</td><td class='num'>%s</td></tr>%s"
+                  "</tbody></table>") % (escape(o["ref"]), rows, _m(o["amount_total"]), less)
+    balance = rules.r2(inv["amount_total"] - inv["amount_paid"])
+    who = "<span class='muted'>Bill to</span><br><b>%s</b><br>%s<br>%s%s<br>%s" % (
+        escape(c["name"]), escape(c.get("street") or ""), escape(c.get("city") or ""),
+        (", " + escape(theirs)) if theirs else "", escape(c.get("phone") or ""))
+    meta = "<span class='muted'>Invoice no.</span> <b>%s</b><br><span class='muted'>Date</span> %s<br>%s%s" \
+           "<span class='muted'>Place of supply</span> %s%s" % (
+               escape(inv["ref"]), escape(_day(inv["date"])),
+               ("<span class='muted'>Order</span> %s<br>" % escape(o["ref"])) if o else "",
+               ("<span class='muted'>Project</span> %s<br>" % escape(project)) if project else "",
+               escape(theirs or "-"), (" (%s)" % code) if code else "")
+    table = ("<h2>This invoice</h2><table><thead><tr><th>Description</th><th class='num'>Taxable value</th>"
+             "<th class='num'>GST</th><th class='num'>Amount</th></tr></thead><tbody>"
+             "<tr><td>%s</td><td class='num'>%s</td><td class='num'>%s</td><td class='num'>%s</td></tr>%s"
+             "<tr class='grand'><td colspan='3' class='num'>Total</td><td class='num'>%s</td></tr></tbody></table>") % (
+        escape(desc), _m(inv["amount_untaxed"]), _m(tax), _m(inv["amount_total"]), tax_rows, _m(inv["amount_total"]))
+    paid = ("<div class='box'><div class='grid'><div>Paid</div><div><b>%s</b></div><div>Balance due</div>"
+            "<div><b class='%s'>%s</b></div></div>%s</div>") % (
+        _m(inv["amount_paid"]), "bad" if balance > 0.5 else "", _m(max(balance, 0)),
+        "<div class='muted' style='margin-top:6px'>Pay the balance online from your SunPower account.</div>" if balance > 0.5 else "")
+    note = ("GST at 18% on services." if inv["kind"] == "service"
+            else "GST is charged at the rates on the order (5% on solar equipment, 18% on installation services).")
+    body = ("%s<h1>%s</h1><div class='grid'><div>%s</div><div>%s</div></div>%s%s"
+            "<p><span class='muted'>Amount in words:</span> <b>%s rupees only</b></p>%s"
+            "<p class='muted' style='margin-top:24px'>This is a computer-generated invoice. %s</p>") % (
+        "<p class='bad'><b>CANCELLED</b></p>" if inv["state"] == "cancel" else "",
+        escape(title), who, meta, detail, table, _words(inv["amount_total"]), paid, note)
     return _page(db, title, body)
 
 

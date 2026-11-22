@@ -42,10 +42,16 @@ def products(q: str = "", category: str = "", user=Depends(staff_only), db=Depen
         args += [like(q)] * 2
     rows = db.q(sql + " ORDER BY is_kit, is_service, category, code", *args)
     reserved, unpaid = rules.reserved_stock(db), rules.unpaid_demand(db)
+    planned = {}
+    for d in rules.survey_demand(db):
+        for pid, q in d["items"].items():
+            planned[pid] = planned.get(pid, 0) + q
     for r in rows:
         r["reserved"] = reserved.get(r["id"], 0)
         r["unpaid_demand"] = unpaid.get(r["id"], 0)
+        r["survey_demand"] = planned.get(r["id"], 0)
         r["available"] = r["qty_on_hand"] - r["reserved"]
+        r["shortfall"] = max(r["reserved"] + r["unpaid_demand"] + r["survey_demand"] - r["qty_on_hand"], 0)
         r["low"] = not r["is_kit"] and not r["is_service"] and r["available"] < r["min_qty"]
         if user["role"] != "director":
             r.pop("cost", None)
@@ -97,8 +103,24 @@ def deliveries(state: str = "", q: str = "", user=Depends(staff_only), db=Depend
     rows = db.q(sql + " ORDER BY CASE d.state WHEN 'ready' THEN 0 WHEN 'waiting' THEN 1 ELSE 2 END, d.id DESC LIMIT 300", *args)
     for r in rows:
         r["state_label"] = rules.label(rules.DELIVERY_STATES, r["state"])
+        if r["state"] in ("done", "delivered"):
+            r["short"] = None
+        else:   # items whose stock doesn't cover this delivery's quantity
+            r["short"] = db.val("SELECT COUNT(*) FROM delivery_lines dl JOIN products p ON p.id = dl.product_id "
+                                "WHERE dl.delivery_id = ? AND p.qty_on_hand < dl.qty", r["id"])
     counts = {r["state"]: r["n"] for r in db.q("SELECT state, COUNT(*) AS n FROM deliveries GROUP BY state")}
-    return {"rows": rows, "counts": counts}
+    surveys = rules.survey_demand(db)
+    need_total = {}
+    for d in surveys:
+        for pid, qty in d["items"].items():
+            need_total[pid] = need_total.get(pid, 0) + qty
+    reserved, unpaid = rules.reserved_stock(db), rules.unpaid_demand(db)
+    short_items = 0
+    for pid in set(need_total) | set(reserved) | set(unpaid):
+        on_hand = db.val("SELECT qty_on_hand FROM products WHERE id = ?", pid) or 0
+        if need_total.get(pid, 0) + reserved.get(pid, 0) + unpaid.get(pid, 0) > on_hand:
+            short_items += 1
+    return {"rows": rows, "counts": counts, "demand": {"surveys": len(surveys), "short_items": short_items}}
 
 
 @router.get("/deliveries/{did}")
@@ -140,7 +162,7 @@ def validate(did: int, body: dict = Body(default={}), user=Depends(staff_only), 
     if body.get("expected_on"):
         vals["expected_on"] = str(body["expected_on"])[:10]
     db.update("deliveries", did, vals)
-    return {"ok": True, "warranties": len(started)}
+    return {"ok": True, "units": len(started)}   # serial / batch numbers recorded; warranties start at installation
 
 
 @router.post("/deliveries/{did}/{action}")
@@ -244,7 +266,7 @@ def update_job(jid: int, body: dict = Body(default={}), user=Depends(staff_only)
         for uid in rules.as_list(body.get("techs")):
             uid = rules.as_int(uid, "technician")
             if db.val("SELECT COUNT(*) FROM users WHERE id = ? AND role = 'technician' AND active = 1", uid):
-                db.insert("job_techs", {"job_id": jid, "user_id": uid})
+                db.exec("INSERT OR IGNORE INTO job_techs (job_id, user_id) VALUES (?, ?)", jid, uid)
     return {"ok": True}
 
 
@@ -281,6 +303,9 @@ def attachment(aid: int, user=Depends(staff_only), db=Depends(get_db)):
     a = found(db.get("attachments", aid), "Not found.")
     if a["owner_type"] == "job":
         _job(db, user, a["owner_id"])
+    elif a["owner_type"] == "survey":
+        from .staff_sales import _survey
+        _survey(db, user, a["owner_id"])
     safe = a["mime"] if a["mime"] in ("image/jpeg", "image/png", "image/webp") else "application/octet-stream"
     return Response(a["data"], media_type=safe,
                     headers={"Cache-Control": "private, max-age=3600", "X-Content-Type-Options": "nosniff",
@@ -467,17 +492,22 @@ def warranties(q: str = "", status: str = "", user=Depends(staff_only), db=Depen
 # ======================================================================
 @router.post("/products")
 def create_product(body: dict = Body(default={}), user=Depends(staff_only), db=Depends(get_db)):
-    """New component (Director). Packages (kits) come from the catalogue, not from here."""
+    """New item (Warehouse or Director). The code is the item's unique key and never changes.
+    Only the Director sets cost and selling price. Packages (kits) come from the catalogue, not from here."""
     need(user, "stock", write=True)
-    if user["role"] != "director":
-        raise HTTPException(403, "Only the Director can add products.")
+    if user["role"] not in ("director", "warehouse"):
+        raise HTTPException(403, "Only the warehouse or the Director can add items.")
     code = rules.text(body.get("code")).strip().upper()[:30]
     name = rules.text(body.get("name")).strip()[:120]
     category = body.get("category")
     if not code or not name or category not in CATEGORIES or category in ("kit",):
         raise HTTPException(400, "Enter a code, a name and a category.")
-    if db.val("SELECT id FROM products WHERE code = ?", code):
-        raise HTTPException(400, "Another product already uses code %s." % code)
+    if not all(c.isalnum() or c in "-_/." for c in code):
+        raise HTTPException(400, "Use letters, numbers and - _ / . in the code (e.g. CBL-DC6).")
+    other = db.one("SELECT name, active FROM products WHERE code = ?", code)
+    if other:
+        raise HTTPException(400, "Code %s is already used by %s%s. Each item needs its own code." % (
+            code, other["name"], "" if other["active"] else " (retired)"))
     tracking = body.get("tracking") if body.get("tracking") in ("none", "serial", "lot") else "none"
 
     def number(k, default=0):
@@ -487,11 +517,133 @@ def create_product(body: dict = Body(default={}), user=Depends(staff_only), db=D
             raise HTTPException(400, "%s must be a number." % k.replace("_", " "))
     pid = db.insert("products", {
         "code": code, "name": name, "category": category, "tracking": tracking,
-        "cost": number("cost"), "price": number("price"),
+        "cost": number("cost") if user["role"] == "director" else 0,
+        "price": number("price") if user["role"] == "director" else 0,
+        "location": rules.text(body.get("location")).strip()[:40] or None,
+        "unit": rules.text(body.get("unit")).strip()[:12] or None,
         "tax_rate": number("tax_rate", GST_SERVICE if category == "service" else GST_GOODS),
         "warranty_months": int(number("warranty_months", CATEGORIES[category][1])),
         "min_qty": number("min_qty"), "is_service": 1 if category == "service" else 0})
     return {"ok": True, "id": pid}
+
+
+@router.get("/products/{pid}")
+def product(pid: int, user=Depends(staff_only), db=Depends(get_db)):
+    """One item: details, stock movements, units in stock and who needs it."""
+    need(user, "stock")
+    p = found(db.get("products", pid), "Product not found.")
+    if user["role"] != "director":
+        p.pop("cost", None)
+    p["moves"] = db.q("SELECT m.qty, m.kind, m.note, m.date, u.name AS user, d.ref AS delivery FROM stock_moves m "
+                      "LEFT JOIN users u ON u.id = m.user_id LEFT JOIN deliveries d ON d.id = m.delivery_id "
+                      "WHERE m.product_id = ? ORDER BY m.id DESC LIMIT 60", pid)
+    p["serials"] = db.q("SELECT id, name, created_at FROM serials WHERE product_id = ? AND state = 'in_stock' ORDER BY id", pid) \
+        if p["tracking"] == "serial" else []
+    p["reserved"] = rules.reserved_stock(db).get(pid, 0)
+    p["unpaid_demand"] = rules.unpaid_demand(db).get(pid, 0)
+    demand = rules.survey_demand(db)
+    p["survey_demand"] = sum(d["items"].get(pid, 0) for d in demand)
+    p["available"] = p["qty_on_hand"] - p["reserved"]
+    p["shortfall"] = max(p["reserved"] + p["unpaid_demand"] + p["survey_demand"] - p["qty_on_hand"], 0)
+    p["can_price"] = user["role"] == "director"
+    return p
+
+
+@router.patch("/products/{pid}")
+def update_product(pid: int, body: dict = Body(default={}), user=Depends(staff_only), db=Depends(get_db)):
+    """Warehouse: name, location, unit, reorder level, tracking (while nothing is in stock).
+    Director: also prices, GST and warranty. The code never changes (orders and serials refer to it)."""
+    need(user, "stock", write=True)
+    if user["role"] not in ("director", "warehouse"):
+        raise HTTPException(403, "Only the warehouse or the Director can edit items.")
+    p = found(db.get("products", pid), "Product not found.")
+    if "code" in body and rules.text(body["code"]).strip().upper() != p["code"]:
+        raise HTTPException(400, "The item code can't be changed. Retire this item and add a new one instead.")
+    money = ("price", "cost", "warranty_months", "tax_rate")
+    if user["role"] != "director":
+        for k in money:
+            if body.get(k) in (None, ""):
+                continue
+            try:
+                same = float(body[k]) == float(p[k] or 0)
+            except (TypeError, ValueError):
+                same = False
+            if not same:
+                raise HTTPException(403, "Only the Director can change prices, GST or warranty.")
+    vals = {}
+    for k in ("min_qty",) + (money if user["role"] == "director" else ()):
+        if k in body and body[k] not in (None, ""):
+            try:
+                vals[k] = max(rules.as_float(body[k], k), 0)
+            except rules.RuleError:
+                raise HTTPException(400, "%s must be a number." % k.replace("_", " "))
+    if "name" in body:
+        name = rules.text(body.get("name")).strip()[:120]
+        if not name:
+            raise HTTPException(400, "Enter the item's name.")
+        vals["name"] = name
+    for k, size in (("location", 40), ("unit", 12)):
+        if k in body:
+            vals[k] = rules.text(body.get(k)).strip()[:size] or None
+    if "category" in body and body["category"] != p["category"]:
+        if body["category"] not in CATEGORIES or body["category"] in ("kit", "service") or p["is_kit"] or p["is_service"]:
+            raise HTTPException(400, "Choose a component category.")
+        vals["category"] = body["category"]
+    if "tracking" in body and body["tracking"] != p["tracking"]:
+        if body["tracking"] not in ("none", "serial", "lot"):
+            raise HTTPException(400, "Choose how the item is tracked.")
+        if p["qty_on_hand"] or db.val("SELECT COUNT(*) FROM serials WHERE product_id = ?", pid):
+            raise HTTPException(400, "Tracking can only change while none of this item is in stock or on record.")
+        vals["tracking"] = body["tracking"]
+    if vals:
+        db.update("products", pid, vals)
+    return {"ok": True}
+
+
+@router.post("/products/{pid}/adjust")
+def adjust(pid: int, body: dict = Body(default={}), user=Depends(staff_only), db=Depends(get_db)):
+    need(user, "stock", write=True)
+    if user["role"] not in ("director", "warehouse"):
+        raise HTTPException(403, "Only the warehouse or the Director can correct stock.")
+    p = found(db.get("products", pid), "Product not found.")
+    return {"ok": True, "change": rules.adjust_stock(db, p, body.get("counted"), body.get("reason"), user["id"])}
+
+
+@router.post("/serials/{sid}/scrap")
+def scrap(sid: int, body: dict = Body(default={}), user=Depends(staff_only), db=Depends(get_db)):
+    need(user, "stock", write=True)
+    if user["role"] not in ("director", "warehouse"):
+        raise HTTPException(403, "Only the warehouse or the Director can remove units.")
+    rules.scrap_serial(db, found(db.get("serials", sid), "Serial not found."), body.get("reason"), user["id"])
+    return {"ok": True}
+
+
+@router.get("/demand")
+def demand(user=Depends(staff_only), db=Depends(get_db)):
+    """Material demand from visited surveys, per item, with what's on the shelves.
+    The per-survey breakdown (customer names) is only for people who manage stock."""
+    lvl = need(user, "stock")
+    surveys = rules.survey_demand(db)
+    totals = {}
+    for d in surveys:
+        for pid, q in d["items"].items():
+            totals[pid] = totals.get(pid, 0) + q
+    reserved, unpaid = rules.reserved_stock(db), rules.unpaid_demand(db)
+    items = []
+    for pid, q in totals.items():
+        p = db.get("products", pid)
+        need_total = reserved.get(pid, 0) + unpaid.get(pid, 0) + q
+        items.append({"id": pid, "code": p["code"], "name": p["name"], "unit": p["unit"], "location": p["location"],
+                      "on_hand": p["qty_on_hand"], "reserved": reserved.get(pid, 0), "unpaid_demand": unpaid.get(pid, 0),
+                      "survey_demand": q, "shortfall": max(need_total - p["qty_on_hand"], 0)})
+    items.sort(key=lambda r: (-r["shortfall"], r["code"]))
+    out = {"items": items, "survey_count": len(surveys)}
+    if lvl == "rw":
+        names = {r["id"]: (r["code"], r["name"]) for r in db.q("SELECT id, code, name FROM products")}
+        out["surveys"] = [{**{k: v for k, v in d.items() if k != "items"},
+                           "items": [{"id": pid, "code": names[pid][0], "name": names[pid][1], "qty": q} for pid, q in d["items"].items()]}
+                          for d in surveys]
+    return out
 
 
 @router.delete("/products/{pid}")
@@ -501,6 +653,10 @@ def retire_product(pid: int, user=Depends(staff_only), db=Depends(get_db)):
     need(user, "stock", write=True)
     need_delete(user, "stock")
     p = found(db.get("products", pid), "Product not found.")
+    used = db.q("SELECT k.name FROM kit_lines kl JOIN products k ON k.id = kl.kit_id WHERE kl.product_id = ? AND k.active = 1", pid)
+    if used:
+        raise HTTPException(400, "%s is part of %d package(s) (e.g. %s). Change those packages first." % (
+            p["name"], len(used), used[0]["name"]))
     if p["qty_on_hand"] > 0 and not p["is_kit"] and not p["is_service"]:
         raise HTTPException(400, "%g of %s are still in stock. Use them up or adjust stock first." % (p["qty_on_hand"], p["name"]))
     db.update("products", pid, {"active": 0})

@@ -85,7 +85,7 @@ html, body { overflow-x: clip; }
 .ws-tab__ro { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-3); }
 .ws-side { display: flex; flex-direction: column; }
 .ws-nav__link { position: relative; }
-.ws-nav__me { margin-top: auto; border-top: 1px solid var(--line); border-radius: 0 0 10px 10px; padding-top: 14px; }
+.ws-nav__me { margin-top: auto; border-top: 1px solid rgba(255,255,255,0.12); border-radius: 0 0 10px 10px; padding-top: 14px; }
 .ws-nav__me .nav__avatar { width: 22px; height: 22px; font-size: 11px; }
 
 /* ---------- Today ---------- */
@@ -167,7 +167,7 @@ html, body { overflow-x: clip; }
 /* While the home page is open, its grey bands become frosted glass so the gradient flows through. */
 body:has(.home-bg) .section--alt { background: rgba(255, 255, 255, 0.55); -webkit-backdrop-filter: blur(18px) saturate(140%); backdrop-filter: blur(18px) saturate(140%); }
 body:has(.home-bg) .section--alt .card { background: rgba(255, 255, 255, 0.85); }
-body:has(.home-bg) .footer { background: rgba(245, 245, 247, 0.8); -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px); }
+body:has(.home-bg) .footer { background: #111113; position: relative; }
 
 /* ---------- My account: the enquiry number above each enquiry card's title ---------- */
 .order__ref { display: block; margin-bottom: 4px; font-size: 14px; font-weight: 700; letter-spacing: 0.01em; color: var(--ink); }

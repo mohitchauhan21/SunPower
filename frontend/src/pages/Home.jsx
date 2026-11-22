@@ -10,10 +10,10 @@ import { useSubsidyTable } from '../subsidy.js';
 import { inr } from '../api.js';
 
 const STATS = [
-  { value: '₹78,000', label: 'Maximum PM Surya Ghar subsidy' },
+  { value: '₹85,800', label: 'Top PM Surya Ghar subsidy (₹78,000 in most states)' },
   { value: '1–5 kW', label: 'On-grid and battery systems' },
-  { value: '20 years', label: 'Panel warranty, tracked by serial' },
-  { value: '2 hours', label: 'Call-back after you enquire' }
+  { value: '15 years', label: 'Panel warranty, tracked by batch' },
+  { value: 'Free', label: 'Roof survey before any price is fixed' }
 ];
 
 const Icon = ({ d }) => (
@@ -35,7 +35,7 @@ const STEPS = [
   { title: 'Estimate, then book a survey.', text: 'See your savings in seconds, then pick a day and time for a free roof survey. Our team calls you to confirm the booking.', meta: 'Takes about a minute' },
   { title: 'We survey your roof.', text: 'A technician from your area measures usable area, direction, tilt and shade, and works out the right capacity for your home.', meta: 'Free, no obligation' },
   { title: 'Your exact quote.', text: 'One package covers panels, inverter, structure, wiring, installation and paperwork. Pay an advance and the rest after installation, or pay in full upfront.', meta: 'Subsidy filed for you' },
-  { title: 'Installed, switched on, covered.', text: 'We deliver, install and test on site. Once it’s paid in full we switch it on, and your warranties start that day.', meta: 'Panel, inverter and workmanship warranties' }
+  { title: 'Installed, switched on, covered.', text: 'We deliver, install and test on site. Your warranties start the day the installation is completed, for every unit by its serial or batch number.', meta: 'Panels 15 years · inverter and battery 2 years' }
 ];
 
 const GALLERY = [

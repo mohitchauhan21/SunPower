@@ -19,12 +19,22 @@ export function Deliveries() {
   const [state, setState] = useParam('state');
   const [q, setQ] = useParam('q');
   const { data, error, reload } = useLoad(() => get('/api/staff/deliveries', { state, q }), [state, q]);
+  const { busy, run } = useAction();
+  const can = useCan('deliveries');
   const c = data?.counts || {};
+  const pack = (d) => run(`p${d.id}`, () => post(`/api/staff/deliveries/${d.id}/pack`), `${d.ref} marked packed.`).then((r) => r && reload());
   return (
     <>
-      <PageHead eyebrow="Warehouse" title="Dispatch" sub="Kits go out only after the advance is paid. Scanning serials starts each warranty.">
+      <PageHead eyebrow="Warehouse" title="Dispatch" sub="Each confirmed order's kit: check stock, pack it, then dispatch it with the serial / batch number of every unit.">
         <Search value={q} onChange={setQ} placeholder="Customer or ref" />
       </PageHead>
+      {data?.demand && (
+        <div className={`ws-banner${data.demand.short_items ? ' ws-banner--bad' : ''}`}>
+          {data.demand.surveys} visited survey{data.demand.surveys === 1 ? '' : 's'} will need parts soon.{' '}
+          {data.demand.short_items ? `${data.demand.short_items} item${data.demand.short_items === 1 ? ' is' : 's are'} short once orders and surveys are counted. ` : 'Stock covers all of it. '}
+          <Link to="/app/stock?tab=demand">See the tally →</Link>
+        </div>
+      )}
       <Chips value={state} onChange={setState} options={[{ value: '', label: 'All' }, { value: 'ready', label: 'Ready', count: c.ready || 0 },
         { value: 'packed', label: 'Packed', count: c.packed || 0 }, { value: 'waiting', label: 'Waiting for advance', count: c.waiting || 0 },
         { value: 'done', label: 'Dispatched', count: c.done || 0 }, { value: 'delivered', label: 'Delivered', count: c.delivered || 0 }]} />
@@ -32,8 +42,15 @@ export function Deliveries() {
         <Table rows={data.rows} rowLink={(d) => `/app/dispatch/${d.id}`} empty="Nothing to dispatch."
           columns={[{ key: 'ref', label: 'Delivery' }, { key: 'order_ref', label: 'Order' }, { key: 'customer', label: 'Customer' },
             { key: 'city', label: 'City' }, { key: 'kw', label: 'kW', num: true },
+            { key: 'short', label: 'Stock', render: (d) => (d.short == null ? '—' : d.short ? <span className="bad">{d.short} item{d.short === 1 ? '' : 's'} short</span> : <span className="good">All in stock</span>) },
             { key: 'date_done', label: 'Dispatched', render: (d) => fmtDate(d.date_done) || '—' },
-            { key: 'state', label: 'Status', render: (d) => <Pill state={d.state}>{d.state_label}</Pill> }]} />
+            { key: 'state', label: 'Status', render: (d) => <Pill state={d.state}>{d.state_label}</Pill> },
+            ...(can.write ? [{ key: 'act', label: '', render: (d) => (
+              <span className="row-acts">
+                {d.state === 'ready' && <button type="button" className="link link--btn" disabled={!!busy} onClick={() => pack(d)}>Pack</button>}
+                {['ready', 'packed'].includes(d.state) && <Link className="btn btn--primary btn--sm" to={`/app/dispatch/${d.id}`}>Dispatch</Link>}
+                {d.state === 'done' && <Link className="link" to={`/app/dispatch/${d.id}`}>Mark delivered</Link>}
+              </span>) }] : [])]} />
       )}
     </>
   );
@@ -61,7 +78,7 @@ export function Delivery() {
   const open = !shipped && d.can_edit;
   const validate = () => {
     const serials = Object.fromEntries(Object.entries(scan).map(([k, v]) => [k, v.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean)]));
-    run('go', () => post(`/api/staff/deliveries/${id}/validate`, { serials, override }), (r) => `Dispatched. ${r.warranties} warranties started.`).then((r) => r && reload());
+    run('go', () => post(`/api/staff/deliveries/${id}/validate`, { serials, override }), (r) => `Dispatched. ${r.units} serial / batch numbers recorded; warranties start when the installation is completed.`).then((r) => r && reload());
   };
   return (
     <>
@@ -80,17 +97,24 @@ export function Delivery() {
           {d.can_override && <label className="ws-check" style={{ marginTop: 8 }}><input type="checkbox" checked={override} onChange={(e) => setOverride(e.target.checked)} /><span>Director override: dispatch anyway</span></label>}
         </div>
       )}
+      {open && d.lines.some((l) => l.qty_on_hand < l.qty) && (
+        <div className="ws-banner ws-banner--bad">
+          Not enough stock for {d.lines.filter((l) => l.qty_on_hand < l.qty).map((l) => l.code).join(', ')}. Receive it in{' '}
+          <Link to="/app/stock">Inventory</Link> before dispatching.
+        </div>
+      )}
       <div className="side-grid">
         <Section title="Packing list">
           <div className="table-scroll">
             <table className="table">
-              <thead><tr><th>Item</th><th className="num">Qty</th><th className="num">In stock</th><th>Serial / batch</th></tr></thead>
+              <thead><tr><th>Item</th><th className="num">Needed</th><th className="num">In stock</th><th className="num">Short</th><th>Serial / batch</th></tr></thead>
               <tbody>
                 {d.lines.map((l) => (
                   <tr key={l.id}>
                     <td><strong>{l.name}</strong><div className="muted small">{l.code}{l.warranty_months ? ` · ${l.warranty_months / 12} yr warranty` : ''}</div></td>
                     <td className="num">{l.qty}</td>
                     <td className={`num ${l.qty_on_hand < l.qty && open ? 'bad' : ''}`}>{l.qty_on_hand}</td>
+                    <td className="num">{!open ? '—' : l.qty_on_hand < l.qty ? <span className="bad">{l.qty - l.qty_on_hand}</span> : <span className="good">0</span>}</td>
                     <td>
                       {l.tracking === 'none' ? <span className="muted">—</span>
                         : shipped ? <code className="serials">{l.serials.join(', ')}</code>
@@ -120,69 +144,210 @@ export function Stock() {
   const { me } = useAuth();
   const [q, setQ] = useParam('q');
   const [tab, setTab] = useParam('tab', 'items');
-  const { data, error, reload } = useLoad(() => (tab === 'serials' ? get('/api/staff/serials', { q }) : get('/api/staff/products', { q })), [q, tab]);
+  const { data, error, reload } = useLoad(() => (tab === 'serials' ? get('/api/staff/serials', { q })
+    : tab === 'demand' ? get('/api/staff/demand') : get('/api/staff/products', { q })), [q, tab]);
   const [receiving, setReceiving] = useState(null);
+  const [editing, setEditing] = useState(null);
   const [adding, setAdding] = useState(false);
   const { run } = useAction();
   const can = useCan('stock');
-  const canWrite = can.write;
-  const retire = (p) => window.confirm(`Retire ${p.name}? It disappears from lists and new quotes; old orders keep it.`) &&
+  const manage = can.write && ['director', 'warehouse'].includes(me.role);
+  const retire = (p) => window.confirm(`Retire ${p.code} · ${p.name}? It disappears from lists and new quotes; old orders keep it.`) &&
     run('r', () => del(`/api/staff/products/${p.id}`), `${p.name} retired.`).then((r) => r && reload());
   const rows = (data?.rows || []).filter((r) => tab === 'serials' || (!r.is_kit && !r.is_service));
+  const unit = (p) => (p.unit ? ` ${p.unit}` : '');
   return (
     <>
-      <PageHead eyebrow="Warehouse" title="Stock" sub="Components on hand, receiving new stock and every serial number.">
-        <Search value={q} onChange={setQ} placeholder={tab === 'serials' ? 'Serial or customer' : 'Item or code'} />
-        {me.role === 'director' && <button type="button" className="btn btn--primary btn--sm" onClick={() => setAdding(!adding)}>{adding ? 'Close' : 'New product'}</button>}
+      <PageHead eyebrow="Warehouse" title="Inventory" sub="Every item has its own code; serial-numbered units are tracked one by one. Demand from technicians' surveys shows what's coming.">
+        {tab !== 'demand' && <Search value={q} onChange={setQ} placeholder={tab === 'serials' ? 'Serial or customer' : 'Item or code'} />}
+        {manage && <button type="button" className="btn btn--primary btn--sm" onClick={() => { setAdding(!adding); setEditing(null); }}>{adding ? 'Close' : 'New item'}</button>}
       </PageHead>
-      {adding && <NewProduct onDone={() => { setAdding(false); reload(); }} />}
-      <Chips value={tab} onChange={setTab} options={[{ value: 'items', label: 'Components' }, { value: 'serials', label: 'Serial numbers' }]} />
+      {adding && <NewProduct director={me.role === 'director'} onDone={() => { setAdding(false); reload(); }} />}
+      <Chips value={tab} onChange={setTab} options={[{ value: 'items', label: 'Items' }, { value: 'demand', label: 'Demand from surveys' },
+        { value: 'serials', label: 'Serial numbers' }]} />
       {receiving && <Receive product={receiving} onDone={() => { setReceiving(null); reload(); }} />}
+      {editing && <ItemEditor id={editing} manage={manage} onClose={() => setEditing(null)} onChanged={reload} />}
       {error ? <ErrorBox error={error} onRetry={reload} /> : !data ? <Loading /> : tab === 'serials' ? (
         <Table rows={rows} empty="No serials match."
-          columns={[{ key: 'name', label: 'Serial' }, { key: 'product', label: 'Item' }, { key: 'state', label: 'Status', render: (s) => <Pill state={s.state}>{s.state === 'in_stock' ? 'In stock' : 'Delivered'}</Pill> },
+          columns={[{ key: 'name', label: 'Serial' }, { key: 'product', label: 'Item' },
+            { key: 'state', label: 'Status', render: (s) => <Pill state={s.state === 'scrapped' ? 'cancel' : s.state}>{SERIAL_STATE[s.state] || s.state}</Pill> },
             { key: 'customer', label: 'Installed at', render: (s) => s.customer || '—' }]} />
+      ) : tab === 'demand' ? (
+        data.items ? <Demand data={data} /> : <Loading />
       ) : (
         <Table rows={rows} empty="No items."
-          columns={[{ key: 'code', label: 'Code' }, { key: 'name', label: 'Item' },
-            { key: 'tracking', label: 'Tracking', render: (p) => (p.tracking === 'none' ? '—' : p.tracking) },
-            { key: 'qty_on_hand', label: 'On hand', num: true, render: (p) => <span className={p.low ? 'bad' : ''}>{p.qty_on_hand}</span> },
-            { key: 'min_qty', label: 'Minimum', num: true },
-            { key: 'low', label: '', render: (p) => (p.low ? <Pill state="failed">Reorder</Pill> : null) },
-            ...(canWrite ? [{ key: 'act', label: '', render: (p) => (
+          columns={[{ key: 'code', label: 'Code', render: (p) => <button type="button" className="link link--btn stock-code" onClick={() => setEditing(p.id)}>{p.code}</button> },
+            { key: 'name', label: 'Item' },
+            { key: 'location', label: 'Location', render: (p) => p.location || '—' },
+            { key: 'qty_on_hand', label: 'On hand', num: true, render: (p) => `${p.qty_on_hand}${unit(p)}` },
+            { key: 'reserved', label: 'Reserved', num: true, render: (p) => p.reserved || '—' },
+            { key: 'available', label: 'Available', num: true, render: (p) => <span className={p.low ? 'bad' : ''}>{p.available}</span> },
+            { key: 'survey_demand', label: 'From surveys', num: true, render: (p) => p.survey_demand || '—' },
+            { key: 'low', label: '', render: (p) => (p.shortfall > 0 ? <Pill state="failed">Short {p.shortfall}</Pill> : p.low ? <Pill state="waiting">Reorder</Pill> : null) },
+            ...(manage ? [{ key: 'act', label: '', render: (p) => (
               <span className="row-acts">
-                <button className="link link--btn" onClick={() => setReceiving(p)}>Receive</button>
-                {can.del && <button className="link--btn row-del" onClick={() => retire(p)}>Retire</button>}
+                <button type="button" className="link link--btn" onClick={() => setReceiving(p)}>Receive</button>
+                <button type="button" className="link link--btn" onClick={() => setEditing(p.id)}>Edit</button>
+                {can.del && <button type="button" className="link--btn row-del" onClick={() => retire(p)}>Retire</button>}
               </span>) }] : [])]} />
       )}
     </>
   );
 }
 
+const SERIAL_STATE = { in_stock: 'In stock', delivered: 'Delivered', scrapped: 'Removed' };
+const MOVE_KIND = { in: 'Received', out: 'Dispatched', adjust: 'Correction' };
+
+/** Demand that technicians' surveys have created, before any order is confirmed. */
+function Demand({ data }) {
+  const short = data.items.filter((i) => i.shortfall > 0).length;
+  return (
+    <div className="stack">
+      <p className="muted small" style={{ margin: 0 }}>
+        {data.survey_count} visited survey{data.survey_count === 1 ? '' : 's'} waiting for a confirmed order.
+        {short ? ` ${short} item${short === 1 ? '' : 's'} short once confirmed orders and surveys are counted.` : ' Stock covers all of it.'}
+      </p>
+      <Table rows={data.items} empty="No visited surveys need parts right now."
+        columns={[{ key: 'code', label: 'Code' }, { key: 'name', label: 'Item' }, { key: 'location', label: 'Location', render: (i) => i.location || '—' },
+          { key: 'on_hand', label: 'On hand', num: true }, { key: 'reserved', label: 'Reserved', num: true, render: (i) => i.reserved || '—' },
+          { key: 'unpaid_demand', label: 'Orders awaiting payment', num: true, render: (i) => i.unpaid_demand || '—' },
+          { key: 'survey_demand', label: 'From surveys', num: true },
+          { key: 'shortfall', label: 'Short', num: true, render: (i) => (i.shortfall > 0 ? <span className="bad">{i.shortfall}</span> : <span className="good">OK</span>) }]} />
+      {data.surveys && data.surveys.length > 0 && (
+        <div className="demand-grid">
+          {data.surveys.map((s) => (
+            <Section key={s.survey_id} title={`${s.ref} · ${s.customer}`}
+                     actions={<span className="small muted">{s.kw ? `${s.kw} kW ` : ''}{s.system_type === 'off_grid' ? 'Off-Grid' : 'On-Grid'}</span>}>
+              <p className="small muted" style={{ margin: '0 0 8px' }}>
+                {[s.city, s.technician && `surveyed by ${s.technician}`, s.quote ? `quote ${s.quote.ref}` : 'no quote yet'].filter(Boolean).join(' · ')}
+              </p>
+              {s.problem ? <p className="ws-warn">{s.problem}</p> : (
+                <ul className="survey-parts">
+                  {s.items.map((i) => <li key={i.id}><span><span className="muted">{i.code}</span> {i.name}</span><strong>{i.qty}</strong></li>)}
+                </ul>
+              )}
+            </Section>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Edit an item, correct its count, remove serial units, see its history. */
+function ItemEditor({ id, manage, onClose, onChanged }) {
+  const { data: p, error, reload, setData } = useLoad(() => get(`/api/staff/products/${id}`), [id]);
+  const { busy, run } = useAction();
+  const [count, setCount] = useState({ counted: '', reason: '' });
+  if (error) return <ErrorBox error={error} onRetry={reload} />;
+  if (!p) return <Loading />;
+  const set = (k) => (v) => setData({ ...p, [k]: v });
+  const after = (r) => { if (r) { reload(); onChanged(); } return r; };
+  const save = (e) => {
+    e.preventDefault();
+    const body = { name: p.name, category: p.category, unit: p.unit, location: p.location, min_qty: p.min_qty, tracking: p.tracking };
+    if (p.can_price) Object.assign(body, { price: p.price, cost: p.cost, tax_rate: p.tax_rate, warranty_months: p.warranty_months });
+    run('save', () => patch(`/api/staff/products/${id}`, body), 'Item saved.').then(after);
+  };
+  const correct = (e) => {
+    e.preventDefault();
+    run('adj', () => post(`/api/staff/products/${id}/adjust`, { counted: Number(count.counted), reason: count.reason }),
+      (r) => `Stock corrected (${r.change > 0 ? '+' : ''}${r.change}).`).then((r) => { if (after(r)) setCount({ counted: '', reason: '' }); });
+  };
+  const scrap = (s) => {
+    const reason = window.prompt(`Remove unit ${s.name} from stock? Reason (damaged, lost, returned…):`);
+    if (reason) run('scrap', () => post(`/api/staff/serials/${s.id}/scrap`, { reason }), `Unit ${s.name} removed.`).then(after);
+  };
+  return (
+    <Section title={`${p.code} · ${p.name}`} className="ws-card--accent" actions={<button type="button" className="link link--btn" onClick={onClose}>Close</button>}>
+      <div className="kpis kpis--4 stock-kpis">
+        {[['On hand', p.qty_on_hand], ['Reserved', p.reserved], ['Awaiting payment', p.unpaid_demand], ['From surveys', p.survey_demand]].map(([l, v]) => (
+          <div key={l}><span className="small muted">{l}</span><strong>{v}{p.unit ? ` ${p.unit}` : ''}</strong></div>
+        ))}
+      </div>
+      {p.shortfall > 0 && <p className="ws-warn">Short by {p.shortfall}{p.unit ? ` ${p.unit}` : ''} once everything already promised is delivered. Order more.</p>}
+      <form className="ws-form" onSubmit={save}>
+        <F label="Code (unique, can't change)" value={p.code} disabled onChange={() => {}} />
+        <F label="Name" value={p.name} onChange={set('name')} disabled={!manage} />
+        <F label="Category" type="select" value={p.category} onChange={set('category')} options={CATS.filter((c) => c.value !== 'service')} disabled={!manage || p.is_kit || p.is_service} />
+        <F label="Tracking" type="select" value={p.tracking} onChange={set('tracking')} disabled={!manage || p.qty_on_hand > 0}
+           options={TRACKING} hint={p.qty_on_hand > 0 ? 'Fixed while the item is in stock.' : undefined} />
+        <F label="Location (rack / bin)" value={p.location} onChange={set('location')} disabled={!manage} placeholder="e.g. A-03" />
+        <F label="Unit" value={p.unit} onChange={set('unit')} disabled={!manage} placeholder="pcs, m, set" />
+        <F label="Reorder below" type="number" min="0" value={p.min_qty} onChange={set('min_qty')} disabled={!manage} />
+        {p.can_price && <>
+          <F label="Cost (₹)" type="number" min="0" value={p.cost} onChange={set('cost')} />
+          <F label="Selling price (₹)" type="number" min="0" value={p.price} onChange={set('price')} />
+          <F label="Warranty (months)" type="number" min="0" value={p.warranty_months} onChange={set('warranty_months')} />
+        </>}
+        {!p.can_price && <F label="Selling price" value={p.price ? inr(p.price) : 'Set by the Director'} disabled onChange={() => {}} />}
+        {manage && <div className="field--full"><button className="btn btn--primary btn--sm" disabled={!!busy}>Save item</button></div>}
+      </form>
+      {manage && p.tracking !== 'serial' && (
+        <form className="ws-form stock-correct" onSubmit={correct}>
+          <F label="Counted on the shelf" type="number" min="0" step="any" value={count.counted} onChange={(v) => setCount((c) => ({ ...c, counted: v }))} />
+          <F label="Reason" value={count.reason} onChange={(v) => setCount((c) => ({ ...c, reason: v }))} placeholder="Stock check, damage, cut-offs…" />
+          <div className="field--full"><button className="btn btn--secondary btn--sm" disabled={!!busy || count.counted === '' || !count.reason}>Correct stock</button></div>
+        </form>
+      )}
+      {p.tracking === 'serial' && (
+        <div className="stock-serials">
+          <span className="label">Units in stock ({p.serials.length})</span>
+          {p.serials.length ? (
+            <div className="chips" style={{ marginBottom: 0 }}>
+              {p.serials.map((s) => (
+                <span key={s.id} className="chip stock-serial">{s.name}
+                  {manage && <button type="button" className="survey-photo__remove" aria-label={`Remove unit ${s.name}`} onClick={() => scrap(s)}>×</button>}
+                </span>
+              ))}
+            </div>
+          ) : <p className="small muted">None in stock.</p>}
+        </div>
+      )}
+      <div className="stock-history">
+        <span className="label">History</span>
+        {p.moves.length ? (
+          <ul className="survey-parts">
+            {p.moves.map((m, i) => (
+              <li key={i}><span>{MOVE_KIND[m.kind] || m.kind}{m.delivery ? ` · ${m.delivery}` : ''}{m.note ? ` · ${m.note}` : ''}
+                <span className="small muted"> · {fmtDate(m.date, true)}{m.user ? ` · ${m.user}` : ''}</span></span>
+                <strong className={m.qty < 0 ? 'bad' : 'good'}>{m.qty > 0 ? '+' : ''}{m.qty}</strong></li>
+            ))}
+          </ul>
+        ) : <p className="small muted">No movements yet.</p>}
+      </div>
+    </Section>
+  );
+}
+
 const CATS = [['panel', 'Solar panels'], ['inverter', 'Inverters'], ['battery', 'Batteries'], ['controller', 'Charge controllers'],
   ['bos', 'Balance of system'], ['service', 'Services']].map(([value, label]) => ({ value, label }));
+const TRACKING = [{ value: 'none', label: 'Counted only' }, { value: 'serial', label: 'Serial number per unit' }, { value: 'lot', label: 'Batch / lot' }];
 
-/** Director: add a new component or service to the catalogue. */
-function NewProduct({ onDone }) {
+/** Warehouse or Director: add a new item. Its code is its unique key. Prices are the Director's. */
+function NewProduct({ onDone, director }) {
   const { busy, run } = useAction();
-  const [f, setF] = useState({ code: '', name: '', category: 'bos', tracking: 'none', cost: '', price: '', min_qty: '' });
+  const [f, setF] = useState({ code: '', name: '', category: 'bos', tracking: 'none', unit: '', location: '', cost: '', price: '', min_qty: '' });
   const set = (k) => (v) => setF((x) => ({ ...x, [k]: v }));
   const save = (e) => {
     e.preventDefault();
-    run('p', () => post('/api/staff/products', f), `${f.name} added.`).then((r) => r && onDone());
+    run('p', () => post('/api/staff/products', f), `${f.code.toUpperCase()} · ${f.name} added.`).then((r) => r && onDone());
   };
   return (
-    <Section title="New product" className="ws-card--accent" actions={<button className="link link--btn" onClick={onDone}>Close</button>}>
+    <Section title="New item" className="ws-card--accent" actions={<button type="button" className="link link--btn" onClick={onDone}>Close</button>}>
       <form className="ws-form" onSubmit={save}>
-        <F label="Code" value={f.code} onChange={set('code')} placeholder="e.g. WIFI-1" />
+        <F label="Code (unique key)" value={f.code} onChange={(v) => set('code')(v.toUpperCase())} placeholder="e.g. CBL-DC6" hint="Letters, numbers, - _ / . — can't be changed later." />
         <F label="Name" value={f.name} onChange={set('name')} />
-        <F label="Category" type="select" value={f.category} onChange={set('category')} options={CATS} hint="Sets the default warranty and GST." />
-        <F label="Tracking" type="select" value={f.tracking} onChange={set('tracking')}
-           options={[{ value: 'none', label: 'Not tracked' }, { value: 'serial', label: 'Serial number per unit' }, { value: 'lot', label: 'Batch / lot' }]} />
-        <F label="Cost (₹)" type="number" min="0" value={f.cost} onChange={set('cost')} />
-        <F label="Selling price (₹)" type="number" min="0" value={f.price} onChange={set('price')} />
-        <F label="Minimum stock" type="number" min="0" value={f.min_qty} onChange={set('min_qty')} />
-        <div className="field--full"><button className="btn btn--primary btn--sm" disabled={busy || !f.code || !f.name}>Add product</button></div>
+        <F label="Category" type="select" value={f.category} onChange={set('category')} options={director ? CATS : CATS.filter((c) => c.value !== 'service')} hint="Sets the default warranty and GST." />
+        <F label="Tracking" type="select" value={f.tracking} onChange={set('tracking')} options={TRACKING} />
+        <F label="Unit" value={f.unit} onChange={set('unit')} placeholder="pcs, m, set" />
+        <F label="Location (rack / bin)" value={f.location} onChange={set('location')} placeholder="e.g. A-03" />
+        <F label="Reorder below" type="number" min="0" value={f.min_qty} onChange={set('min_qty')} />
+        {director && <>
+          <F label="Cost (₹)" type="number" min="0" value={f.cost} onChange={set('cost')} />
+          <F label="Selling price (₹)" type="number" min="0" value={f.price} onChange={set('price')} />
+        </>}
+        <div className="field--full"><button className="btn btn--primary btn--sm" disabled={busy || !f.code || !f.name}>Add item</button></div>
       </form>
     </Section>
   );

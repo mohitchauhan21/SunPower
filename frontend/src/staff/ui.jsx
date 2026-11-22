@@ -187,7 +187,7 @@ export function F({ label, value, onChange, type = 'text', options, disabled, hi
     return (
       <label className={`ws-check${full ? ' field--full' : ''}`}>
         <input type="checkbox" checked={!!value} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
-        <span>{label}</span>
+        <span>{label}{hint && <span className="form-hint" style={{ display: 'block' }}>{hint}</span>}</span>
       </label>
     );
   }

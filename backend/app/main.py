@@ -50,7 +50,8 @@ from .routers import account, auth, printing, public, staff_admin, staff_ops, st
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 # The application object. docs_url: interactive API documentation at /api/docs.
-app = FastAPI(title="SunPower", docs_url="/api/docs", openapi_url="/api/openapi.json")
+_docs = os.environ.get("SUNPOWER_DOCS", "1") == "1"   # set SUNPOWER_DOCS=0 in production
+app = FastAPI(title="SunPower", docs_url="/api/docs" if _docs else None, openapi_url="/api/openapi.json" if _docs else None)
 
 
 # A *middleware* wraps every request: it runs before the endpoint and can stop it.
@@ -66,6 +67,7 @@ async def csrf_guard(request: Request, call_next):
     Our own website adds it to every call (frontend/src/api.js).
     """
     if (request.method in ("POST", "PUT", "PATCH", "DELETE") and request.url.path.startswith("/api/")
+            and request.url.path != "/api/sunpower/razorpay/webhook"   # Razorpay signs this one instead
             and request.headers.get("x-sunpower") != "1"):
         return JSONResponse({"detail": "Missing request header."}, status_code=403)
     return await call_next(request)
@@ -90,6 +92,21 @@ def health():
     return {"ok": True, "service": "SunPower"}
 
 
+def _upgrade_rates(db):
+    """One-time data upgrade for existing databases (runs once, remembered in settings):
+    GST on solar equipment went from 12% to 5% on 22 Sep 2025, and panels carry a 15-year warranty.
+    Products and quotes not yet accepted get the new rates; confirmed orders and invoices keep theirs."""
+    if db.setting("upgrade_gst5_2025") == "1":
+        return
+    from . import rules
+    db.exec("UPDATE products SET tax_rate = 5 WHERE tax_rate = 12 AND is_service = 0")
+    db.exec("UPDATE products SET warranty_months = 180 WHERE category = 'panel' AND warranty_months = 240")
+    for o in db.q("SELECT id FROM orders WHERE state IN ('draft', 'sent') AND accepted_by IS NULL"):
+        db.exec("UPDATE order_lines SET tax_rate = 5 WHERE order_id = ? AND tax_rate = 12", o["id"])
+        rules.recompute_order(db, o["id"])
+    db.set_setting("upgrade_gst5_2025", "1")
+
+
 def bootstrap(seed_demo=None):
     """Prepare the database: tables, default settings, catalogue and (first run) demo data.
     seed_demo=None means "decide from the SUNPOWER_DEMO environment variable" (default on)."""
@@ -97,6 +114,12 @@ def bootstrap(seed_demo=None):
     with session() as db:                       # one transaction for all of it
         seed_settings(db)                       # default company settings (only missing ones)
         seed_catalog(db)                        # components and packages (only the first time)
+        from .catalog import ensure_survey_parts
+        ensure_survey_parts(db)                 # site-specific parts the survey can add
+        _upgrade_rates(db)                      # one-time: GST 12% -> 5% on equipment, panel warranty 15 years
+        from . import rules as _rules
+        for o in db.q("SELECT id FROM orders WHERE state = 'sale'"):   # delivery readiness follows the payment setting
+            _rules.refresh_delivery_state(db, o["id"])
         if seed_demo is None:
             seed_demo = os.environ.get("SUNPOWER_DEMO", "1") == "1"
         # Demo data only goes into an empty database (no users yet).

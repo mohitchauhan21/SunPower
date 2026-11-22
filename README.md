@@ -1,6 +1,6 @@
 # SunPower: Solar Installation Management System
 
-Everything a rooftop-solar company needs, from the first customer enquiry to the 20-year panel warranty: a public website, a customer account, and one workspace for every role in the company (Director, Sales, Warehouse, Technicians, Service desk).
+Everything a rooftop-solar company needs, from the first customer enquiry to the 15-year panel warranty: a public website, a customer account, and one workspace for every role in the company (Director, Sales, Warehouse, Technicians, Service desk).
 
 ```
  Visitors & customers ─┐
@@ -124,7 +124,7 @@ Each person only sees the groups and pages their role may open. Every staff memb
 3. **Roof survey.** Sales books a technician. The technician records the measurements and marks it visited; **only Sales or the Director can approve it**. No quote before approval.
 4. **Quote.** The matching package (1–5 kW, On-Grid or Off-Grid) is picked automatically. GST is added: 12% on goods, 18% on installation. There is a PVGIS generation estimate, and discounts above 10% need the Director.
 5. **Order.** The customer accepts online and pays the advance (test card or Razorpay), or Sales confirms and records the payment. Confirming creates the **delivery**, the **installation job** and the **subsidy file**, and invites the customer to their account.
-6. **Dispatch.** It is blocked until the **30% advance** is paid (the Director can override). Every serial and batch is scanned, which **starts its warranty** (panels 20 years; inverter, battery and controller 2 years).
+6. **Dispatch.** When **Payment required** is on (Settings), it waits for the **30% advance** (the Director can override); while it is off, the customer's acceptance is enough. Every serial and batch number is scanned. **Warranties start when the installation is completed** (panels 15 years; inverter, battery and controller 2 years).
 7. **Installation.** The technician starts on site, ticks the checklist, adds roof photos (AI-checked), confirms the kW and the generation reading, and gets the customer's on-screen signature. Hours are logged, and the certificate is emailed and printable.
 8. **Service.** Requests are found by phone, name or serial. AI suggests the cause and safe steps. Warranty repairs are free; outside warranty an invoice is created automatically. The customer confirms the fix in their account.
 9. **Money.** Profit per job = revenue − material − labour − warranty repairs. The Director sees the dashboard, technician pay, unpaid invoices, and a printable report that can also be emailed.

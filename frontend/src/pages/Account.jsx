@@ -83,8 +83,23 @@ function Overview({ data, reload }) {
             {o.quote_pending && <Link className="btn btn--primary btn--sm" to={o.review_url}>Review &amp; accept quote</Link>}
             {!o.quote_pending && o.due > 0.5 && <Link className="btn btn--primary btn--sm" to={o.review_url}>{o.advance_due > 0 ? 'Pay advance' : 'Pay balance'}</Link>}
             {o.certificate_url && <a className="btn btn--secondary btn--sm" href={o.certificate_url} target="_blank" rel="noreferrer">Installation certificate</a>}
-            <a className="btn btn--secondary btn--sm" href={o.pdf_url} target="_blank" rel="noreferrer">Download PDF</a>
+            <a className="btn btn--secondary btn--sm" href={o.pdf_url} target="_blank" rel="noreferrer">{o.quote_pending ? 'Quotation PDF' : 'Order PDF'}</a>
           </div>
+          {o.invoices?.length > 0 && (
+            <div className="invoices">
+              <span className="muted small">Invoices</span>
+              <ul>
+                {o.invoices.map((i) => (
+                  <li key={i.id}>
+                    <a href={i.url} target="_blank" rel="noreferrer">{i.kind} {i.ref}</a>
+                    <span className="muted small">{fmtDate(i.date)}</span>
+                    <strong>{inr(i.total)}</strong>
+                    <span className={`pill ${i.paid + 0.5 >= i.total ? 'pill--ok' : 'pill--warn'}`}>{i.paid + 0.5 >= i.total ? 'Paid' : `${inr(i.total - i.paid)} due`}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </article>
       ) : (
         <article key={`e${e.id}`} className="card card--outline order">

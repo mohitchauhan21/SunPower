@@ -25,9 +25,9 @@ ACCESS = {
     "orders": {"director": "rw", "sales": "rw", "support": "r", "warehouse": "r", "technician": "own"},
     "deliveries": {"director": "rw", "warehouse": "rw", "sales": "r"},
     "stock": {"director": "rw", "warehouse": "rw", "sales": "r", "support": "r", "technician": "r"},
-    "jobs": {"director": "rw", "sales": "r", "warehouse": "r", "support": "r", "technician": "own"},
+    "jobs": {"director": "rw", "sales": "r", "support": "r", "technician": "own"},
     "tickets": {"director": "rw", "support": "rw", "sales": "r", "technician": "own"},
-    "warranties": {"director": "rw", "sales": "r", "warehouse": "r", "support": "r", "technician": "own"},
+    "warranties": {"director": "rw", "sales": "r", "support": "r", "technician": "own"},
     "customers": {"director": "rw", "sales": "rw", "support": "rw"},
     "subsidies": {"director": "rw", "sales": "rw", "support": "r"},
     "insights": {"director": "rw"},
@@ -44,7 +44,7 @@ DELETE = {
     "orders": ("director",),               # draft / sent quotations only (confirmed: cancel instead)
     "customers": ("director",),            # customers with no orders, enquiries or requests
     "subsidies": ("director",),
-    "stock": ("director",),                # retire a product (kept for history, hidden from lists)
+    "stock": ("director", "warehouse"),    # retire an item (kept for history, hidden from lists)
     "jobs": ("director",),                 # planned jobs with no hours logged
     "tickets": ("director", "support"),    # requests with no invoice
     "money": ("director",),                # void a payment, cancel an unpaid invoice

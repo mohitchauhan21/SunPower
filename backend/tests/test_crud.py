@@ -19,6 +19,7 @@ from app.seed import DEMO_PASSWORD  # noqa: E402
 from app.security import reset_rate_limits  # noqa: E402
 
 H = {"X-SunPower": "1"}
+from .survey_helper import fill_survey, payments_on  # noqa: E402,F401
 
 
 @pytest.fixture(scope="module")
@@ -52,7 +53,7 @@ def make_quote(client):
     day = (date.today() + timedelta(days=2)).isoformat()
     sid = client.post("/api/staff/leads/%s/survey" % lid, json={"technician_id": tech["id"], "survey_date": day, "slot": "morning"},
                       headers=H).json()["id"]
-    client.patch("/api/staff/surveys/%s" % sid, json={"roof_direction": "S", "usable_area_sqft": 300, "recommended_kw": 2}, headers=H)
+    fill_survey(client, sid, 2)
     assert client.post("/api/staff/surveys/%s/done" % sid, headers=H).json()["ok"]
     assert client.post("/api/staff/surveys/%s/approve" % sid, headers=H).json()["ok"]
     return client.post("/api/staff/leads/%s/quote" % lid, headers=H).json()["id"]
@@ -122,7 +123,7 @@ def test_customer_crud_and_roles(client):
 
 
 def test_products_jobs_tickets_warranties(client):
-    as_(client, "warehouse")
+    as_(client, "sales")   # Sales only reads stock
     assert client.post("/api/staff/products", json={"code": "WIFI-1", "name": "Wi-Fi monitor", "category": "bos"},
                        headers=H).status_code == 403
     as_(client, "director")
@@ -133,8 +134,8 @@ def test_products_jobs_tickets_warranties(client):
     # the only job of a confirmed order can't be deleted
     job = next(j for j in client.get("/api/staff/jobs").json()["rows"] if j["state"] == "planned")
     assert client.delete("/api/staff/jobs/%s" % job["id"], headers=H).status_code == 400
-    as_(client, "tech01")
-    assert client.delete("/api/staff/jobs/%s" % job["id"], headers=H).status_code == 403
+    as_(client, "tech01")   # technicians never delete (403), and can't even see jobs that aren't theirs (404)
+    assert client.delete("/api/staff/jobs/%s" % job["id"], headers=H).status_code in (403, 404)
     # tickets: Service desk may delete a request without an invoice; Sales may not
     as_(client, "support")
     cust = client.get("/api/staff/customers").json()["rows"][0]
@@ -165,7 +166,7 @@ def test_notes_edit_and_delete_own_only(client):
     assert client.delete("/api/staff/notes/%s" % log["id"], headers=H).status_code == 400   # history stays
 
 
-def test_void_payment_and_cancel_invoice(client):
+def test_void_payment_and_cancel_invoice(client, payments_on):
     as_(client, "director")
     ready = client.get("/api/staff/deliveries?state=ready").json()["rows"]
     if not ready:
@@ -201,3 +202,34 @@ def test_customer_cancels_own_new_request_only(client):
     as_(client, "customer")
     assert client.post("/api/my/ticket/cancel", json={"ticket_id": other["id"]}, headers=H).status_code == 404
     assert client.delete("/api/staff/leads/1", headers=H).status_code == 403          # customers never reach staff APIs
+
+
+def test_warehouse_manages_inventory(client):
+    as_(client, "warehouse")
+    r = client.post("/api/staff/products", headers=H, json={"code": "cbl-dc6", "name": "DC cable 6 sq mm (m)", "category": "bos",
+                                                             "unit": "m", "location": "B-02", "min_qty": 100, "price": 99})
+    assert r.status_code == 200, r.text
+    pid = r.json()["id"]
+    p = client.get("/api/staff/products/%s" % pid).json()
+    assert p["code"] == "CBL-DC6" and p["price"] == 0 and "cost" not in p and p["location"] == "B-02"   # price is the Director's
+    dup = client.post("/api/staff/products", headers=H, json={"code": "CBL-DC6", "name": "Again", "category": "bos"})
+    assert dup.status_code == 400 and "already used" in dup.json()["detail"]
+    assert client.patch("/api/staff/products/%s" % pid, headers=H, json={"name": "DC cable 6mm2 (m)", "location": "B-03"}).json()["ok"]
+    assert client.patch("/api/staff/products/%s" % pid, headers=H, json={"code": "X-1"}).status_code == 400
+    assert client.patch("/api/staff/products/%s" % pid, headers=H, json={"price": 120}).status_code == 403
+    assert client.post("/api/staff/products/%s/receive" % pid, headers=H, json={"qty": 500}).json()["ok"]
+    bad = client.post("/api/staff/products/%s/adjust" % pid, headers=H, json={"counted": 480})
+    assert bad.status_code == 400   # needs a reason
+    assert client.post("/api/staff/products/%s/adjust" % pid, headers=H, json={"counted": 480, "reason": "Cut-offs"}).json()["change"] == -20
+    p = client.get("/api/staff/products/%s" % pid).json()
+    assert p["qty_on_hand"] == 480 and p["moves"][0]["kind"] == "adjust"
+    assert client.patch("/api/staff/products/%s" % pid, headers=H, json={"tracking": "serial"}).status_code == 400
+    assert client.delete("/api/staff/products/%s" % pid, headers=H).status_code == 400   # still in stock
+    # serial-numbered units are removed one by one
+    inv = next(x for x in client.get("/api/staff/products").json()["rows"] if x["tracking"] == "serial" and x["qty_on_hand"] > 0)
+    unit = client.get("/api/staff/products/%s" % inv["id"]).json()["serials"][0]
+    assert client.post("/api/staff/products/%s/adjust" % inv["id"], headers=H, json={"counted": 1, "reason": "x"}).status_code == 400
+    assert client.post("/api/staff/serials/%s/scrap" % unit["id"], headers=H, json={"reason": "Damaged in transit"}).json()["ok"]
+    assert client.get("/api/staff/products/%s" % inv["id"]).json()["qty_on_hand"] == inv["qty_on_hand"] - 1
+    as_(client, "director")
+    assert client.patch("/api/staff/products/%s" % pid, headers=H, json={"price": 120}).json()["ok"]

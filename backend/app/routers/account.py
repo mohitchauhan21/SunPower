@@ -25,7 +25,8 @@ def _order(db, user, order_id, states=None):
 
 def order_summary(db, o):
     paid = rules.order_paid(db, o["id"])
-    due = rules.advance_due(db, o) if o["state"] in ("sent", "sale") else 0
+    pay_on = rules.payment_required(db)
+    due = rules.advance_due(db, o) if o["state"] in ("sent", "sale") and pay_on else 0
     deliveries = db.q("SELECT * FROM deliveries WHERE order_id = ?", o["id"])
     job = db.one("SELECT * FROM jobs WHERE order_id = ? ORDER BY id LIMIT 1", o["id"])
     sub = db.one("SELECT * FROM subsidies WHERE order_id = ?", o["id"])
@@ -45,12 +46,15 @@ def order_summary(db, o):
         "payment_plan": o["payment_plan"], "full_discount_pct": rules.full_discount_pct(db),
         "full_amount": rules.full_upfront_amount(db, o) if paid < 0.5 else None,
         "pdf_url": "/print/quote/%s?token=%s" % (o["id"], o["access_token"]),
+        "invoices": [{"id": i["id"], "ref": i["ref"], "kind": rules.INVOICE_KIND.get(i["kind"], i["kind"]), "date": i["date"],
+                      "total": i["amount_total"], "paid": i["amount_paid"], "state": i["state"], "url": rules.invoice_url(db, i)}
+                     for i in db.q("SELECT * FROM invoices WHERE order_id = ? AND state != 'cancel' ORDER BY id", o["id"])],
         "review_url": "/account/quote/%s" % o["id"],
         "certificate_url": ("/print/certificate/%s?token=%s" % (job["id"], o["access_token"])
                             if job and job["state"] == "done" else None),
         "steps": [
             {"label": "Order confirmed", "done": o["state"] == "sale"},
-            {"label": "Advance paid", "done": o["state"] == "sale" and due == 0},
+            *([{"label": "Advance paid", "done": o["state"] == "sale" and due == 0}] if pay_on else []),
             {"label": "Kit packed", "done": packed, "date": last.get("packed_at")},
             {"label": "Kit shipped", "done": shipped, "date": last.get("date_done"),
              "note": ("Expected %s" % last["expected_on"]) if shipped and not delivered and last.get("expected_on") else None},
@@ -138,6 +142,12 @@ def accept_quote(order_id: int, body: dict = Body(default={}), user=Depends(cust
     db.update("orders", o["id"], {"accepted_by": name, "accepted_at": rules.now(), "payment_plan": plan})
     db.note("order", o["id"], "Quotation accepted online by %s (%s)." % (
         name, "pays 100% upfront" if plan == "full" else "advance now, balance after installation"), user["id"])
+    if not rules.payment_required(db):   # payment step skipped for now: acceptance confirms the order
+        try:
+            rules.confirm_order(db, db.get("orders", o["id"]), user["id"], invite=False, accepted_by=name)
+        except rules.RuleError as e:
+            return {"ok": False, "accepted": True, "error": str(e)}
+        return {"ok": True, "confirmed": True}
     try:
         return {"ok": True, **_pay(db, user, db.get("orders", o["id"]), plan)}
     except rules.RuleError as e:

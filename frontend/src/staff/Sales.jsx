@@ -1,6 +1,7 @@
 import { useState } from 'react';
+import { useToast } from '../components/ui/Toast.jsx';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { api, del, fmtDate, fmtLocal, get, inr, patch, post, put } from '../api.js';
+import { api, del, fmtDate, fmtLocal, get, inr, patch, post, put, upload } from '../api.js';
 import { useAuth } from '../auth.jsx';
 import {
   Chips, DeleteButton, ErrorBox, F, KV, Loading, Notes, PageHead, Pill, Search, Section, Table, fromLocalInput, toLocalInput, todayLocal,
@@ -244,56 +245,304 @@ export function Surveys() {
   );
 }
 
+// Site-survey form. Contact details, address and the bill already live on the enquiry, so they aren't asked again.
+// One section at a time; each tab shows how many required things are still missing there.
+const S_LABEL = {
+  roof_azimuth_deg: 'Facing (°)', property_type: 'Property', ownership: 'Ownership', roof_condition: 'Roof condition', roof_length_m: 'Roof length (m)',
+  roof_width_m: 'Roof width (m)', roof_height_m: 'Height from ground (m)', parapet_height_m: 'Parapet height (m)',
+  roof_defects: 'Roof defects seen', obstacles: 'Obstacles on the roof',
+  shade_morning: 'Shade in the morning', shade_midday: 'Shade at midday', shade_afternoon: 'Shade in the afternoon',
+  shade_sources: 'Shade comes from', future_shading: 'Future shade risk (new building, growing tree)',
+  discom: 'DISCOM', consumer_no: 'Consumer number', phase: 'Supply', sanctioned_load_kw: 'Sanctioned load (kW)',
+  meter_type: 'Meter type', net_meter_space: 'Space for net meter', db_condition: 'Distribution board', db_spare_way: 'Spare way in DB',
+  existing_earth_pits: 'Existing earth pits', earth_resistance_ohm: 'Earth resistance (Ω)', lightning_protection: 'Lightning arrester already fitted',
+  existing_equipment: 'Already on site',
+  inverter_location: 'Inverter location', inverter_conditions_ok: 'Spot is ventilated, dry and out of direct sun', internet: 'Internet for monitoring',
+  dc_cable_m: 'DC cable run (m)', ac_cable_m: 'AC cable run (m)', earth_cable_m: 'Earthing run (m)', conduit_needed: 'Conduit needed along the route',
+  mounting_type: 'Mounting', structure_height_m: 'Structure height (m)', wind_exposure: 'Wind exposure', waterproofing_needed: 'Waterproofing needed at anchors',
+  backup_hours: 'Backup needed (hours)', essential_load_w: 'Essential load (W)', battery_location_ok: 'Safe, ventilated battery spot available',
+  access: 'Roof access', material_route_ok: 'Panels can be carried up', hazards: 'Safety hazards', dust: 'Dust level', corrosion_risk: 'Corrosion risk',
+  monkey_bird_activity: 'Monkey / bird activity',
+  structural_review: 'Structural engineer review needed', civil_work: 'Civil work needed', electrical_work: 'Electrical upgrade needed',
+  customer_present: 'Customer was present', declaration: 'I confirm these details were recorded on site',
+};
+const S_HINT = {
+  dc_cable_m: 'Panels → inverter, one way. Longer than the package covers? Extra cable is added to the quote.',
+  ac_cable_m: 'Inverter → DB / meter, one way.', earth_cable_m: 'Panels and inverter → earth pit.',
+  roof_height_m: 'Decides ladder, rope or crane.', roof_azimuth_deg: 'From north, compass: 90 = east, 180 = south.', sanctioned_load_kw: 'From the bill.',
+  structure_height_m: 'Only for elevated structures.', essential_load_w: 'Fans, lights, fridge… that must run on battery.',
+};
+const S_OPT = {
+  single: 'Single phase', three: 'Three phase', rcc_anchored: 'RCC, anchored', ballasted: 'Ballasted (no drilling)',
+  metal_clamp: 'Metal-sheet clamps', elevated: 'Elevated structure', home_inverter_ups: 'Inverter / UPS', needs_upgrade: 'Needs upgrade',
+  crane_needed: 'Crane needed', indoor_wall: 'Indoor wall', outdoor_wall: 'Outdoor wall', not_feasible: 'Not feasible',
+};
+const nice = (v) => S_OPT[v] || String(v).replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
+const missingLabel = (m) => (m.key === 'declaration' ? 'Declaration' : S_LABEL[m.key] || m.label);
+const YESNO = [{ value: '', label: '—' }, { value: 'yes', label: 'Yes' }, { value: 'no', label: 'No' }];
+const SEVERITY = ['critical', 'high', 'medium', 'low'];
+// Columns that live on the survey itself, shown at the start of their section.
+const S_COLUMNS = { roof: ['roof_type', 'roof_direction', 'roof_azimuth_deg', 'roof_tilt', 'usable_area_sqft', 'latitude', 'longitude'], shade: ['shading'],
+  electrical: ['earthing_possible'], summary: ['recommended_kw'] };
+
+function MultiPick({ label, options, value = [], onChange, disabled }) {
+  const toggle = (o) => onChange(value.includes(o) ? value.filter((x) => x !== o) : [...value, o]);
+  return (
+    <div className="field field--full">
+      <span className="label">{label}</span>
+      <div className="chips" style={{ marginBottom: 0 }}>
+        {options.map((o) => (
+          <button key={o} type="button" disabled={disabled} aria-pressed={value.includes(o)}
+                  className={`chip${value.includes(o) ? ' is-active' : ''}`} onClick={() => toggle(o)}>{nice(o)}</button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function Survey() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { busy, run } = useAction();
+  const [tab, setTab] = useState('roof');
+  const [warned, setWarned] = useState('');   // section whose missing fields were already pointed out
+  const toast = useToast();
   const { data: s, error, reload, setData } = useLoad(() => get(`/api/staff/surveys/${id}`), [id]);
   if (error) return <ErrorBox error={error} onRetry={reload} />;
   if (!s) return <Loading />;
+  if (!s.spec || !s.sections) {   // older server without the detailed survey form
+    return <ErrorBox error="The server is out of date for the survey form. Restart the back end and reload this page." onRetry={reload} />;
+  }
   const open = s.can_edit && !['approved', 'rejected'].includes(s.state);
+  const d = s.details || {};
   const set = (k) => (v) => setData({ ...s, [k]: v });
-  const fields = ['roof_type', 'roof_direction', 'roof_tilt', 'usable_area_sqft', 'shading', 'cable_distance_m', 'earthing_possible',
-    'latitude', 'longitude', 'recommended_kw', 'notes'];
-  const save = () => run('save', () => patch(`/api/staff/surveys/${id}`, {
+  const setD = (k) => (v) => setData({ ...s, details: { ...d, [k]: v } });
+  const fields = ['roof_type', 'roof_direction', 'roof_tilt', 'usable_area_sqft', 'shading', 'latitude', 'longitude', 'recommended_kw', 'notes'];
+  const save = (quiet) => run('save', () => patch(`/api/staff/surveys/${id}`, {
     ...Object.fromEntries(fields.map((k) => [k, s[k] === '' ? null : s[k]])), earthing_possible: s.earthing_possible ? 1 : 0,
-    survey_date: s.survey_date }), 'Saved.');
-  const act = (a, msg, body) => run(a, async () => { if (open) await save(); return post(`/api/staff/surveys/${id}/${a}`, body); }, msg).then((r) => r && reload());
+    cable_distance_m: d.ac_cable_m || s.cable_distance_m || null, survey_date: s.survey_date, result: s.result || null,
+    details: Object.fromEntries(Object.keys(s.spec).map((k) => [k, d[k] ?? null]).concat([['issues', d.issues || []]])) }),
+    quiet ? undefined : 'Saved.');
+  // Bring in what the server works out (missing items, parts, photos, state) without touching what's being typed.
+  const refresh = async () => {
+    const f = await get(`/api/staff/surveys/${id}`).catch(() => null);
+    if (f) setData((cur) => ({ ...cur, missing: f.missing, parts: f.parts, photos: f.photos, max_kw_fit: f.max_kw_fit,
+      state: f.state, state_label: f.state_label, can_quote: f.can_quote, quote: f.quote, notes_log: f.notes_log }));
+    return f;
+  };
+  const saveAndReload = () => save().then((r) => r && refresh());
+  const goTo = async (next, fromNext = false) => {   // save first, then switch section (nothing typed is lost)
+    if (next === tab) return;
+    if (open && !(await save(true))) return;
+    const f = await refresh();
+    // Save & next: point out required fields left empty here; pressing it again moves on anyway.
+    const here = (f?.missing || []).filter((m) => (tab === 'photos' ? m.key.startsWith('photo_') : m.section === tab));
+    if (open && fromNext && here.length && warned !== tab) {
+      setWarned(tab);
+      toast(`Saved. Still required here: ${here.map((m) => missingLabel(m)).join(', ')}.`, 'error');
+      return;
+    }
+    setWarned('');
+    setTab(next);
+  };
+  const act = (a, msg, body) => run(a, async () => { if (open) await save(true); return post(`/api/staff/surveys/${id}/${a}`, body); }, msg).then(() => reload());
+  const offGrid = s.system_type === 'off_grid';
+  // Photos also get their own tab (every slot in one place), just before the summary.
+  const sections = s.sections.filter((x) => x.key !== 'battery' || offGrid).flatMap((x) => (x.key === 'summary' ? [{ key: 'photos', label: 'Photos' }, x] : [x]));
+  const missingIn = (sec) => (sec === 'photos' ? s.missing.filter((m) => m.key.startsWith('photo_')).length
+    : s.missing.filter((m) => m.section === sec && (sec !== 'battery' || offGrid)).length);
+  const missingKeys = new Set(s.missing.map((m) => m.key));
+  const lbl = (k, text) => (missingKeys.has(k) ? <>{text} <span className="bad">*</span></> : text);
+
+  const DIR_DEG = { N: 0, NE: 45, E: 90, SE: 135, S: 180, SW: 225, W: 270, NW: 315 };
+  const setDirection = (v) => setData({ ...s, roof_direction: v, details: v && d.roof_azimuth_deg == null ? { ...d, roof_azimuth_deg: DIR_DEG[v] } : d });
+  const setAzimuth = (v) => {
+    const deg = v === '' ? null : v;
+    const dir = deg == null ? s.roof_direction : Object.keys(DIR_DEG)[Math.round((((deg % 360) + 360) % 360) / 45) % 8];
+    setData({ ...s, roof_direction: dir, details: { ...d, roof_azimuth_deg: deg } });
+  };
+  // Same limits as the server: our packages are 1-5 kW and need about 100 sq ft per kW.
+  const fitKw = Math.round(((Number(s.usable_area_sqft) || 0) / 100) * 10) / 10;
+  const recKw = Number(s.recommended_kw) || 0;
+  const sizeProblem = !recKw ? null
+    : s.usable_area_sqft && s.usable_area_sqft < 100 ? `Only ${s.usable_area_sqft} sq ft: too small for 1 kW. Re-measure or mark Not feasible.`
+    : recKw < 1 || recKw > 100 ? 'We quote 1 to 100 kW.'
+    : s.usable_area_sqft && recKw > fitKw + 0.01 ? `The roof fits about ${fitKw} kW.` : null;
+  const column = (k) => ({
+    roof_type: <F key={k} label={lbl(k, 'Roof type')} type="select" value={s.roof_type || ''} onChange={set(k)} options={ROOF} disabled={!open} />,
+    roof_direction: <F key={k} label={lbl(k, 'Roof facing')} type="select" value={s.roof_direction || ''} onChange={setDirection} options={[{ value: '', label: '—' }, ...DIRS]} disabled={!open} />,
+    roof_azimuth_deg: <F key={k} label="Facing (°)" type="number" min="0" max="360" step="1" value={d.roof_azimuth_deg} onChange={setAzimuth}
+                         disabled={!open} hint={S_HINT.roof_azimuth_deg} />,
+    roof_tilt: <F key={k} label="Tilt (°)" type="number" value={s.roof_tilt} onChange={set(k)} disabled={!open} />,
+    usable_area_sqft: <F key={k} label={lbl(k, 'Shadow-free area (sq ft)')} type="number" value={s.usable_area_sqft} onChange={set(k)} disabled={!open}
+                         hint={`Fits about ${((s.usable_area_sqft || 0) / 100).toFixed(1)} kW${d.roof_length_m && d.roof_width_m ? ` · roof is ${Math.round(d.roof_length_m * d.roof_width_m * 10.764)} sq ft` : ''}`} />,
+    latitude: <F key={k} label="Latitude" type="number" step="0.000001" value={s.latitude} onChange={set(k)} disabled={!open} />,
+    longitude: <F key={k} label="Longitude" type="number" step="0.000001" value={s.longitude} onChange={set(k)} disabled={!open} />,
+    shading: <F key={k} label="Overall shading" type="select" value={s.shading || 'none'} onChange={set(k)} options={SHADE} disabled={!open} />,
+    earthing_possible: <F key={k} label="Space for a new earth pit" type="checkbox" value={s.earthing_possible} onChange={set(k)} disabled={!open} />,
+    recommended_kw: <F key={k} label={lbl(k, 'Recommended size (kW)')} type="number" step="0.5" value={s.recommended_kw} onChange={set(k)} disabled={!open}
+                       hint={sizeProblem ? <span className="bad">{sizeProblem}</span> : `Requested ${s.requested_kw || '—'} kW · roof fits about ${fitKw} kW`} />,
+  }[k]);
+
+  const detail = (k) => {
+    const sp = s.spec[k];
+    const label = lbl(k, S_LABEL[k] || nice(k));
+    if (sp.kind === 'multi') return <MultiPick key={k} label={label} options={sp.options} value={d[k] || []} onChange={setD(k)} disabled={!open} />;
+    if (sp.kind === 'choice') return <F key={k} label={label} type="select" value={d[k] || ''} onChange={setD(k)} disabled={!open}
+                                        options={[{ value: '', label: '—' }, ...sp.options.map((o) => ({ value: o, label: nice(o) }))]} />;
+    if (sp.kind === 'bool' && sp.required && k !== 'declaration') {
+      return <F key={k} label={label} type="select" value={d[k] === true ? 'yes' : d[k] === false ? 'no' : ''} disabled={!open} options={YESNO}
+                onChange={(v) => setD(k)(v === '' ? null : v === 'yes')} />;
+    }
+    if (sp.kind === 'bool') return <F key={k} label={label} type="checkbox" value={d[k]} onChange={setD(k)} disabled={!open} full={k === 'declaration'} />;
+    if (sp.kind === 'num') {
+      const [lo, hi] = sp.range || [];
+      const bad = d[k] !== undefined && d[k] !== null && d[k] !== '' && (d[k] < lo || d[k] > hi);
+      return <F key={k} label={label} type="number" step="any" min={lo} max={hi} value={d[k]} onChange={setD(k)} disabled={!open}
+                hint={bad ? <span className="bad">Enter {lo} to {hi}.</span> : S_HINT[k] || (sp.range ? `${lo} to ${hi}` : undefined)} />;
+    }
+    return <F key={k} label={label} value={d[k]} onChange={setD(k)} disabled={!open} />;
+  };
+  const sectionFields = (sec) => [...(S_COLUMNS[sec] || []).map(column), ...Object.keys(s.spec).filter((k) => s.spec[k].section === sec && k !== 'declaration' && !(S_COLUMNS[sec] || []).includes(k)).map(detail)];
+
+  const addPhoto = (category, file) => {
+    if (!file) return;
+    const form = new FormData();
+    form.append('file', file);
+    form.append('category', category);
+    run('photo', () => upload(`/api/staff/surveys/${id}/photos`, form), 'Photo added.').then((r) => r && refresh());
+  };
+  const removePhoto = (pid) => run('photo', () => del(`/api/staff/surveys/${id}/photos/${pid}`), 'Photo removed.').then((r) => r && refresh());
+  const photoSlots = (sec) => {
+    const types = sec === 'photos' ? s.photo_types : s.photo_types.filter((t) => t.section === sec);
+    if (!types.length) return null;
+    return (
+      <div className="field field--full" key="photos">
+        <span className="label">Photos</span>
+        <div className="survey-photos">
+          {types.map((t) => {
+            const mine = s.photos.filter((p) => p.category === t.key);
+            const missingPhoto = t.required && !mine.length;
+            return (
+              <div key={t.key} className={`survey-photo${missingPhoto ? ' is-missing' : ''}`}>
+                <div className="survey-photo__head">
+                  <span>{t.label}{missingPhoto && open && <span className="bad"> *</span>}</span>
+                  {!t.required && <span className="small muted">optional</span>}
+                </div>
+                {mine.length > 0 && <div className="survey-photo__thumbs">
+                  {mine.map((p) => (
+                    <figure key={p.id}>
+                      <a href={`/api/staff/attachments/${p.id}`} target="_blank" rel="noreferrer"><img src={`/api/staff/attachments/${p.id}`} alt={t.label} loading="lazy" /></a>
+                      {open && <button type="button" className="survey-photo__remove" aria-label={`Remove ${t.label} photo`} onClick={() => removePhoto(p.id)}>×</button>}
+                    </figure>
+                  ))}
+                </div>}
+                {open && <label className="btn btn--secondary btn--sm survey-photo__add">
+                  {busy === 'photo' ? 'Uploading…' : mine.length ? '+ Another' : '+ Add photo'}
+                  <input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" hidden disabled={!!busy}
+                         onChange={(e) => { addPhoto(t.key, e.target.files[0]); e.target.value = ''; }} />
+                </label>}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+  const issues = d.issues || [];
+  const setIssue = (i, k, v) => setD('issues')(issues.map((x, j) => (j === i ? { ...x, [k]: v } : x)));
+
   return (
     <>
       <PageHead back={{ to: '/app/surveys', label: 'Surveys' }} eyebrow={`${s.ref} · enquiry ${s.lead_ref}`} title={s.contact_name}
                 sub={`${[s.street, s.city].filter(Boolean).join(', ') || 'No address'} · ${s.survey_date ? fmtLocal(s.survey_date) : 'No date'} · ${s.technician || 'No surveyor'}`}>
         <Pill state={s.state}>{s.state_label}</Pill>
-        {open && s.state === 'scheduled' && <button className="btn btn--primary btn--sm" disabled={!!busy} onClick={() => act('done', 'Marked visited.')}>Mark visited</button>}
+        {open && <button className="btn btn--secondary btn--sm" disabled={busy === 'save'} onClick={saveAndReload}>Save</button>}
+        {open && s.state === 'scheduled' && <button className="btn btn--primary btn--sm" disabled={!!busy} onClick={() => act('done', 'Visit submitted.')}>Submit visit</button>}
         {s.can_approve && s.state === 'done' && <button className="btn btn--primary btn--sm" disabled={!!busy} onClick={() => act('approve', 'Survey approved.')}>Approve</button>}
         {s.can_approve && ['scheduled', 'done'].includes(s.state) && <button className="btn btn--secondary btn--sm" disabled={!!busy} onClick={() => { const reason = window.prompt('Reason for rejecting?'); if (reason !== null) act('reject', 'Survey rejected.', { reason }); }}>Reject</button>}
         {s.can_approve && ['approved', 'rejected'].includes(s.state) && <button className="btn btn--secondary btn--sm" disabled={!!busy} onClick={() => act('reset', 'Survey reopened.')}>Reopen</button>}
-        {s.can_quote && <button className="btn btn--primary btn--sm" disabled={!!busy} onClick={async () => {
-          const r = await run('quote', async () => { if (open) await save(); return post(`/api/staff/surveys/${id}/quote`); }, 'Quote built from the survey.');
-          if (r) navigate(`/app/orders/${r.id}`);
+        {s.can_quote && s.result !== 'not_feasible' && <button className="btn btn--primary btn--sm" disabled={!!busy} onClick={async () => {
+          const r = await run('quote', async () => { if (open) await save(true); return post(`/api/staff/surveys/${id}/quote`); }, 'Quote built from the survey.');
+          if (r) navigate(`/app/orders/${r.id}`); else reload();
         }}>Build quote</button>}
         {s.quote && <Link className="btn btn--secondary btn--sm" to={`/app/orders/${s.quote.id}`}>Open quote {s.quote.ref}</Link>}
         {s.can_delete && <DeleteButton url={`/api/staff/surveys/${id}`} what="this survey" after="/app/surveys" />}
       </PageHead>
+      {s.rejection_reason && <p className="ws-warn">Rejected: {s.rejection_reason}</p>}
       <div className="side-grid">
-        <Section title="Roof measurements" actions={open && <button className="btn btn--primary btn--sm" disabled={busy === 'save'} onClick={save}>Save</button>}>
-          <div className="ws-form">
-            <F label="Roof type" type="select" value={s.roof_type || ''} onChange={set('roof_type')} options={ROOF} disabled={!open} />
-            <F label="Roof facing" type="select" value={s.roof_direction || ''} onChange={set('roof_direction')} options={[{ value: '', label: '—' }, ...DIRS]} disabled={!open} />
-            <F label="Tilt (°)" type="number" value={s.roof_tilt} onChange={set('roof_tilt')} disabled={!open} />
-            <F label="Shadow-free area (sq ft)" type="number" value={s.usable_area_sqft} onChange={set('usable_area_sqft')} disabled={!open} hint={`Fits about ${((s.usable_area_sqft || 0) / 100).toFixed(1)} kW`} />
-            <F label="Shading" type="select" value={s.shading || 'none'} onChange={set('shading')} options={SHADE} disabled={!open} />
-            <F label="Cable to meter (m)" type="number" value={s.cable_distance_m} onChange={set('cable_distance_m')} disabled={!open} />
-            <F label="Latitude" type="number" step="0.000001" value={s.latitude} onChange={set('latitude')} disabled={!open} />
-            <F label="Longitude" type="number" step="0.000001" value={s.longitude} onChange={set('longitude')} disabled={!open} />
-            <F label="Earthing pit possible" type="checkbox" value={s.earthing_possible} onChange={set('earthing_possible')} disabled={!open} />
-            <F label="Recommended kW" type="number" step="0.5" value={s.recommended_kw} onChange={set('recommended_kw')} disabled={!open} />
-            <F label="Notes" type="textarea" full value={s.notes} onChange={set('notes')} disabled={!open} />
-          </div>
-          {s.rejection_reason && <p className="ws-warn">Rejected: {s.rejection_reason}</p>}
+        <Section title="Site survey" actions={open && s.state === 'scheduled' && (
+          <span className={`small ${s.missing.length ? 'muted' : 'good'}`}>{s.missing.length ? `${s.missing.length} required item${s.missing.length > 1 ? 's' : ''} left` : 'Ready to submit'}</span>)}>
+          <Chips options={sections.map((x) => ({ value: x.key, label: x.label, count: open && missingIn(x.key) ? missingIn(x.key) : undefined }))}
+                 value={tab} onChange={goTo} />
+          {tab === 'photos' ? (
+            <div className="ws-form">{photoSlots('photos')}</div>
+          ) : tab === 'summary' ? (
+            <div className="ws-form">
+              <div className="field field--full">
+                <span className="label">Problems found</span>
+                {issues.length === 0 && <span className="small muted">None recorded.</span>}
+                {issues.map((x, i) => (
+                  <div key={i} className="survey-issue">
+                    <select className="select" value={x.type} disabled={!open} onChange={(e) => setIssue(i, 'type', e.target.value)}>
+                      {s.issue_types.map((t) => <option key={t} value={t}>{nice(t)}</option>)}
+                    </select>
+                    <select className="select" value={x.severity} disabled={!open} onChange={(e) => setIssue(i, 'severity', e.target.value)}>
+                      {SEVERITY.map((t) => <option key={t} value={t}>{nice(t)}</option>)}
+                    </select>
+                    <input className="input" placeholder="What and where" value={x.note || ''} disabled={!open} onChange={(e) => setIssue(i, 'note', e.target.value)} />
+                    {open && <button type="button" className="link link--btn small" onClick={() => setD('issues')(issues.filter((_, j) => j !== i))}>Remove</button>}
+                  </div>
+                ))}
+                {open && <button type="button" className="btn btn--secondary btn--sm" style={{ justifySelf: 'start' }}
+                                 onClick={() => setD('issues')([...issues, { type: 'other', severity: 'medium', note: '' }])}>Add a problem</button>}
+              </div>
+              <F label={lbl('result', 'Survey result')} type="select" value={s.result || ''} onChange={set('result')} disabled={!open}
+                 options={[{ value: '', label: '—' }, ...s.results]} />
+              {sectionFields('summary')}
+              <F label="Notes for Sales and the crew" type="textarea" full value={s.notes} onChange={set('notes')} disabled={!open} />
+              {photoSlots('summary')}
+              {detail('declaration')}
+            </div>
+          ) : (
+            <div className="ws-form">{sectionFields(tab)}{photoSlots(tab)}</div>
+          )}
+          {open && (() => {
+            const next = sections[sections.findIndex((x) => x.key === tab) + 1];
+            return (
+              <div className="survey-foot">
+                {(() => {
+                  const here = s.missing.filter((m) => (tab === 'photos' ? m.key.startsWith('photo_') : m.section === tab));
+                  return warned === tab && here.length
+                    ? <span className="ws-warn" role="alert">Still required here: {here.map(missingLabel).join(', ')}. Fill them in, or press again to skip for now.</span>
+                    : <span className="small muted">Your entries are saved when you move to another section.</span>;
+                })()}
+                <button type="button" className="btn btn--primary btn--sm" disabled={!!busy}
+                        onClick={() => (next ? goTo(next.key, true) : saveAndReload())}>
+                  {busy === 'save' ? 'Saving…' : next ? `Save & next: ${next.label} →` : 'Save'}
+                </button>
+              </div>
+            );
+          })()}
         </Section>
         <div className="stack">
           <Section title="Requirement"><KV items={[['Requested', `${s.requested_kw || '—'} kW ${sysLabel(s.system_type)}`], ['Max that fits', `${s.max_kw_fit} kW`], ['Phone', s.phone]]} /></Section>
+          <Section title="Extra parts for this site">
+            {s.parts.length ? (
+              <ul className="survey-parts">
+                {s.parts.map((p) => <li key={p.code}><span>{p.name}<span className="small muted"> · {p.reason}</span></span><strong>{p.qty}</strong></li>)}
+              </ul>
+            ) : <p className="small muted">None yet. Cable runs longer than the package, conduit, elevated or metal-roof mounting and waterproofing show up here and go on the quote.</p>}
+          </Section>
+          {open && s.missing.length > 0 && (
+            <Section title="Still to fill in">
+              <div className="chips survey-missing">
+                {s.missing.filter((m) => m.section !== 'battery' || offGrid).map((m) => (
+                  <button key={m.key} type="button" className="chip" onClick={() => goTo(m.section)}>{missingLabel(m)}</button>
+                ))}
+              </div>
+            </Section>
+          )}
           <Notes model="survey" id={s.id} notes={s.notes_log} reload={reload} />
         </div>
       </div>
@@ -338,7 +587,8 @@ export function Order() {
   const [pay, setPay] = useState({ amount: '', method: 'upi', reference: '' });
   if (error) return <ErrorBox error={error} onRetry={reload} />;
   if (!o) return <Loading />;
-  const draft = o.state === 'draft' && o.can_edit;
+  // A quote can be changed until the customer accepts it (changing a sent one takes it back to draft).
+  const draft = ['draft', 'sent'].includes(o.state) && !o.accepted_by && o.can_edit;
   const act = (a, msg, body) => run(a, () => post(`/api/staff/orders/${id}/${a}`, body), msg).then((r) => { if (r) reload(); return r; });
   const setLine = (lid, k, v) => setData({ ...o, lines: o.lines.map((l) => (l.id === lid ? { ...l, [k]: v } : l)) });
   const saveLines = () => run('lines', () => put(`/api/staff/orders/${id}/lines`, { lines: o.lines.map((l) => ({ id: l.id, qty: l.qty, discount: l.discount })) }), 'Quotation updated.').then((r) => r && reload());
@@ -396,7 +646,7 @@ export function Order() {
                 }}>Void</button></>}</li>)}</ul>
             )}
             {o.invoices.length > 0 && (
-              <ul className="list">{o.invoices.map((i) => <li key={i.id}>{i.ref} · {i.kind} · {inr(i.amount_total)} · paid {inr(i.amount_paid)} <Pill state={i.state}>{i.state}</Pill>
+              <ul className="list">{o.invoices.map((i) => <li key={i.id}><a href={`/print/invoice/${i.id}`} target="_blank" rel="noreferrer">{i.ref}</a> · {i.kind} · {inr(i.amount_total)} · paid {inr(i.amount_paid)} <Pill state={i.state}>{i.state}</Pill>
                 {o.can_money && i.state !== 'cancel' && i.amount_paid < 0.5 && <> <button type="button" className="link--btn row-del" disabled={!!busy} onClick={() => {
                   const reason = window.prompt(`Cancel invoice ${i.ref}? Give a reason:`);
                   if (reason) run('inv', () => post(`/api/staff/invoices/${i.id}/cancel`, { reason }), 'Invoice cancelled.').then((r) => r && reload());
@@ -432,7 +682,23 @@ export function Order() {
           <Section title="Linked">
             <ul className="list">
               {o.deliveries.map((d) => <li key={`d${d.id}`}><Link to={`/app/dispatch/${d.id}`}>Delivery {d.ref}</Link> <Pill state={d.state}>{d.state}</Pill></li>)}
-              {o.jobs.map((j) => <li key={`j${j.id}`}><Link to={`/app/jobs/${j.id}`}>Installation {j.ref}</Link> <Pill state={j.state}>{j.state}</Pill> <span className="muted small">{fmtLocal(j.scheduled_at)}</span></li>)}
+              {o.jobs.map((j) => (
+                <li key={`j${j.id}`}><Link to={`/app/jobs/${j.id}`}>Installation {j.ref}</Link> <Pill state={j.state}>{j.state}</Pill>{' '}
+                  <span className={`small ${j.scheduled_at ? 'muted' : 'bad'}`}>{j.scheduled_at ? fmtLocal(j.scheduled_at) : 'Waiting for Sales to schedule'}</span>
+                  {j.state === 'planned' && o.state === 'sale' && ['sales', 'director'].includes(me.role) && (
+                    <form className="schedule-form" onSubmit={(e) => {
+                      e.preventDefault();
+                      const v = e.currentTarget.elements.when.value;
+                      run('sched', () => post(`/api/staff/orders/${id}/schedule-installation`, { scheduled_at: v }),
+                        j.scheduled_at ? 'Installation moved.' : 'Installation scheduled.').then((r) => r && reload());
+                    }}>
+                      <input className="input" type="datetime-local" name="when" required min={`${new Date().toISOString().slice(0, 10)}T00:00`}
+                             defaultValue={j.scheduled_at ? j.scheduled_at.slice(0, 16).replace(' ', 'T') : ''} />
+                      <button className="btn btn--primary btn--sm" disabled={!!busy}>{j.scheduled_at ? 'Move' : 'Schedule'}</button>
+                    </form>
+                  )}
+                </li>
+              ))}
               {o.subsidy && <li><Link to={`/app/subsidy/${o.subsidy.id}`}>Subsidy {o.subsidy.ref}</Link> <Pill state={o.subsidy.state}>{o.subsidy.state}</Pill></li>}
               {o.tickets.map((t) => <li key={`t${t.id}`}><Link to={`/app/service/${t.id}`}>Request {t.ref}</Link> <Pill state={t.stage}>{t.stage}</Pill></li>)}
               {o.warranties > 0 && <li><Link to={`/app/warranties?q=${o.ref}`}>{o.warranties} warranties</Link></li>}

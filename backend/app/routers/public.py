@@ -1,5 +1,6 @@
 """Public website: savings estimate and enquiry form."""
 from fastapi import APIRouter, Body, Depends, Request
+from fastapi.responses import JSONResponse
 
 from .. import rules
 from ..db import get_db
@@ -30,6 +31,34 @@ def subsidy_states():
     """State / UT subsidy table for the Savings page and the home page averages."""
     from ..subsidy import states_payload
     return states_payload()
+
+
+@router.post("/razorpay/webhook")
+async def razorpay_webhook(request: Request, db=Depends(get_db)):
+    """Razorpay tells us a payment was captured, even if the customer closed the window before
+    our page could confirm it. Trusted only if signed with the webhook secret (Settings)."""
+    import hashlib
+    import hmac
+    import json as _json
+    raw = await request.body()
+    secret = (db.setting("razorpay_webhook_secret") or "").encode()
+    sig = request.headers.get("x-razorpay-signature") or ""
+    if not secret or not hmac.compare_digest(hmac.new(secret, raw, hashlib.sha256).hexdigest(), sig):
+        return JSONResponse({"ok": False}, status_code=400)
+    try:
+        event = _json.loads(raw)
+        pay = event["payload"]["payment"]["entity"]
+    except (ValueError, KeyError, TypeError):
+        return {"ok": True}   # an event we don't use
+    if event.get("event") not in ("payment.captured", "order.paid"):
+        return {"ok": True}
+    p = db.one("SELECT * FROM payments WHERE provider_ref = ? AND method = 'razorpay' AND state = 'pending'", pay.get("order_id"))
+    if p and abs(rules.r2(pay.get("amount", 0) / 100) - p["amount"]) < 1:
+        try:
+            rules.complete_online_payment(db, p, provider_ref=pay.get("id"))
+        except rules.RuleError:
+            pass   # already completed by the customer's page
+    return {"ok": True}
 
 
 @router.post("/enquiry")

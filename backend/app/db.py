@@ -270,6 +270,10 @@ MIGRATIONS = [
     ("deliveries", "delivered_at", "TEXT"),          # kit received at the customer's site
     ("deliveries", "vehicle", "TEXT"),               # vehicle / courier and tracking note
     ("deliveries", "expected_on", "TEXT"),           # expected delivery day
+    ("products", "location", "TEXT"),                 # warehouse rack / bin, e.g. "A-03"
+    ("products", "unit", "TEXT"),                     # pcs, m, set...
+    ("surveys", "details", "TEXT"),                   # full site survey (JSON): electrical, cabling, mounting, issues...
+    ("surveys", "result", "TEXT"),                    # technician's conclusion: feasible / conditional / not_feasible
 ]
 
 

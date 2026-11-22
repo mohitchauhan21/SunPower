@@ -1,5 +1,7 @@
 """Staff: enquiries, roof surveys, quotes & orders, customers, subsidy files."""
-from fastapi import APIRouter, Body, Depends, HTTPException
+import json
+
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, UploadFile
 
 from .. import rules
 from ..access import can_delete, can_write, need, need_delete
@@ -233,14 +235,54 @@ def survey_quote(sid: int, user=Depends(staff_only), db=Depends(get_db)):
     s, lvl = _survey(db, user, sid, write=True)
     if user["role"] not in ("technician", "sales", "director"):
         raise HTTPException(403, "You don't have access to this.")
-    return {"ok": True, "id": rules.quote_from_survey(db, db.get("surveys", sid), user)}
+    return {"ok": True, "id": rules.quote_from_survey(db, db.get("surveys", sid), user, strict=True)}
+
+
+@router.post("/surveys/{sid}/photos")
+async def survey_photo(sid: int, file: UploadFile = File(...), category: str = Form(...), user=Depends(staff_only),
+                       db=Depends(get_db)):
+    from .staff_ops import MAX_PHOTO, _image_type
+    s, _lvl = _survey(db, user, sid, write=True)
+    if s["state"] in ("approved", "rejected"):
+        raise HTTPException(400, "This survey is closed.")
+    if category not in [p[0] for p in rules.SURVEY_PHOTOS]:
+        raise HTTPException(400, "Choose what the photo shows.")
+    data = await file.read(MAX_PHOTO + 1)
+    mime = _image_type(data)
+    if not mime or len(data) > MAX_PHOTO:
+        raise HTTPException(400, "Upload a photo (JPG, PNG or WebP, up to 8 MB).")
+    aid = db.insert("attachments", {"owner_type": "survey", "owner_id": sid, "filename": (file.filename or "photo")[:120],
+                                    "mime": mime, "data": data, "note": category, "created_at": now()})
+    return {"ok": True, "id": aid}
+
+
+@router.delete("/surveys/{sid}/photos/{aid}")
+def survey_photo_delete(sid: int, aid: int, user=Depends(staff_only), db=Depends(get_db)):
+    s, _lvl = _survey(db, user, sid, write=True)
+    if s["state"] in ("approved", "rejected"):
+        raise HTTPException(400, "This survey is closed.")
+    db.exec("DELETE FROM attachments WHERE id = ? AND owner_type = 'survey' AND owner_id = ?", aid, sid)
+    return {"ok": True}
 
 
 @router.get("/surveys/{sid}")
 def survey(sid: int, user=Depends(staff_only), db=Depends(get_db)):
     s, lvl = _survey(db, user, sid)
     quote = db.one("SELECT id, ref, state FROM orders WHERE lead_id = ? AND state != 'cancel' ORDER BY id DESC LIMIT 1", s["lead_id"])
-    return {**s, "quote": quote, "can_quote": lvl in ("rw", "own") and user["role"] in ("technician", "sales", "director")
+    kit = rules.package_for(db, s["recommended_kw"] or s["requested_kw"], s["system_type"])
+    form = {
+        "details": rules.survey_details(s),
+        "spec": {k: {"section": v[0], "kind": v[1], "options": v[2] if v[1] in ("choice", "multi") else None,
+                     "range": v[2] if v[1] == "num" else None, "required": v[3]} for k, v in rules.SURVEY_FIELDS_SPEC.items()},
+        "sections": [{"key": k, "label": l} for k, l in rules.SURVEY_SECTIONS],
+        "photo_types": [{"key": c, "label": l, "required": r, "section": sec} for c, l, r, sec in rules.SURVEY_PHOTOS],
+        "issue_types": rules.ISSUE_TYPES, "results": [{"value": k, "label": l} for k, l in rules.SURVEY_RESULTS],
+        "photos": db.q("SELECT id, note AS category, filename, created_at FROM attachments WHERE owner_type = 'survey' "
+                       "AND owner_id = ? ORDER BY id", sid),
+        "missing": [{"section": a, "label": b, "key": k} for a, b, k in rules.survey_missing(db, s, s["system_type"])],
+        "parts": [{"code": p["code"], "name": p["name"], "qty": q, "reason": r} for p, q, r in rules.survey_parts(db, s, kit)] if kit else [],
+    }
+    return {**s, **form, "quote": quote, "can_quote": lvl in ("rw", "own") and user["role"] in ("technician", "sales", "director")
             and s["state"] in ("scheduled", "done", "approved") and not quote,
             "state_label": rules.label(rules.SURVEY_STATES, s["state"]), "max_kw_fit": round((s["usable_area_sqft"] or 0) / 100, 1),
             "notes_log": notes_for(db, "survey", sid), "can_edit": lvl in ("rw", "own"),
@@ -254,6 +296,14 @@ def update_survey(sid: int, body: dict = Body(default={}), user=Depends(staff_on
         raise HTTPException(400, "This survey is closed. Reset it to make changes.")
     fields = SURVEY_FIELDS if lvl == "rw" else tuple(f for f in SURVEY_FIELDS if f != "technician_id")
     vals = clean(body, fields)
+    if "details" in body:
+        if not isinstance(body["details"], dict):
+            raise HTTPException(400, "Invalid survey details.")
+        vals["details"] = json.dumps(rules.clean_survey_details(body["details"], rules.survey_details(s)))
+    if "result" in body:
+        if body["result"] not in (None, "", *dict(rules.SURVEY_RESULTS)):
+            raise HTTPException(400, "Choose the survey result.")
+        vals["result"] = body["result"] or None
     if vals.get("survey_date") is not None:
         vals["survey_date"] = rules.as_local_datetime(vals["survey_date"], "survey date")
         if vals["survey_date"] != s["survey_date"] and vals["survey_date"][:10] < rules.date.today().isoformat():
@@ -266,10 +316,15 @@ def update_survey(sid: int, body: dict = Body(default={}), user=Depends(staff_on
         if vals.get(k) is not None:
             try:
                 vals[k] = rules.as_float(vals[k], k)
-                assert 0 <= vals[k] <= (90 if k == "roof_tilt" else 100000)
+                assert 0 <= vals[k] <= {"roof_tilt": 90, "recommended_kw": 100, "cable_distance_m": 1000}.get(k, 100000)
             except (rules.RuleError, AssertionError):
+                if k == "recommended_kw":
+                    raise HTTPException(400, "Recommended size must be between 1 and 100 kW.")
                 raise HTTPException(400, "%s must be a sensible positive number." % k.replace("_", " "))
     db.update("surveys", sid, vals)
+    if vals.get("recommended_kw"):
+        from ..catalog import ensure_package
+        ensure_package(db, vals["recommended_kw"], s["system_type"])
     return {"ok": True}
 
 
@@ -278,7 +333,7 @@ def survey_action(sid: int, action: str, body: dict = Body(default={}), user=Dep
     s, lvl = _survey(db, user, sid, write=True)
     s = db.get("surveys", sid)
     if action == "done":
-        rules.survey_mark_done(db, s, user["id"])
+        rules.survey_mark_done(db, s, user["id"], strict=True)
     elif action == "approve":
         rules.survey_approve(db, s, user)
     elif action in ("reject", "reset"):
@@ -372,11 +427,20 @@ def order(oid: int, user=Depends(staff_only), db=Depends(get_db)):
     return out
 
 
+def _editable_quote(db, o, user):
+    """A quote can change until the customer accepts it. Changing a sent quote takes it back to draft,
+    so it's checked (discount approval) and sent again."""
+    if o["state"] not in ("draft", "sent") or o.get("accepted_by"):
+        raise HTTPException(400, "This quotation can't be changed any more (already accepted or confirmed).")
+    if o["state"] == "sent":
+        db.update("orders", o["id"], {"state": "draft"})
+        db.note("order", o["id"], "Quote changed after sending: back to draft, send it again.", user["id"])
+
+
 @router.put("/orders/{oid}/lines")
 def order_lines(oid: int, body: dict = Body(default={}), user=Depends(staff_only), db=Depends(get_db)):
     o = _order(db, user, oid, write=True)
-    if o["state"] != "draft":
-        raise HTTPException(400, "Only draft quotations can be changed.")
+    _editable_quote(db, o, user)
     for l in rules.as_list(body.get("lines"), dict):
         row = db.one("SELECT * FROM order_lines WHERE id = ? AND order_id = ?", rules.as_int(l.get("id")), oid)
         if not row:
@@ -393,6 +457,21 @@ def order_lines(oid: int, body: dict = Body(default={}), user=Depends(staff_only
             db.update("orders", oid, {"approval_state": None})   # a changed discount must be approved again
         db.update("order_lines", row["id"], {"qty": qty, "discount": disc})
     rules.recompute_order(db, oid)
+    return {"ok": True}
+
+
+@router.post("/orders/{oid}/schedule-installation")
+def schedule_installation(oid: int, body: dict = Body(default={}), user=Depends(staff_only), db=Depends(get_db)):
+    """Sales sets the installation date once the customer has confirmed."""
+    o = _order(db, user, oid, write=True)
+    if user["role"] not in ("sales", "director"):
+        raise HTTPException(403, "Only Sales or the Director can schedule installations.")
+    if o["state"] != "sale":
+        raise HTTPException(400, "Installations are scheduled once the order is confirmed.")
+    job = db.one("SELECT * FROM jobs WHERE order_id = ? ORDER BY id LIMIT 1", oid)
+    if not job:
+        raise HTTPException(400, "This order has no installation job.")
+    rules.schedule_installation(db, job, body.get("scheduled_at"), user)
     return {"ok": True}
 
 
@@ -437,8 +516,7 @@ def order_action(oid: int, action: str, body: dict = Body(default={}), user=Depe
     elif action == "estimate":
         rules.generation_estimate(db, o)
     elif action == "add-line":
-        if o["state"] != "draft":
-            raise HTTPException(400, "Only draft quotations can be changed.")
+        _editable_quote(db, o, user)
         p = db.get("products", rules.as_int(body.get("product_id")))
         if not p or not p["active"]:
             raise HTTPException(400, "Choose a product.")
@@ -630,8 +708,7 @@ def delete_order(oid: int, user=Depends(staff_only), db=Depends(get_db)):
 @router.delete("/orders/{oid}/lines/{line_id}")
 def delete_order_line(oid: int, line_id: int, user=Depends(staff_only), db=Depends(get_db)):
     o = _order(db, user, oid, write=True)
-    if o["state"] != "draft":
-        raise HTTPException(400, "Only draft quotations can be changed.")
+    _editable_quote(db, o, user)
     if db.val("SELECT COUNT(*) FROM order_lines WHERE order_id = ?", oid) <= 1:
         raise HTTPException(400, "A quotation needs at least one line.")
     db.exec("DELETE FROM order_lines WHERE id = ? AND order_id = ?", line_id, oid)

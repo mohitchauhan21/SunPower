@@ -168,7 +168,7 @@ def load_demo(db):
         if plan["stage"] != "installed" and len(open_jobs) < 4:
             crew = [techs[0]] + crew[:1]   # Ramesh (tech01) always has work in the demo
         for t in crew:
-            db.insert("job_techs", {"job_id": job["id"], "user_id": t})
+            db.exec("INSERT OR IGNORE INTO job_techs (job_id, user_id) VALUES (?, ?)", job["id"], t)
         if plan["stage"] == "installed":
             hours = rnd.uniform(14, 20) if plan.get("loss") else rnd.uniform(5, 8)
             db.update("jobs", job["id"], {
@@ -178,7 +178,7 @@ def load_demo(db):
                 "site_start": _ts(datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=hours))})
             db.insert("attachments", {"owner_type": "job", "owner_id": job["id"], "filename": "roof.png",
                                       "mime": "image/png", "data": PNG, "created_at": now()})
-            rules.job_finish(db, db.get("jobs", job["id"]), director)
+            rules.job_finish(db, db.get("jobs", job["id"]), director, allow_early=True)
             if plan["pay"] == "paid":
                 rest = db.get("orders", oid)["amount_total"] - rules.order_paid(db, oid)
                 if rest > 0.5:
@@ -217,9 +217,10 @@ def _backdate(db, oid, lid, sid, when, stage, rnd):
     for d in db.q("SELECT * FROM deliveries WHERE order_id = ? AND state = 'done'", oid):
         db.update("deliveries", d["id"], {"date_done": _uts(shipped)})
         db.exec("UPDATE stock_moves SET date = ? WHERE delivery_id = ?", _uts(shipped), d["id"])
-    for wr in db.q("SELECT * FROM warranties WHERE order_id = ?", oid):
-        db.update("warranties", wr["id"], {"start_date": shipped.date().isoformat(),
-                                           "end_date": rules.add_months(shipped.date(), wr["months"]).isoformat()})
+    installed = (when + timedelta(days=3)).date()
+    for wr in db.q("SELECT * FROM warranties WHERE order_id = ?", oid):   # warranties start on the installation day
+        db.update("warranties", wr["id"], {"start_date": installed.isoformat(),
+                                           "end_date": rules.add_months(installed, wr["months"]).isoformat()})
     job = db.one("SELECT * FROM jobs WHERE order_id = ?", oid)
     if stage == "installed":
         start = when + timedelta(days=3, hours=9)

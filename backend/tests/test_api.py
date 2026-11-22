@@ -14,6 +14,7 @@ from app.seed import DEMO_CODE, DEMO_PASSWORD  # noqa: E402
 from app.security import reset_rate_limits  # noqa: E402
 
 H = {"X-SunPower": "1"}
+from .survey_helper import PNG, fill_survey, payments_on  # noqa: E402,F401
 
 
 @pytest.fixture(scope="module")
@@ -132,7 +133,7 @@ def test_installation_needs_checklist_photo_kw_signature(client):
     assert up.status_code == 200 and up.json()["ok"]
 
 
-def test_dispatch_blocked_without_advance(client):
+def test_dispatch_blocked_without_advance(client, payments_on):
     login(client, "sales@sunpower.demo")
     draft = client.get("/api/staff/orders?state=draft").json()["rows"][0]
     assert client.post("/api/staff/orders/%s/confirm" % draft["id"], headers=H).json()["ok"]
@@ -360,7 +361,7 @@ def test_booking_needs_slot_and_suggests_area_technicians(client):
     assert "survey" in next(t for t in busy if t["id"] == sug[0]["id"])["busy"]
 
 
-def _book_and_visit(client):
+def _book_and_visit(client, fill=True):
     """Sales books a survey for a new enquiry with tech01; tech01 records the visit. Returns (survey_id, lead_id)."""
     from datetime import date, timedelta
     login(client, "sales@sunpower.demo")
@@ -371,8 +372,8 @@ def _book_and_visit(client):
     sid = client.post("/api/staff/leads/%s/survey" % lid, json={"technician_id": tech["id"], "survey_date": day, "slot": "morning"},
                       headers=H).json()["id"]
     login(client, "tech01@sunpower.demo")
-    assert client.patch("/api/staff/surveys/%s" % sid, json={"roof_direction": "S", "usable_area_sqft": 320, "recommended_kw": 3},
-                        headers=H).json()["ok"]
+    if fill:
+        fill_survey(client, sid, 3, area=320)
     return sid, lid
 
 
@@ -382,7 +383,7 @@ def test_technician_builds_quote_and_big_discount_needs_approval(client):
     assert r.status_code == 200, r.text
     oid = r.json()["id"]
     o = client.get("/api/staff/orders/%s" % oid).json()
-    assert o["state"] == "draft" and "financials" not in o and not o["can_confirm"]
+    assert o["state"] == "sent" and "financials" not in o and not o["can_confirm"]   # goes straight to the customer
     assert "cost" not in str(o["lines"][0].keys())
     line = o["lines"][0]
     assert client.put("/api/staff/orders/%s/lines" % oid, json={"lines": [{"id": line["id"], "qty": 1, "discount": 8}]},
@@ -422,3 +423,114 @@ def test_customer_pays_in_full_upfront_with_discount():
         assert o2["state"] == "sale" and abs(o2["amount_total"] - pay) < 1          # discount line makes the total match
         assert rules.advance_due(db, o2) == 0 and rules.order_paid(db, o["id"]) + 1 >= o2["amount_total"]
         db.rollback()
+
+
+def test_survey_submit_needs_required_fields_and_photos(client):
+    sid, _lid = _book_and_visit(client, fill=False)
+    client.patch("/api/staff/surveys/%s" % sid, json={"roof_direction": "S", "usable_area_sqft": 300}, headers=H)
+    r = client.post("/api/staff/surveys/%s/done" % sid, headers=H)
+    assert r.status_code == 400 and "Supply" in r.json()["detail"]
+    s = client.get("/api/staff/surveys/%s" % sid).json()
+    assert any(m["label"] == "Photo: Meter + nameplate" for m in s["missing"])
+    bad = client.patch("/api/staff/surveys/%s" % sid, json={"details": {"phase": "four"}}, headers=H)
+    assert bad.status_code == 400
+    bad = client.post("/api/staff/surveys/%s/photos" % sid, headers=H, data={"category": "selfie"},
+                      files={"file": ("a.png", PNG, "image/png")})
+    assert bad.status_code == 400
+    fill_survey(client, sid, 3)
+    assert client.get("/api/staff/surveys/%s" % sid).json()["missing"] == []
+    assert client.post("/api/staff/surveys/%s/done" % sid, headers=H).json()["ok"]
+
+
+def test_quote_parts_follow_the_survey(client):
+    sid, _lid = _book_and_visit(client, fill=False)
+    fill_survey(client, sid, 3, dc_cable_m=40, ac_cable_m=30, earth_cable_m=20, conduit_needed=True,
+                mounting_type="elevated", structure_height_m=2.5)
+    preview = {p["code"]: p["qty"] for p in client.get("/api/staff/surveys/%s" % sid).json()["parts"]}
+    # 3 kW kit carries 35 m DC and 21 m AC cable; the site needs 40x2x1.1 = 88 m and 30x1.1 = 33 m
+    assert preview == {"CBL-DC4": 53, "CBL-AC4": 12, "ERT-CBL": 22, "CND-25": 77, "STR-ELV": 3}
+    oid = client.post("/api/staff/surveys/%s/quote" % sid, headers=H).json()["id"]
+    lines = client.get("/api/staff/orders/%s" % oid).json()["lines"]
+    extra = {l["description"].split(" (site")[0]: l["qty"] for l in lines if "(site:" in l["description"]}
+    assert len(extra) == 5 and 53 in extra.values()
+
+
+def test_not_feasible_survey_cannot_be_quoted(client):
+    sid, _lid = _book_and_visit(client, fill=False)
+    fill_survey(client, sid, 3, result="not_feasible", issues=[{"type": "weak_structure", "severity": "critical",
+                                                                 "note": "Cracked slab"}])
+    r = client.post("/api/staff/surveys/%s/quote" % sid, headers=H)
+    assert r.status_code == 400 and "not feasible" in r.json()["detail"]
+    assert client.post("/api/staff/surveys/%s/done" % sid, headers=H).json()["ok"]
+    s = client.get("/api/staff/surveys/%s" % sid).json()
+    assert s["state"] == "done" and s["details"]["issues"][0]["type"] == "weak_structure"
+
+
+def test_survey_demand_reaches_the_warehouse(client):
+    sid, _lid = _book_and_visit(client, fill=False)
+    fill_survey(client, sid, 3, dc_cable_m=40, mounting_type="elevated")
+    assert client.post("/api/staff/surveys/%s/done" % sid, headers=H).json()["ok"]
+    login(client, "warehouse@sunpower.demo")
+    d = client.get("/api/staff/demand").json()
+    mine = next(x for x in d["surveys"] if x["survey_id"] == sid)
+    codes = {i["code"]: i["qty"] for i in mine["items"]}
+    assert codes["PNL-540"] > 0 and codes["STR-ELV"] == 3 and codes["CBL-DC4"] == 35 + 53   # package cable + extra the survey measured
+    row = next(i for i in d["items"] if i["code"] == "STR-ELV")
+    assert row["survey_demand"] >= 3 and "shortfall" in row
+    login(client, "tech01@sunpower.demo")   # read-only stock users see totals, never customer names
+    assert "surveys" not in client.get("/api/staff/demand").json()
+
+
+def test_survey_size_must_be_sold_and_fit_the_roof(client):
+    sid, _lid = _book_and_visit(client, fill=False)
+    fill_survey(client, sid, 45, area=300)
+    r = client.post("/api/staff/surveys/%s/done" % sid, headers=H)
+    assert r.status_code == 400 and "fits about 3" in r.json()["detail"]   # but the roof must hold it
+    r = client.patch("/api/staff/surveys/%s" % sid, json={"recommended_kw": 145}, headers=H)
+    assert r.status_code == 400 and "1 and 100 kW" in r.json()["detail"]
+    fill_survey(client, sid, 45, area=4500, photos=False)
+    r = client.post("/api/staff/surveys/%s/done" % sid, headers=H)
+    assert r.status_code == 200, r.text                                # 45 kW gets its own package now
+    fill_survey(client, sid, 4, area=300, photos=False)   # 4 kW needs ~400 sq ft
+    r = client.post("/api/staff/surveys/%s/quote" % sid, headers=H)
+    assert r.status_code == 400 and "fits about 3" in r.json()["detail"]
+    assert client.patch("/api/staff/surveys/%s" % sid, json={"recommended_kw": 4545}, headers=H).status_code == 400
+    fill_survey(client, sid, 1, area=39, photos=False)   # roof too small for any package
+    r = client.post("/api/staff/surveys/%s/quote" % sid, headers=H)
+    assert r.status_code == 400 and "too small" in r.json()["detail"]
+    fill_survey(client, sid, 3, area=300, photos=False)
+    oid = client.post("/api/staff/surveys/%s/quote" % sid, headers=H).json()["id"]
+    lines = client.get("/api/staff/orders/%s" % oid).json()["lines"]
+    kit = next(l for l in lines if "Solar System" in l["description"])
+    assert kit["tax_rate"] == 5                                        # GST on solar equipment since 22 Sep 2025
+
+
+def test_package_parts_cant_be_retired_and_install_needs_the_kit(client):
+    login(client, "warehouse@sunpower.demo")
+    pnl = next(p for p in client.get("/api/staff/products").json()["rows"] if p["code"] == "PNL-540")
+    r = client.delete("/api/staff/products/%s" % pnl["id"], headers=H)
+    assert r.status_code == 400 and "package" in r.json()["detail"]
+    login(client, "director@sunpower.demo")
+    from datetime import date
+    job = next(j for j in client.get("/api/staff/jobs").json()["rows"] if j["state"] == "planned")
+    det = client.get("/api/staff/jobs/%s" % job["id"]).json()
+    client.patch("/api/staff/jobs/%s" % job["id"], json={"scheduled_at": date.today().isoformat() + "T09:00"}, headers=H)
+    r = client.post("/api/staff/jobs/%s/start" % job["id"], headers=H)
+    if not det.get("dispatched"):
+        assert r.status_code == 400 and "shipped" in r.json()["detail"]
+
+
+def test_large_system_gets_its_own_package(client):
+    sid, _lid = _book_and_visit(client, fill=False)
+    fill_survey(client, sid, 35, area=3600)
+    preview = client.get("/api/staff/surveys/%s" % sid).json()
+    assert preview["missing"] == []
+    oid = client.post("/api/staff/surveys/%s/quote" % sid, headers=H).json()["id"]
+    o = client.get("/api/staff/orders/%s" % oid).json()
+    kit_line = next(l for l in o["lines"] if "Solar System 35 kW" in l["description"])
+    login(client, "warehouse@sunpower.demo")
+    rows = client.get("/api/staff/products").json()["rows"]
+    kit = next(p for p in rows if p["is_kit"] and p["kw"] == 35 and p["system_type"] == "on_grid")
+    parts = {l["code"]: l["qty"] for l in client.get("/api/staff/kits/%s" % kit["id"]).json()["lines"]}
+    assert parts["PNL-540"] == 65 and parts["INV-35KW"] == 1 and parts["STR-1KW"] == 35   # 35 kW / 540 W panels
+    assert kit_line["price_unit"] > 0
