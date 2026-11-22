@@ -73,7 +73,7 @@ export const api = {
   // My Account (customers)
   myOverview: () => get('/api/my/overview'),
   myQuote: (id) => get(`/api/my/quote/${id}`),
-  acceptQuote: (id, name) => post(`/api/my/quote/${id}/accept`, { name }),
+  acceptQuote: (id, name, plan) => post(`/api/my/quote/${id}/accept`, { name, plan }),
   payOrder: (order_id, kind) => post('/api/my/order/pay', { order_id, kind }),
   confirmTestPayment: (payment_id, card) => post('/api/my/payment/test/confirm', { payment_id, card }),
   verifyRazorpay: (values) => post('/api/my/payment/razorpay/verify', values),

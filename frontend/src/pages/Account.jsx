@@ -39,7 +39,7 @@ function Overview({ data, reload }) {
         <h3>No solar system on your account yet.</h3>
         <p className="muted">Book a free roof survey and your enquiry, quote and installation will show up here.</p>
         <div className="actions">
-          <Link to="/quote" className="btn btn--primary">Book a free survey</Link>
+          <Link to="/book-survey" className="btn btn--primary">Book a free survey</Link>
           <Link to="/estimate" className="link">Estimate my savings</Link>
         </div>
       </div>
@@ -49,14 +49,17 @@ function Overview({ data, reload }) {
     <div className="stack">
       <div className="add-system">
         <div><strong>Want solar on another roof?</strong><span className="muted small"> Add a second system and we’ll book a free survey.</span></div>
-        <Link to="/quote" className="btn btn--secondary btn--sm">+ Add another system</Link>
+        <Link to="/book-survey" className="btn btn--secondary btn--sm">+ Add another system</Link>
       </div>
-      {orders.map((o) => (
-        <article key={o.id} className="card card--outline order">
+      {/* Orders and enquiries in one list, newest first (order date / enquiry received; both UTC "YYYY-MM-DD HH:MM:SS") */}
+      {[...orders.map((o) => ({ kind: 'order', when: o.date || '', o })), ...enquiries.map((e) => ({ kind: 'enquiry', when: e.created || '', e }))]
+        .sort((x, y) => y.when.localeCompare(x.when))
+        .map(({ kind, o, e }) => (kind === 'order' ? (
+        <article key={`o${o.id}`} className="card card--outline order">
           <header className="order__head">
             <div>
               <h3>{o.kw ? `${o.kw} kW rooftop solar` : 'Solar system'}</h3>
-              <p className="muted small">{o.quote_pending ? 'Quotation' : 'Order'} {o.name} · {fmtDate(o.date)}</p>
+              <p className="muted small">{o.project ? `Project ${o.project} · ` : ''}{o.quote_pending ? 'Quotation' : 'Order'} {o.name} · {fmtDate(o.date)}</p>
             </div>
             <span className={`pill ${o.quote_pending ? 'pill--warn' : o.steps[o.steps.length - 1].done ? 'pill--ok' : ''}`}>
               {o.quote_pending ? 'Waiting for your approval' : o.steps[o.steps.length - 1].done ? 'Installed' : 'In progress'}
@@ -83,13 +86,13 @@ function Overview({ data, reload }) {
             <a className="btn btn--secondary btn--sm" href={o.pdf_url} target="_blank" rel="noreferrer">Download PDF</a>
           </div>
         </article>
-      ))}
-      {enquiries.map((e) => (
-        <article key={e.id} className="card card--outline order">
+      ) : (
+        <article key={`e${e.id}`} className="card card--outline order">
           <header className="order__head">
             <div>
+              <strong className="order__ref">Enquiry {e.name}</strong>
               <h3>{e.kw ? `${e.kw} kW enquiry` : 'Solar enquiry'}</h3>
-              <p className="muted small">Received {fmtDate(e.created)}</p>
+              <p className="muted small">Project {e.project || e.name} · received {fmtDate(e.created)}</p>
             </div>
             <span className={`pill ${e.closed ? '' : 'pill--warn'}`}>{e.status || e.stage}</span>
           </header>
@@ -111,7 +114,7 @@ function Overview({ data, reload }) {
             }}>Cancel this enquiry</button>
           </div>
         </article>
-      ))}
+      )))}
     </div>
   );
 }

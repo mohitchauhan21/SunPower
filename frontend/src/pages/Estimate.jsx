@@ -219,7 +219,7 @@ export default function Estimate() {
               {est.units > 0 && est.coverage < 100 && (
                 <p className="est__note" role="note">
                   Covers about {est.coverage}% of your usage{custom ? '' : ' (10 kW is the largest home system)'}. The rest still comes from the grid.
-                  {!custom && <> For more, <Link to="/quote" className="link">request a custom quote</Link>.</>}
+                  {!custom && <> For more, <Link to="/book-survey" className="link">book a survey for a custom system</Link>.</>}
                 </p>
               )}
               <p className="muted small" style={{ marginTop: 10 }}>
@@ -244,7 +244,7 @@ export default function Estimate() {
                           monthly_bill: mode === 'bill' ? bill : Math.round(est.units * (est.tariff || 8)),
                           custom: custom ? { costPerKw: est.cost_per_kw, tariff: est.tariff } : null
                         });
-                        navigate('/quote?from=estimate');
+                        navigate('/book-survey?from=estimate');
                       }}>Get a quote for {est.kw} kW</button>
             </>
           ) : (

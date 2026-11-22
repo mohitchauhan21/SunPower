@@ -151,3 +151,27 @@ html, body { overflow-x: clip; }
 @media (prefers-reduced-motion: reduce) {
   .fade-up, .ws-page, .today-stat, .today-card, .tour__card, .tour__body, .tour__backdrop, .bars__bar { animation: none !important; }
 }
+
+/* ---------- logo: two-tone wordmark next to the mark ---------- */
+.logo { gap: 9px; }
+.logo__mark { flex: none; filter: drop-shadow(0 1px 2px rgba(232, 116, 12, 0.18)); }
+.logo__word { font-weight: 700; letter-spacing: -0.035em; color: var(--ink); }
+.logo__sun-word {
+  background: linear-gradient(180deg, #f9b43a 0%, #e8740c 100%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+
+
+/* ---------- home page: Grainient background (pages/Home.jsx) ---------- */
+.home-bg { position: fixed; inset: 0; z-index: -1; pointer-events: none; background: #fff; }
+/* While the home page is open, its grey bands become frosted glass so the gradient flows through. */
+body:has(.home-bg) .section--alt { background: rgba(255, 255, 255, 0.55); -webkit-backdrop-filter: blur(18px) saturate(140%); backdrop-filter: blur(18px) saturate(140%); }
+body:has(.home-bg) .section--alt .card { background: rgba(255, 255, 255, 0.85); }
+body:has(.home-bg) .footer { background: rgba(245, 245, 247, 0.8); -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px); }
+
+/* ---------- My account: the enquiry number above each enquiry card's title ---------- */
+.order__ref { display: block; margin-bottom: 4px; font-size: 14px; font-weight: 700; letter-spacing: 0.01em; color: var(--ink); }
+
+/* ---------- Today: each card title opens its list (same filter, same count) ---------- */
+.today-card__link { color: inherit; }
+.today-card__link:hover { color: var(--accent); }

@@ -109,6 +109,13 @@ export function ErrorBox({ error, onRetry }) {
 
 /** Data table. columns: [{key, label, render?, num?}] ; onRow(row) makes rows clickable links. */
 export function Table({ columns, rows, rowLink, empty = 'Nothing here yet.' }) {
+  const navigate = useNavigate();
+  // A click anywhere on a row opens the record (the first cell's link keeps keyboard access);
+  // clicks on other controls in the row, or while selecting text, are left alone.
+  const openRow = (r) => (e) => {
+    if (e.target.closest('a, button, input, select, textarea, label') || window.getSelection()?.toString()) return;
+    navigate(rowLink(r));
+  };
   return (
     <div className="table-card">
       <div className="table-scroll">
@@ -116,7 +123,7 @@ export function Table({ columns, rows, rowLink, empty = 'Nothing here yet.' }) {
           <thead><tr>{columns.map((c) => <th key={c.key} className={c.num ? 'num' : ''}>{c.label}</th>)}</tr></thead>
           <tbody>
             {rows.length ? rows.map((r) => (
-              <tr key={r.id ?? JSON.stringify(r)} className={rowLink ? 'is-link' : ''}>
+              <tr key={r.id ?? JSON.stringify(r)} className={rowLink ? 'is-link' : ''} onClick={rowLink ? openRow(r) : undefined}>
                 {columns.map((c, i) => {
                   const v = c.render ? c.render(r) : r[c.key];
                   return (
@@ -261,3 +268,8 @@ export const toLocalInput = (v) => {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
 };
 export const fromLocalInput = (v) => (v ? v.replace('T', ' ') + ':00' : null);
+/** Today's date on this device as "YYYY-MM-DD" (local, not UTC): the earliest day a date picker allows. */
+export const todayLocal = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};

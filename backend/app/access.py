@@ -22,7 +22,7 @@ ACCESS = {
     "dashboard": {"director": "rw", "sales": "r", "warehouse": "r", "technician": "r", "support": "r"},
     "leads": {"director": "rw", "sales": "rw", "support": "r"},
     "surveys": {"director": "rw", "sales": "rw", "support": "r", "technician": "own"},
-    "orders": {"director": "rw", "sales": "rw", "support": "r", "warehouse": "r"},
+    "orders": {"director": "rw", "sales": "rw", "support": "r", "warehouse": "r", "technician": "own"},
     "deliveries": {"director": "rw", "warehouse": "rw", "sales": "r"},
     "stock": {"director": "rw", "warehouse": "rw", "sales": "r", "support": "r", "technician": "r"},
     "jobs": {"director": "rw", "sales": "r", "warehouse": "r", "support": "r", "technician": "own"},
@@ -37,9 +37,11 @@ ACCESS = {
 
 # Who may delete (or void / retire) records in each area.
 DELETE = {
-    "leads": ("director", "sales"),        # enquiries without a confirmed order
-    "surveys": ("director", "sales"),      # surveys not used by a quote
-    "orders": ("director", "sales"),       # draft / sent quotations only (confirmed: cancel instead)
+    # Sales, technicians and customers never delete records: Sales marks enquiries lost, rejects
+    # surveys and cancels quotes instead (customers can only cancel their own new enquiry / request).
+    "leads": ("director",),                # enquiries without a confirmed order
+    "surveys": ("director",),              # surveys not used by a quote
+    "orders": ("director",),               # draft / sent quotations only (confirmed: cancel instead)
     "customers": ("director",),            # customers with no orders, enquiries or requests
     "subsidies": ("director",),
     "stock": ("director",),                # retire a product (kept for history, hidden from lists)

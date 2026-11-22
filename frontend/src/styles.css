@@ -600,3 +600,17 @@ p { margin: 0; }
 .portal-pick .tabs { justify-self: start; }
 .google-box { display: grid; gap: 6px; justify-items: center; min-height: 44px; }
 .google-box__btn { width: 100%; display: flex; justify-content: center; }
+
+.choices.choices--3 { grid-template-columns: repeat(3, 1fr); }
+
+/* ---------- payment plans ---------- */
+.plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.plan { text-align: left; display: grid; gap: 6px; padding: 16px 18px; border-radius: 16px; border: 1px solid var(--line-strong);
+  background: #fff; cursor: pointer; font: inherit; color: inherit; }
+.plan.is-active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent) inset; }
+.plan__amt { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
+
+/* ---------- sign in: demo account buttons (temporary) ---------- */
+.demo-logins { display: grid; gap: 8px; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
+.demo-logins__list { display: flex; flex-wrap: wrap; gap: 8px; }
+.demo-logins__list .is-active { box-shadow: 0 0 0 2px var(--accent, #0071e3) inset; }

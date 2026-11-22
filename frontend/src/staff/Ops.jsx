@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api, del, fmtDate, fmtLocal, get, inr, patch, post, upload } from '../api.js';
 import { useAuth } from '../auth.jsx';
 import {
-  Chips, DeleteButton, ErrorBox, F, KV, Loading, Notes, PageHead, Pill, Search, Section, Table, fromLocalInput, toLocalInput,
+  Chips, DeleteButton, ErrorBox, F, KV, Loading, Notes, PageHead, Pill, Search, Section, Table, fromLocalInput, toLocalInput, todayLocal,
   useAction, useCan, useLoad
 } from './ui.jsx';
 
@@ -26,7 +26,8 @@ export function Deliveries() {
         <Search value={q} onChange={setQ} placeholder="Customer or ref" />
       </PageHead>
       <Chips value={state} onChange={setState} options={[{ value: '', label: 'All' }, { value: 'ready', label: 'Ready', count: c.ready || 0 },
-        { value: 'waiting', label: 'Waiting for advance', count: c.waiting || 0 }, { value: 'done', label: 'Dispatched', count: c.done || 0 }]} />
+        { value: 'packed', label: 'Packed', count: c.packed || 0 }, { value: 'waiting', label: 'Waiting for advance', count: c.waiting || 0 },
+        { value: 'done', label: 'Dispatched', count: c.done || 0 }, { value: 'delivered', label: 'Delivered', count: c.delivered || 0 }]} />
       {error ? <ErrorBox error={error} onRetry={reload} /> : !data ? <Loading /> : (
         <Table rows={data.rows} rowLink={(d) => `/app/dispatch/${d.id}`} empty="Nothing to dispatch."
           columns={[{ key: 'ref', label: 'Delivery' }, { key: 'order_ref', label: 'Order' }, { key: 'customer', label: 'Customer' },
@@ -45,7 +46,7 @@ export function Delivery() {
   const [scan, setScan] = useState({});
   const [override, setOverride] = useState(false);
   useEffect(() => {
-    if (!d || d.state === 'done') return;
+    if (!d || ['done', 'delivered'].includes(d.state)) return;
     // pre-fill with the oldest serials in stock; the user can change them
     const init = {};
     d.lines.forEach((l) => {
@@ -56,7 +57,8 @@ export function Delivery() {
   }, [d]);
   if (error) return <ErrorBox error={error} onRetry={reload} />;
   if (!d) return <Loading />;
-  const open = d.state !== 'done' && d.can_edit;
+  const shipped = ['done', 'delivered'].includes(d.state);   // dispatched from the warehouse (and maybe delivered)
+  const open = !shipped && d.can_edit;
   const validate = () => {
     const serials = Object.fromEntries(Object.entries(scan).map(([k, v]) => [k, v.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean)]));
     run('go', () => post(`/api/staff/deliveries/${id}/validate`, { serials, override }), (r) => `Dispatched. ${r.warranties} warranties started.`).then((r) => r && reload());
@@ -66,9 +68,13 @@ export function Delivery() {
       <PageHead back={{ to: '/app/dispatch', label: 'Dispatch' }} eyebrow={`${d.ref} · order ${d.order_ref}`} title={d.customer}
                 sub={[d.street, d.city, d.phone].filter(Boolean).join(' · ')}>
         <Pill state={d.state}>{d.state_label}</Pill>
-        {open && <button className="btn btn--primary btn--sm" disabled={busy === 'go' || (d.advance_due > 0 && !override)} onClick={validate}>Dispatch kit</button>}
+        {open && d.state === 'ready' && <button className="btn btn--secondary btn--sm" disabled={!!busy}
+          onClick={() => run('pack', () => post(`/api/staff/deliveries/${id}/pack`), 'Kit marked packed.').then((r) => r && reload())}>Mark packed</button>}
+        {open && <button className="btn btn--primary btn--sm" disabled={!!busy || (d.advance_due > 0 && !override)} onClick={validate}>Dispatch kit</button>}
+        {d.can_edit && d.state === 'done' && <button className="btn btn--primary btn--sm" disabled={!!busy}
+          onClick={() => run('deliver', () => post(`/api/staff/deliveries/${id}/deliver`), 'Marked delivered to the site.').then((r) => r && reload())}>Mark delivered</button>}
       </PageHead>
-      {d.advance_due > 0 && d.state !== 'done' && (
+      {d.advance_due > 0 && !shipped && (
         <div className="ws-banner ws-banner--bad">
           Advance not paid: {inr(d.advance_due)} still due ({inr(d.paid)} of {inr(d.advance_needed)} received). The kit can’t leave yet.
           {d.can_override && <label className="ws-check" style={{ marginTop: 8 }}><input type="checkbox" checked={override} onChange={(e) => setOverride(e.target.checked)} /><span>Director override: dispatch anyway</span></label>}
@@ -87,7 +93,7 @@ export function Delivery() {
                     <td className={`num ${l.qty_on_hand < l.qty && open ? 'bad' : ''}`}>{l.qty_on_hand}</td>
                     <td>
                       {l.tracking === 'none' ? <span className="muted">—</span>
-                        : d.state === 'done' ? <code className="serials">{l.serials.join(', ')}</code>
+                        : shipped ? <code className="serials">{l.serials.join(', ')}</code>
                         : l.tracking === 'serial'
                           ? <textarea className="textarea textarea--mono" rows={Math.min(Math.max(l.qty, 1), 4)} value={scan[l.id] || ''} disabled={!open}
                                       onChange={(e) => setScan({ ...scan, [l.id]: e.target.value })} aria-label={`Serials for ${l.name}`} placeholder="One serial per line" />
@@ -101,7 +107,7 @@ export function Delivery() {
           </div>
         </Section>
         <div className="stack">
-          <Section title="Order"><KV items={[['Order', <Link key="o" to={`/app/orders/${d.order_id}`}>{d.order_ref}</Link>], ['Order total', inr(d.amount_total)], ['Paid so far', inr(d.paid)], ['Dispatched', fmtDate(d.date_done, true)]]} /></Section>
+          <Section title="Order"><KV items={[['Order', <Link key="o" to={`/app/orders/${d.order_id}`}>{d.order_ref}</Link>], ['Order total', inr(d.amount_total)], ['Paid so far', inr(d.paid)], ['Packed', fmtDate(d.packed_at, true) || '—'], ['Dispatched', fmtDate(d.date_done, true) || '—'], ['Delivered', fmtDate(d.delivered_at, true) || '—']]} /></Section>
           <Notes model="delivery" id={d.id} notes={d.notes} reload={reload} />
         </div>
       </div>
@@ -209,7 +215,7 @@ export function Jobs() {
   const { me } = useAuth();
   const [state, setState] = useParam('state', me.role === 'technician' ? 'open' : '');
   const [q, setQ] = useParam('q');
-  const { data, error, reload } = useLoad(() => get('/api/staff/jobs', { state: state === 'open' ? '' : state, q }), [state, q]);
+  const { data, error, reload } = useLoad(() => get('/api/staff/jobs', { state, q }), [state, q]);   // 'open' = not finished (server-side)
   const rows = (data?.rows || []).filter((j) => state !== 'open' || j.state !== 'done');
   const tech = me.role === 'technician';
   return (
@@ -218,8 +224,8 @@ export function Jobs() {
                 sub={tech ? 'Your assigned rooftops. Start the job on site, finish the checklist, photos and signature.' : 'The crew schedule for every confirmed order.'}>
         <Search value={q} onChange={setQ} placeholder="Customer, ref, city" />
       </PageHead>
-      <Chips value={state} onChange={setState} options={[{ value: 'open', label: 'To do' }, { value: '', label: 'All' },
-        { value: 'planned', label: 'Planned' }, { value: 'in_progress', label: 'On site' }, { value: 'done', label: 'Completed' }]} />
+      <Chips value={state} onChange={setState} options={[{ value: 'open', label: 'To do', count: data?.counts?.open || 0 }, { value: '', label: 'All' },
+        ...[['planned', 'Planned'], ['in_progress', 'On site'], ['done', 'Completed']].map(([value, label]) => ({ value, label, count: data?.counts?.[value] || 0 }))]} />
       {error ? <ErrorBox error={error} onRetry={reload} /> : !data ? <Loading /> : tech ? (
         <div className="job-cards">
           {rows.map((j) => (
@@ -313,7 +319,6 @@ export function Job() {
       <PageHead back={{ to: '/app/jobs', label: 'Jobs' }} eyebrow={`${j.ref} · order ${j.order_ref}`} title={j.customer}
                 sub={`${j.kw_planned} kW ${j.system_type === 'off_grid' ? 'Off-Grid' : 'On-Grid'} · ${fmtLocal(j.scheduled_at)}`}>
         <Pill state={j.state}>{j.state_label}</Pill>
-        {j.phone && <a className="btn btn--secondary btn--sm" href={`tel:${j.phone}`}>Call customer</a>}
         {j.street && <a className="btn btn--secondary btn--sm" target="_blank" rel="noreferrer" href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([j.street, j.city].join(', '))}`}>Directions</a>}
         {j.certificate_url && <a className="btn btn--secondary btn--sm" href={j.certificate_url} target="_blank" rel="noreferrer">Certificate</a>}
         {j.can_delete && j.state === 'planned' && <DeleteButton url={`/api/staff/jobs/${id}`} what="this installation job" after="/app/jobs" />}
@@ -372,7 +377,7 @@ export function Job() {
           <Section title="Crew & schedule" actions={j.can_assign && j.state !== 'done' && <button className="btn btn--secondary btn--sm" disabled={busy === 'save'} onClick={() => save('Schedule saved.').then((r) => r && reload())}>Save</button>}>
             {j.can_assign && j.state !== 'done' ? (
               <>
-                <F label="Scheduled" type="datetime-local" value={toLocalInput(j.scheduled_at)} onChange={(v) => set('scheduled_at')(fromLocalInput(v))} />
+                <F label="Scheduled" type="datetime-local" min={`${todayLocal()}T00:00`} value={toLocalInput(j.scheduled_at)} onChange={(v) => set('scheduled_at')(fromLocalInput(v))} />
                 <div className="crew-pick">
                   {(techs.data || []).map((t) => {
                     const on = j.techs.some((x) => x.id === t.id);
@@ -409,8 +414,9 @@ export function Tickets() {
         {canCreate && <button className="btn btn--primary btn--sm" onClick={() => setAdding(!adding)}>{adding ? 'Close' : 'New request'}</button>}
       </PageHead>
       {adding && <NewTicket onDone={() => { setAdding(false); reload(); }} />}
-      <Chips value={stage} onChange={setStage} options={[{ value: 'open', label: 'Open' }, { value: '', label: 'All' },
-        ...(data?.stages || []).filter((s) => s.value !== 'cancel')]} />
+      <Chips value={stage} onChange={setStage} options={[{ value: 'active', label: 'To work on', count: data?.counts?.active || 0 },
+        { value: 'open', label: 'Open', count: data?.counts?.open || 0 }, { value: '', label: 'All' },
+        ...(data?.stages || []).filter((s) => s.value !== 'cancel').map((s) => ({ ...s, count: data?.counts?.[s.value] || 0 }))]} />
       {error ? <ErrorBox error={error} onRetry={reload} /> : !data ? <Loading /> : (
         <Table rows={data.rows} rowLink={(t) => `/app/service/${t.id}`} empty="No requests."
           columns={[{ key: 'ref', label: 'Request' }, { key: 'customer', label: 'Customer' }, { key: 'product', label: 'Equipment', render: (t) => t.product || '—' },
@@ -495,7 +501,6 @@ export function Ticket() {
                 sub={[t.product, t.serial && `serial ${t.serial}`, t.order_ref && `order ${t.order_ref}`].filter(Boolean).join(' · ') || 'Equipment not specified'}>
         <Pill state={t.under_warranty ? 'done' : 'waiting'}>{t.under_warranty ? 'Under warranty – free' : 'Out of warranty – billable'}</Pill>
         <Pill state={t.stage}>{t.stage_label}</Pill>
-        {t.phone && <a className="btn btn--secondary btn--sm" href={`tel:${t.phone}`}>Call</a>}
         {t.can_edit && (T_NEXT[t.stage] || []).map(([a, label]) => <button key={a} className={`btn btn--sm ${a === 'reopen' ? 'btn--secondary' : 'btn--primary'}`} disabled={!!busy} onClick={() => act(a, `${label}.`)}>{label}</button>)}
         {t.can_delete && !t.invoice && <DeleteButton url={`/api/staff/tickets/${id}`} what="this request" after="/app/service" />}
       </PageHead>

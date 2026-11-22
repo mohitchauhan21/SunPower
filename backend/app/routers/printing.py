@@ -93,6 +93,8 @@ def quote(order_id: int, request: Request, token: str = "", db=Depends(get_db)):
                                          ("%g%%" % l["discount"]) if l["discount"] else "–", l["tax_rate"], _m(l["subtotal"]))
         for l in lines)
     title = ("Quotation" if o["state"] in ("draft", "sent") else "Order") + " " + o["ref"]
+    if lead and lead.get("project_ref"):
+        title += " · Project " + lead["project_ref"]
     est = ""
     if o["est_kwh_year"]:
         est = ("<div class='box'><b>Your solar system at a glance</b><div class='grid' style='margin-top:8px'>"

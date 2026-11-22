@@ -10,7 +10,7 @@ router = APIRouter(prefix="/api/staff")
 
 LEAD_FIELDS = ("contact_name", "phone", "email", "street", "city", "state", "requested_kw", "system_type", "subsidy_requested",
                "monthly_bill", "monthly_units", "roof_area_sqft", "grid_suitable", "discom", "consumer_no", "notes",
-               "salesperson_id", "next_action", "next_action_due")
+               "salesperson_id", "next_action", "next_action_due", "preferred_date", "preferred_slot")
 SURVEY_FIELDS = ("technician_id", "survey_date", "roof_type", "roof_direction", "roof_tilt", "usable_area_sqft",
                  "shading", "cable_distance_m", "earthing_possible", "latitude", "longitude", "recommended_kw", "notes")
 
@@ -22,7 +22,7 @@ def found(row, message):
 
 
 def like(q):
-    return "%%%s%%" % (q or "").strip()
+    return "%%%s%%" % rules.text(q).strip()
 
 
 def notes_for(db, model, res_id):
@@ -35,6 +35,8 @@ def clean(body, fields):
     for k in fields:
         if k in body:
             v = body[k]
+            if isinstance(v, (list, dict)):   # every field cleaned here is a single value
+                raise rules.RuleError("%s has an invalid value." % k.replace("_", " ").capitalize())
             out[k] = v.strip() if isinstance(v, str) else v
             if out[k] == "":
                 out[k] = None
@@ -51,7 +53,7 @@ def people(role: str = "", user=Depends(staff_only), db=Depends(get_db)):
 
 @router.post("/notes")
 def add_note(body: dict = Body(default={}), user=Depends(staff_only), db=Depends(get_db)):
-    model, res_id, text = body.get("model"), int(body.get("res_id") or 0), (body.get("body") or "").strip()
+    model, res_id, text = rules.text(body.get("model")), rules.as_int(body.get("res_id")), rules.text(body.get("body")).strip()
     area = {"lead": "leads", "survey": "surveys", "order": "orders", "delivery": "deliveries", "job": "jobs",
             "ticket": "tickets", "subsidy": "subsidies"}.get(model)
     if not area or not text:
@@ -85,8 +87,8 @@ def leads(stage: str = "", q: str = "", mine: int = 0, user=Depends(staff_only),
         sql += " AND l.stage = ?"
         args.append(stage)
     if q:
-        sql += " AND (l.contact_name LIKE ? OR l.phone LIKE ? OR l.ref LIKE ? OR l.city LIKE ?)"
-        args += [like(q)] * 4
+        sql += " AND (l.contact_name LIKE ? OR l.phone LIKE ? OR l.ref LIKE ? OR l.city LIKE ? OR l.project_ref LIKE ?)"
+        args += [like(q)] * 5
     if mine:
         sql += " AND l.salesperson_id = ?"
         args.append(user["id"])
@@ -116,6 +118,7 @@ def lead(lid: int, user=Depends(staff_only), db=Depends(get_db)):
     surveys = db.q("SELECT s.*, u.name AS technician FROM surveys s LEFT JOIN users u ON u.id = s.technician_id "
                    "WHERE s.lead_id = ? ORDER BY s.id DESC", lid)
     orders = db.q("SELECT id, ref, state, amount_total, kw, date_order FROM orders WHERE lead_id = ? ORDER BY id DESC", lid)
+    l["preferred_slot_label"] = dict(rules.SURVEY_SLOTS).get(l.get("preferred_slot"), "")
     for s in surveys:
         s["state_label"] = rules.label(rules.SURVEY_STATES, s["state"])
     for o in orders:
@@ -134,14 +137,16 @@ def update_lead(lid: int, body: dict = Body(default={}), user=Depends(staff_only
         raise HTTPException(400, "Unknown stage.")
     if vals.get("stage") == "won":
         raise HTTPException(400, "An enquiry is won when its order is confirmed, not by hand.")
-    if vals.get("salesperson_id") and not rules.is_active_role(db, vals["salesperson_id"], ("sales", "director")):
+    if vals.get("salesperson_id") is not None:   # null / "" = unassign; anything else must be an active person
+        vals["salesperson_id"] = rules.as_int(vals["salesperson_id"], "person")
+    if vals.get("salesperson_id") is not None and not rules.is_active_role(db, vals["salesperson_id"], ("sales", "director")):
         raise HTTPException(400, "Choose an active salesperson.")
     for k in ("requested_kw", "monthly_bill", "monthly_units", "roof_area_sqft"):
         if vals.get(k) is not None:
             try:
-                vals[k] = float(vals[k])
+                vals[k] = rules.as_float(vals[k], k)
                 assert 0 <= vals[k] <= 10000000
-            except (TypeError, ValueError, AssertionError):
+            except (rules.RuleError, AssertionError):
                 raise HTTPException(400, "%s must be a positive number." % k.replace("_", " "))
     if vals.get("grid_suitable") and vals["grid_suitable"] not in ("yes", "no", "unknown"):
         raise HTTPException(400, "Grid connection must be yes, no or unknown.")
@@ -159,8 +164,18 @@ def update_lead(lid: int, body: dict = Body(default={}), user=Depends(staff_only
 def lead_survey(lid: int, body: dict = Body(default={}), user=Depends(staff_only), db=Depends(get_db)):
     need(user, "leads", write=True)
     l = found(db.get("leads", lid), "Enquiry not found.")
-    sid = rules.schedule_survey(db, l, int(body.get("technician_id") or 0) or None, body.get("survey_date"), user["id"])
+    sid = rules.schedule_survey(db, l, rules.as_int(body.get("technician_id")) or None, body.get("survey_date"), user["id"],
+                                slot=body.get("slot"))
     return {"ok": True, "id": sid}
+
+
+@router.get("/leads/{lid}/technicians")
+def lead_technicians(lid: int, day: str = "", slot: str = "", skip: int = 0, user=Depends(staff_only), db=Depends(get_db)):
+    """Who to send: technicians covering the customer's area and free in that slot come first."""
+    need(user, "leads")
+    l = found(db.get("leads", lid), "Enquiry not found.")
+    return {"rows": rules.suggest_technicians(db, l, day[:10] or None, slot or None, skip),
+            "slots": [{"value": k, "label": v} for k, v in rules.SURVEY_SLOTS]}
 
 
 @router.post("/leads/{lid}/quote")
@@ -173,7 +188,7 @@ def lead_quote(lid: int, user=Depends(staff_only), db=Depends(get_db)):
 @router.post("/leads/{lid}/lost")
 def lead_lost(lid: int, body: dict = Body(default={}), user=Depends(staff_only), db=Depends(get_db)):
     need(user, "leads", write=True)
-    db.update("leads", lid, {"stage": "lost", "lost_reason": (body.get("reason") or "").strip()[:300] or None})
+    db.update("leads", lid, {"stage": "lost", "lost_reason": rules.text(body.get("reason")).strip()[:300] or None})
     db.note("lead", lid, "Marked lost: %s" % (body.get("reason") or "no reason given"), user["id"])
     return {"ok": True}
 
@@ -207,13 +222,27 @@ def surveys(state: str = "", q: str = "", user=Depends(staff_only), db=Depends(g
     rows = db.q(sql + " ORDER BY COALESCE(s.survey_date, s.created_at) DESC LIMIT 500", *args)
     for r in rows:
         r["state_label"] = rules.label(rules.SURVEY_STATES, r["state"])
-    return {"rows": rows, "states": [{"value": k, "label": v} for k, v in rules.SURVEY_STATES]}
+    mine = " WHERE technician_id = %d" % user["id"] if lvl == "own" else ""   # live counts for the filter chips
+    counts = {r["state"]: r["n"] for r in db.q("SELECT state, COUNT(*) AS n FROM surveys%s GROUP BY state" % mine)}
+    return {"rows": rows, "counts": counts, "states": [{"value": k, "label": v} for k, v in rules.SURVEY_STATES]}
+
+
+@router.post("/surveys/{sid}/quote")
+def survey_quote(sid: int, user=Depends(staff_only), db=Depends(get_db)):
+    """After the visit: the technician (or Sales) builds the customer's quote from the survey."""
+    s, lvl = _survey(db, user, sid, write=True)
+    if user["role"] not in ("technician", "sales", "director"):
+        raise HTTPException(403, "You don't have access to this.")
+    return {"ok": True, "id": rules.quote_from_survey(db, db.get("surveys", sid), user)}
 
 
 @router.get("/surveys/{sid}")
 def survey(sid: int, user=Depends(staff_only), db=Depends(get_db)):
     s, lvl = _survey(db, user, sid)
-    return {**s, "state_label": rules.label(rules.SURVEY_STATES, s["state"]), "max_kw_fit": round((s["usable_area_sqft"] or 0) / 100, 1),
+    quote = db.one("SELECT id, ref, state FROM orders WHERE lead_id = ? AND state != 'cancel' ORDER BY id DESC LIMIT 1", s["lead_id"])
+    return {**s, "quote": quote, "can_quote": lvl in ("rw", "own") and user["role"] in ("technician", "sales", "director")
+            and s["state"] in ("scheduled", "done", "approved") and not quote,
+            "state_label": rules.label(rules.SURVEY_STATES, s["state"]), "max_kw_fit": round((s["usable_area_sqft"] or 0) / 100, 1),
             "notes_log": notes_for(db, "survey", sid), "can_edit": lvl in ("rw", "own"),
             "can_approve": user["role"] in ("sales", "director"), "can_delete": can_delete(user, "surveys")}
 
@@ -225,14 +254,20 @@ def update_survey(sid: int, body: dict = Body(default={}), user=Depends(staff_on
         raise HTTPException(400, "This survey is closed. Reset it to make changes.")
     fields = SURVEY_FIELDS if lvl == "rw" else tuple(f for f in SURVEY_FIELDS if f != "technician_id")
     vals = clean(body, fields)
-    if vals.get("technician_id") and not rules.is_active_role(db, vals["technician_id"], ("technician",)):
+    if vals.get("survey_date") is not None:
+        vals["survey_date"] = rules.as_local_datetime(vals["survey_date"], "survey date")
+        if vals["survey_date"] != s["survey_date"] and vals["survey_date"][:10] < rules.date.today().isoformat():
+            raise HTTPException(400, "The survey can't be moved to a past date.")
+    if vals.get("technician_id") is not None:   # null / "" = unassign; anything else must be an active person
+        vals["technician_id"] = rules.as_int(vals["technician_id"], "person")
+    if vals.get("technician_id") is not None and not rules.is_active_role(db, vals["technician_id"], ("technician",)):
         raise HTTPException(400, "Choose an active technician.")
     for k in ("roof_tilt", "usable_area_sqft", "cable_distance_m", "recommended_kw"):
         if vals.get(k) is not None:
             try:
-                vals[k] = float(vals[k])
+                vals[k] = rules.as_float(vals[k], k)
                 assert 0 <= vals[k] <= (90 if k == "roof_tilt" else 100000)
-            except (TypeError, ValueError, AssertionError):
+            except (rules.RuleError, AssertionError):
                 raise HTTPException(400, "%s must be a sensible positive number." % k.replace("_", " "))
     db.update("surveys", sid, vals)
     return {"ok": True}
@@ -253,10 +288,14 @@ def survey_action(sid: int, action: str, body: dict = Body(default={}), user=Dep
         if used:
             raise HTTPException(400, "Quotation %s is based on this survey. Cancel or delete it first." % used["ref"])
         if action == "reject":
-            db.update("surveys", sid, {"state": "rejected", "rejection_reason": (body.get("reason") or "")[:300] or None})
+            db.update("surveys", sid, {"state": "rejected", "rejection_reason": rules.text(body.get("reason"))[:300] or None})
             db.note("survey", sid, "Survey rejected: %s" % (body.get("reason") or "no reason given"), user["id"])
         else:
             db.update("surveys", sid, {"state": "scheduled"})
+    elif action == "reschedule":   # new day / slot and/or technician (Sales or the Director)
+        if user["role"] not in ("sales", "director"):
+            raise HTTPException(403, "Only Sales or the Director can reschedule a visit.")
+        rules.reschedule_survey(db, s, body.get("technician_id"), body.get("survey_date"), body.get("slot"), user["id"])
     else:
         raise HTTPException(404, "Unknown action.")
     return {"ok": True}
@@ -265,18 +304,24 @@ def survey_action(sid: int, action: str, body: dict = Body(default={}), user=Dep
 # ----------------------------------------------------------------- orders
 @router.get("/orders")
 def orders(state: str = "", q: str = "", user=Depends(staff_only), db=Depends(get_db)):
-    need(user, "orders")
+    lvl = need(user, "orders")
     sql = ("SELECT o.id, o.ref, o.state, o.kw, o.system_type, o.amount_total, o.date_order, o.valid_until, c.name AS customer, "
-           "u.name AS salesperson FROM orders o JOIN customers c ON c.id = o.customer_id LEFT JOIN users u ON u.id = o.salesperson_id WHERE 1=1")
+           "u.name AS salesperson, l.project_ref FROM orders o JOIN customers c ON c.id = o.customer_id "
+           "LEFT JOIN users u ON u.id = o.salesperson_id LEFT JOIN leads l ON l.id = o.lead_id WHERE 1=1")
     args = []
+    if lvl == "own":   # technician: quotes built from their own surveys
+        sql += " AND o.survey_id IN (SELECT id FROM surveys WHERE technician_id = ?)"
+        args.append(user["id"])
     if state == "quotes":
         sql += " AND o.state IN ('draft','sent')"
+    elif state == "approval":
+        sql += " AND o.approval_state = 'pending'"
     elif state:
         sql += " AND o.state = ?"
         args.append(state)
     if q:
-        sql += " AND (c.name LIKE ? OR o.ref LIKE ?)"
-        args += [like(q)] * 2
+        sql += " AND (c.name LIKE ? OR o.ref LIKE ? OR l.project_ref LIKE ?)"
+        args += [like(q)] * 3
     rows = db.q(sql + " ORDER BY o.date_order DESC LIMIT 500", *args)
     for r in rows:
         r["state_label"] = rules.label(rules.ORDER_STATES, r["state"])
@@ -286,11 +331,14 @@ def orders(state: str = "", q: str = "", user=Depends(staff_only), db=Depends(ge
 
 
 def _order(db, user, oid, write=False):
-    need(user, "orders", write)
+    lvl = need(user, "orders", write)
     o = db.one("SELECT o.*, c.name AS customer, c.email AS customer_email, c.phone AS customer_phone, "
-               "c.street AS customer_street, c.city AS customer_city, u.name AS salesperson FROM orders o "
-               "JOIN customers c ON c.id = o.customer_id LEFT JOIN users u ON u.id = o.salesperson_id WHERE o.id = ?", oid)
+               "c.street AS customer_street, c.city AS customer_city, u.name AS salesperson, l.project_ref FROM orders o "
+               "JOIN customers c ON c.id = o.customer_id LEFT JOIN users u ON u.id = o.salesperson_id "
+               "LEFT JOIN leads l ON l.id = o.lead_id WHERE o.id = ?", oid)
     if not o:
+        raise HTTPException(404, "Order not found.")
+    if lvl == "own" and db.val("SELECT technician_id FROM surveys WHERE id = ?", o["survey_id"]) != user["id"]:
         raise HTTPException(404, "Order not found.")
     return o
 
@@ -311,6 +359,10 @@ def order(oid: int, user=Depends(staff_only), db=Depends(get_db)):
            "warranties": db.val("SELECT COUNT(*) FROM warranties WHERE order_id = ?", oid),
            "tickets": db.q("SELECT id, ref, stage FROM tickets WHERE order_id = ?", oid),
            "notes": notes_for(db, "order", oid), "can_edit": can_write(user, "orders"),
+           "can_confirm": user["role"] in ("sales", "director"),
+           "can_approve": user["role"] in ("sales", "director") and o["approval_state"] == "pending",
+           "needs_approval": rules.discount_needs_approval(db, o),
+           "discount_limit": float(db.setting("discount_approval_pct", 5)),
            "can_delete": can_delete(user, "orders"), "can_money": can_delete(user, "money"),
            "print_url": "/print/quote/%s?token=%s" % (oid, o["access_token"]),
            "subsidy_expected": rules.subsidy_expected(o["kw"])}
@@ -325,16 +377,20 @@ def order_lines(oid: int, body: dict = Body(default={}), user=Depends(staff_only
     o = _order(db, user, oid, write=True)
     if o["state"] != "draft":
         raise HTTPException(400, "Only draft quotations can be changed.")
-    for l in body.get("lines") or []:
-        row = db.one("SELECT * FROM order_lines WHERE id = ? AND order_id = ?", int(l.get("id") or 0), oid)
+    for l in rules.as_list(body.get("lines"), dict):
+        row = db.one("SELECT * FROM order_lines WHERE id = ? AND order_id = ?", rules.as_int(l.get("id")), oid)
         if not row:
             continue
-        qty = float(l.get("qty", row["qty"]) or 0)
-        if qty <= 0:
-            raise HTTPException(400, "Quantities must be above zero (delete a line to remove it).")
-        disc = min(max(float(l.get("discount", row["discount"]) or 0), 0), 100)
-        if user["role"] != "director" and disc > 10:
+        qty = rules.as_float(l.get("qty", row["qty"]), "quantity")
+        if not 0 < qty <= 10000:
+            raise HTTPException(400, "Quantities must be between 1 and 10,000 (delete a line to remove it).")
+        disc = min(max(rules.as_float(l.get("discount", row["discount"]), "discount"), 0), 100)
+        if user["role"] == "technician" and disc > 15:
+            raise HTTPException(400, "Technicians can offer at most 15% (above 5% needs approval).")
+        if user["role"] == "sales" and disc > 10:
             raise HTTPException(400, "Discounts above 10% need the Director.")
+        if disc != row["discount"]:
+            db.update("orders", oid, {"approval_state": None})   # a changed discount must be approved again
         db.update("order_lines", row["id"], {"qty": qty, "discount": disc})
     rules.recompute_order(db, oid)
     return {"ok": True}
@@ -344,10 +400,25 @@ def order_lines(oid: int, body: dict = Body(default={}), user=Depends(staff_only
 def order_action(oid: int, action: str, body: dict = Body(default={}), user=Depends(staff_only), db=Depends(get_db)):
     o = _order(db, user, oid, write=True)
     o = db.get("orders", oid)
+    if user["role"] == "technician" and action not in ("send", "add-line", "estimate"):
+        raise HTTPException(403, "Sales confirms orders and records payments.")
+    if action == "approve-discount":
+        if user["role"] not in ("sales", "director"):
+            raise HTTPException(403, "Only Sales or Admin can approve a discount.")
+        db.update("orders", oid, {"approval_state": "approved"})
+        db.note("order", oid, "Discount approved.", user["id"])
+        return {"ok": True}
     if action == "send":
+        if rules.discount_needs_approval(db, o):
+            # keep the "waiting for approval" mark even though the send itself is refused
+            db.update("orders", oid, {"approval_state": "pending"})
+            db.note("order", oid, "Discount sent for approval.", user["id"])
+            db.commit()
+            raise HTTPException(400, "The discount is above %s%%, so Sales or Admin must approve it before the quote goes "
+                                     "to the customer. It's now waiting for approval." % db.setting("discount_approval_pct", 5))
         rules.send_quote(db, o, user["id"])
     elif action == "confirm":
-        rules.confirm_order(db, o, user["id"], accepted_by=(body.get("accepted_by") or "").strip() or None)
+        rules.confirm_order(db, o, user["id"], accepted_by=rules.text(body.get("accepted_by")).strip() or None)
     elif action == "cancel":
         rules.cancel_order(db, o, user["id"])
     elif action == "payment":
@@ -355,11 +426,11 @@ def order_action(oid: int, action: str, body: dict = Body(default={}), user=Depe
             raise HTTPException(403, "Only Sales or the Director can record payments.")
         method = body.get("method") if body.get("method") in ("cash", "bank", "upi", "cheque") else "bank"
         if db.val("SELECT COUNT(*) FROM payments WHERE order_id = ? AND amount = ? AND method = ? AND state = 'done' "
-                  "AND created_by = ? AND date >= datetime('now', '-2 minutes')", oid, rules.r2(float(body.get("amount") or 0)),
+                  "AND created_by = ? AND date >= datetime('now', '-2 minutes')", oid, rules.r2(rules.as_float(body.get("amount"))),
                   method, user["id"]):
             raise HTTPException(400, "This payment was just recorded. Refresh to see it before adding it again.")
-        rules.record_payment(db, o, float(body.get("amount") or 0), method, user["id"],
-                             provider_ref=(body.get("reference") or "")[:80] or None,
+        rules.record_payment(db, o, rules.as_float(body.get("amount")), method, user["id"],
+                             provider_ref=rules.text(body.get("reference"))[:80] or None,
                              purpose="advance" if o["state"] != "sale" or rules.advance_due(db, o) else "balance")
     elif action == "final-invoice":
         rules.final_invoice(db, o, user["id"])
@@ -368,11 +439,11 @@ def order_action(oid: int, action: str, body: dict = Body(default={}), user=Depe
     elif action == "add-line":
         if o["state"] != "draft":
             raise HTTPException(400, "Only draft quotations can be changed.")
-        p = db.get("products", int(body.get("product_id") or 0))
+        p = db.get("products", rules.as_int(body.get("product_id")))
         if not p or not p["active"]:
             raise HTTPException(400, "Choose a product.")
         db.insert("order_lines", {"order_id": oid, "product_id": p["id"], "description": p["name"],
-                                  "qty": max(float(body.get("qty") or 1), 0), "price_unit": p["price"],
+                                  "qty": max(rules.as_float(body.get("qty"), "quantity", 1), 0), "price_unit": p["price"],
                                   "tax_rate": p["tax_rate"]})
         rules.recompute_order(db, oid)
     else:
@@ -453,9 +524,9 @@ def update_subsidy(sid: int, body: dict = Body(default={}), user=Depends(staff_o
             vals[k] = 1 if vals[k] else 0
     if vals.get("amount_received") is not None:
         try:
-            vals["amount_received"] = float(vals["amount_received"])
+            vals["amount_received"] = rules.as_float(vals["amount_received"])
             assert 0 <= vals["amount_received"] <= 200000
-        except (TypeError, ValueError, AssertionError):
+        except (rules.RuleError, AssertionError):
             raise HTTPException(400, "Amount received must be a number up to ₹2,00,000.")
     db.update("subsidies", sid, vals)
     return {"ok": True}
@@ -574,7 +645,7 @@ CUSTOMER_FIELDS = ("name", "phone", "email", "street", "city")
 @router.post("/customers")
 def create_customer(body: dict = Body(default={}), user=Depends(staff_only), db=Depends(get_db)):
     need(user, "customers", write=True)
-    vals = clean(body, CUSTOMER_FIELDS)
+    vals = {k: rules.text(v).strip() or None for k, v in clean(body, CUSTOMER_FIELDS).items()}   # all text fields
     if not vals.get("name") or not vals.get("phone"):
         raise HTTPException(400, "Enter at least the customer's name and phone.")
     if vals.get("email"):
@@ -589,7 +660,7 @@ def create_customer(body: dict = Body(default={}), user=Depends(staff_only), db=
 def update_customer(cid: int, body: dict = Body(default={}), user=Depends(staff_only), db=Depends(get_db)):
     need(user, "customers", write=True)
     c = found(db.get("customers", cid), "Customer not found.")
-    vals = clean(body, CUSTOMER_FIELDS)
+    vals = {k: rules.text(v).strip() or None for k, v in clean(body, CUSTOMER_FIELDS).items()}   # all text fields
     if "name" in vals and not vals["name"]:
         raise HTTPException(400, "The name can't be empty.")
     if vals.get("email"):
@@ -647,7 +718,7 @@ def update_note(nid: int, body: dict = Body(default={}), user=Depends(staff_only
     n = _own_note(db, user, nid)
     if n["author_id"] != user["id"]:
         raise HTTPException(403, "You can only edit your own notes.")
-    text = (body.get("body") or "").strip()
+    text = rules.text(body.get("body")).strip()
     if not text:
         raise HTTPException(400, "Write something, or delete the note.")
     db.exec("UPDATE notes SET body = ? WHERE id = ?", text[:2000], nid)

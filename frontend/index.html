@@ -7,8 +7,87 @@
     <title>SunPower — Rooftop solar, done right</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+    <script>
+      // Preloader: only on the first page load of a visit (this browser tab). Later
+      // navigation and reloads in the same tab skip it. Storage can be blocked: then show it.
+      (function () {
+        var seen = false;
+        try { seen = sessionStorage.getItem('sp_intro') === '1'; sessionStorage.setItem('sp_intro', '1'); } catch (e) {}
+        if (seen) document.documentElement.className += ' no-intro';
+        window.__introStart = Date.now();
+      })();
+    </script>
+    <style>
+      /* Inline so it paints before the app's JavaScript and CSS arrive. */
+      #intro {
+        position: fixed; inset: 0; z-index: 9999; display: grid; place-items: center;
+        background: radial-gradient(60% 50% at 50% 46%, #fff3df 0%, #ffffff 70%);
+        font-family: Inter, system-ui, -apple-system, 'Segoe UI', sans-serif;
+        transition: opacity 0.55s ease, visibility 0.55s ease;
+        animation: intro-failsafe 0.5s ease 5s forwards;   /* never stuck if the app fails to start */
+      }
+      .no-intro #intro { display: none; }
+      #intro.intro--out { opacity: 0; visibility: hidden; }
+      #intro.intro--out .intro__box { transform: scale(1.06); }
+      .intro__box { position: relative; display: grid; justify-items: center; gap: 18px; transition: transform 0.55s ease; }   /* positioned: paints above the glow */
+      .intro__mark { width: 96px; height: 96px; overflow: visible; }
+      .intro__sun { transform-box: fill-box; transform-origin: center; animation: intro-rise 0.9s cubic-bezier(0.2, 0.8, 0.2, 1) 0.15s both; }
+      .intro__ray { stroke-dasharray: 1; stroke-dashoffset: 1; animation: intro-draw 0.45s ease-out both; }
+      .intro__ray:nth-child(1) { animation-delay: 0.75s; }
+      .intro__ray:nth-child(2), .intro__ray:nth-child(3) { animation-delay: 0.85s; }
+      .intro__ray:nth-child(4), .intro__ray:nth-child(5) { animation-delay: 0.95s; }
+      .intro__panel { animation: intro-up 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+      .intro__word {
+        font-size: 26px; font-weight: 700; letter-spacing: -0.035em; color: #1d1d1f;
+        animation: intro-word 0.7s ease 1s both;
+      }
+      .intro__word span { background: linear-gradient(180deg, #f9b43a, #e8740c); -webkit-background-clip: text; background-clip: text; color: transparent; }
+      .intro__glow {
+        position: absolute; width: 360px; height: 360px; border-radius: 50%; pointer-events: none;
+        background: radial-gradient(closest-side, rgba(245, 166, 35, 0.35), rgba(245, 166, 35, 0));
+        animation: intro-glow 1.4s ease-out 0.3s both;
+      }
+      @keyframes intro-rise { from { transform: translateY(16px) scale(0.7); opacity: 0; } to { transform: none; opacity: 1; } }
+      @keyframes intro-draw { to { stroke-dashoffset: 0; } }
+      @keyframes intro-up { from { transform: translateY(10px); opacity: 0; } to { transform: none; opacity: 1; } }
+      @keyframes intro-word { from { opacity: 0; letter-spacing: 0.08em; filter: blur(4px); } to { opacity: 1; letter-spacing: -0.035em; filter: none; } }
+      @keyframes intro-glow { from { transform: scale(0.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+      @keyframes intro-failsafe { to { opacity: 0; visibility: hidden; } }
+      @media (prefers-reduced-motion: reduce) {
+        #intro *, #intro { animation-duration: 0.01s !important; animation-delay: 0s !important; }
+        #intro { animation: intro-failsafe 0.01s 3s forwards !important; }
+      }
+    </style>
   </head>
   <body>
+    <div id="intro" aria-hidden="true">
+      <div class="intro__glow"></div>
+      <div class="intro__box">
+        <svg class="intro__mark" viewBox="0 0 64 64" fill="none">
+          <defs>
+            <linearGradient id="introSun" x1="32" y1="6" x2="32" y2="52" gradientUnits="userSpaceOnUse">
+              <stop offset="0" stop-color="#FFD45C" /><stop offset="0.55" stop-color="#F5A623" /><stop offset="1" stop-color="#E8740C" />
+            </linearGradient>
+            <linearGradient id="introPanel" x1="32" y1="40" x2="32" y2="58" gradientUnits="userSpaceOnUse">
+              <stop offset="0" stop-color="#3A3A3E" /><stop offset="1" stop-color="#111113" />
+            </linearGradient>
+          </defs>
+          <g stroke="url(#introSun)" stroke-width="4.5" stroke-linecap="round">
+            <path class="intro__ray" pathLength="1" d="M32 15V7" />
+            <path class="intro__ray" pathLength="1" d="M17.9 21.9l-5-5" />
+            <path class="intro__ray" pathLength="1" d="M46.1 21.9l5-5" />
+            <path class="intro__ray" pathLength="1" d="M12 36H5" />
+            <path class="intro__ray" pathLength="1" d="M52 36h7" />
+          </g>
+          <circle class="intro__sun" cx="32" cy="36" r="14" fill="url(#introSun)" />
+          <g class="intro__panel">
+            <path d="M14 40h36l6.5 17h-49z" fill="url(#introPanel)" stroke="#fff" stroke-width="3" stroke-linejoin="round" paint-order="stroke" />
+            <path d="M10.6 48.5h42.8M26.2 40.5l-1.6 16M37.8 40.5l1.6 16" stroke="#fff" stroke-opacity="0.38" stroke-width="1.6" />
+          </g>
+        </svg>
+        <div class="intro__word"><span>Sun</span>Power</div>
+      </div>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>

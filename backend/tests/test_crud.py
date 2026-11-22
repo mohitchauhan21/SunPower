@@ -48,7 +48,10 @@ def make_quote(client):
     client.patch("/api/staff/leads/%s" % lid, json={"roof_area_sqft": 300, "monthly_bill": 2400, "grid_suitable": "yes",
                                                    "requested_kw": 2}, headers=H)
     tech = client.get("/api/staff/people?role=technician").json()[0]
-    sid = client.post("/api/staff/leads/%s/survey" % lid, json={"technician_id": tech["id"]}, headers=H).json()["id"]
+    from datetime import date, timedelta
+    day = (date.today() + timedelta(days=2)).isoformat()
+    sid = client.post("/api/staff/leads/%s/survey" % lid, json={"technician_id": tech["id"], "survey_date": day, "slot": "morning"},
+                      headers=H).json()["id"]
     client.patch("/api/staff/surveys/%s" % sid, json={"roof_direction": "S", "usable_area_sqft": 300, "recommended_kw": 2}, headers=H)
     assert client.post("/api/staff/surveys/%s/done" % sid, headers=H).json()["ok"]
     assert client.post("/api/staff/surveys/%s/approve" % sid, headers=H).json()["ok"]
@@ -56,12 +59,15 @@ def make_quote(client):
 
 
 def test_modules_say_who_may_delete(client):
+    as_(client, "director")
+    mods = {m["key"]: m for m in client.get("/api/auth/me").json()["modules"]}
+    assert mods["leads"]["delete"] is True
+    for who in ("sales", "tech01"):   # Sales and technicians never delete records
+        as_(client, who)
+        mods = {m["key"]: m for m in client.get("/api/auth/me").json()["modules"]}
+        assert not any(m["delete"] for m in mods.values()), who
     as_(client, "sales")
-    mods = {m["key"]: m for m in client.get("/api/auth/me").json()["modules"]}
-    assert mods["leads"]["delete"] is True and mods["customers"]["level"] == "rw"
-    as_(client, "tech01")
-    mods = {m["key"]: m for m in client.get("/api/auth/me").json()["modules"]}
-    assert not any(m["delete"] for m in mods.values())
+    assert {m["key"]: m for m in client.get("/api/auth/me").json()["modules"]}["customers"]["level"] == "rw"
 
 
 def test_enquiry_crud_and_roles(client):
@@ -69,10 +75,10 @@ def test_enquiry_crud_and_roles(client):
     lid = new_lead(client)
     assert client.patch("/api/staff/leads/%s" % lid, json={"city": "Surat"}, headers=H).json()["ok"]
     assert client.get("/api/staff/leads/%s" % lid).json()["city"] == "Surat"
-    for who in ("support", "tech01", "warehouse"):
+    for who in ("sales", "support", "tech01", "warehouse"):
         as_(client, who)
         assert client.delete("/api/staff/leads/%s" % lid, headers=H).status_code == 403, who
-    as_(client, "sales")
+    as_(client, "director")
     assert client.delete("/api/staff/leads/%s" % lid, headers=H).json()["ok"]
     assert client.get("/api/staff/leads/%s" % lid).status_code == 404
 
@@ -93,9 +99,10 @@ def test_confirmed_order_cannot_be_deleted_but_quote_can(client):
     assert len(o2["lines"]) == len(o["lines"]) + 1 and o2["amount_total"] > o["amount_total"]
     added = o2["lines"][-1]["id"]
     assert client.delete("/api/staff/orders/%s/lines/%s" % (draft["id"], added), headers=H).json()["ok"]
-    as_(client, "warehouse")
-    assert client.delete("/api/staff/orders/%s" % draft["id"], headers=H).status_code == 403
-    as_(client, "sales")
+    for who in ("warehouse", "sales"):
+        as_(client, who)
+        assert client.delete("/api/staff/orders/%s" % draft["id"], headers=H).status_code == 403, who
+    as_(client, "director")
     assert client.delete("/api/staff/orders/%s" % draft["id"], headers=H).json()["ok"]
 
 

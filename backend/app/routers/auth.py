@@ -65,8 +65,8 @@ def me(user=Depends(optional_user)):
 
 @router.post("/login")
 def login(request: Request, response: Response, body: dict = Body(default={}), db=Depends(get_db)):
-    email = (body.get("login") or "").strip().lower()[:200]
-    password = body.get("password") or ""
+    email = rules.text(body.get("login")).strip().lower()[:200]
+    password = rules.text(body.get("password"))
     portal = body.get("portal")
     ip = client_ip(request)
     # per email+device, and per email from anywhere (stops guessing one account from many addresses)
@@ -99,11 +99,11 @@ def onboarded(user=Depends(current_user), db=Depends(get_db)):
 
 @router.post("/signup")
 def signup(response: Response, body: dict = Body(default={}), db=Depends(get_db)):
-    name = (body.get("name") or "").strip()[:120]
-    email = (body.get("email") or "").strip().lower()[:200]
-    phone = (body.get("phone") or "").strip()[:40] or None
-    password = body.get("password") or ""
-    code = str(body.get("recovery_code") or "").strip()
+    name = rules.text(body.get("name")).strip()[:120]
+    email = rules.text(body.get("email")).strip().lower()[:200]
+    phone = rules.text(body.get("phone")).strip()[:40] or None
+    password = rules.text(body.get("password"))
+    code = rules.text(body.get("recovery_code")).strip()
     if not name:
         return {"ok": False, "field": "name", "error": "Please enter your name."}
     if not EMAIL_RE.match(email):
@@ -141,9 +141,9 @@ def signup(response: Response, body: dict = Body(default={}), db=Depends(get_db)
 def recover(request: Request, body: dict = Body(default={}), db=Depends(get_db)):
     """Forgot password: email + the 4-digit recovery code chosen at sign-up + a new password.
     Rate-limited hard, because a 4-digit code alone could be guessed."""
-    email = (body.get("email") or "").strip().lower()[:200]
-    code = str(body.get("code") or "").strip()
-    password = body.get("password") or ""
+    email = rules.text(body.get("email")).strip().lower()[:200]
+    code = rules.text(body.get("code")).strip()
+    password = rules.text(body.get("password"))
     ip = client_ip(request)
     if not EMAIL_RE.match(email):
         return {"ok": False, "field": "email", "error": "Please enter your email address."}
@@ -167,7 +167,7 @@ def recover(request: Request, body: dict = Body(default={}), db=Depends(get_db))
 @router.post("/recovery-code")
 def set_recovery_code(body: dict = Body(default={}), user=Depends(current_user), db=Depends(get_db)):
     """Set or change the 4-digit recovery code (needs the current password if there is one)."""
-    if user["password_hash"] and not check_password(body.get("password") or "", user["password_hash"]):
+    if user["password_hash"] and not check_password(rules.text(body.get("password")), user["password_hash"]):
         return {"ok": False, "field": "password", "error": "Your current password is not correct."}
     problem = code_problem(body.get("code"))
     if problem:
@@ -178,7 +178,7 @@ def set_recovery_code(body: dict = Body(default={}), user=Depends(current_user),
 
 @router.post("/reset")
 def reset_request(body: dict = Body(default={}), db=Depends(get_db)):
-    email = (body.get("email") or "").strip().lower()[:200]
+    email = rules.text(body.get("email")).strip().lower()[:200]
     if not EMAIL_RE.match(email):
         return {"ok": False, "error": "Please enter your email address."}
     if not rate_limited("reset:" + email):
@@ -199,7 +199,7 @@ def reset_check(body: dict = Body(default={}), db=Depends(get_db)):
 
 @router.post("/reset/confirm")
 def reset_confirm(body: dict = Body(default={}), db=Depends(get_db)):
-    password = body.get("password") or ""
+    password = rules.text(body.get("password"))
     problem = password_problem(password)
     if problem:
         return {"ok": False, "field": "password", "error": problem}
@@ -264,7 +264,7 @@ def google_token(request: Request, response: Response, body: dict = Body(default
     """Sign in with the ID token from Google's button. Google signs the token; we ask Google to
     verify it and check it was issued for our client ID, recently, for a verified email."""
     cid = _google_client_id(db)
-    credential = str(body.get("credential") or "")
+    credential = rules.text(body.get("credential"))
     ip = client_ip(request)
     if not cid:
         return {"ok": False, "error": "Google sign-in is not set up yet."}

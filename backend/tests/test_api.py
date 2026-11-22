@@ -186,7 +186,7 @@ def test_enquiry_progress_is_truthful():
     from app.rules import enquiry_progress
     lead = {"stage": "new", "created_at": "2026-11-22 10:00:00"}
     p = enquiry_progress(lead, None)
-    assert p["status"] == "Awaiting advisor call" and [s["done"] for s in p["steps"]] == [True, False, False, False, False]
+    assert p["status"] == "Awaiting confirmation call" and [s["done"] for s in p["steps"]] == [True, False, False, False, False]
     p = enquiry_progress(dict(lead, stage="survey"), {"state": "scheduled", "survey_date": "2026-11-25 10:00:00"})
     assert p["status"].startswith("Survey booked") and [s["done"] for s in p["steps"]][:4] == [True, True, True, False]
 
@@ -336,3 +336,89 @@ def test_login_error_never_reveals_which_emails_exist(client):
     a = client.post("/api/auth/login", json={"login": "nobody@nowhere.test", "password": "Wrong@1234"}, headers=H).json()
     b = client.post("/api/auth/login", json={"login": "sales@sunpower.demo", "password": "Wrong@1234"}, headers=H).json()
     assert a["error"] == b["error"]
+
+
+def test_booking_needs_slot_and_suggests_area_technicians(client):
+    login(client, "sales@sunpower.demo")
+    lead = client.get("/api/staff/leads", params={"stage": "new"}).json()["rows"][0]
+    assert lead["project_ref"].startswith("SP-")
+    sug = client.get("/api/staff/leads/%s/technicians" % lead["id"]).json()["rows"]
+    assert sug and (not any(t["in_area"] for t in sug) or sug[0]["in_area"])     # area matches come first
+    r = client.post("/api/staff/leads/%s/survey" % lead["id"], json={"technician_id": sug[0]["id"], "survey_date": "2020-01-01",
+                                                                      "slot": "morning"}, headers=H)
+    assert r.status_code == 400                                                  # not in the past
+    from datetime import date, timedelta
+    day = (date.today() + timedelta(days=3)).isoformat()
+    r = client.post("/api/staff/leads/%s/survey" % lead["id"], json={"technician_id": sug[0]["id"], "survey_date": day,
+                                                                      "slot": "evening"}, headers=H)
+    assert r.status_code == 200
+    survey = client.get("/api/staff/surveys/%s" % r.json()["id"]).json()
+    assert survey["survey_date"] == day + " 16:00:00"
+    detail = client.get("/api/staff/leads/%s" % lead["id"]).json()
+    assert detail["booking_confirmed_at"] and detail["stage"] == "survey"
+    busy = client.get("/api/staff/leads/%s/technicians" % lead["id"], params={"day": day, "slot": "evening"}).json()["rows"]
+    assert "survey" in next(t for t in busy if t["id"] == sug[0]["id"])["busy"]
+
+
+def _book_and_visit(client):
+    """Sales books a survey for a new enquiry with tech01; tech01 records the visit. Returns (survey_id, lead_id)."""
+    from datetime import date, timedelta
+    login(client, "sales@sunpower.demo")
+    lid = client.post("/api/staff/leads", json={"contact_name": "Plan Test", "phone": "9811122233", "city": "Pune",
+                                                "monthly_bill": 3000, "requested_kw": 3}, headers=H).json()["id"]
+    tech = next(t for t in client.get("/api/staff/people", params={"role": "technician"}).json() if "Ramesh" in t["name"])
+    day = (date.today() + timedelta(days=4)).isoformat()
+    sid = client.post("/api/staff/leads/%s/survey" % lid, json={"technician_id": tech["id"], "survey_date": day, "slot": "morning"},
+                      headers=H).json()["id"]
+    login(client, "tech01@sunpower.demo")
+    assert client.patch("/api/staff/surveys/%s" % sid, json={"roof_direction": "S", "usable_area_sqft": 320, "recommended_kw": 3},
+                        headers=H).json()["ok"]
+    return sid, lid
+
+
+def test_technician_builds_quote_and_big_discount_needs_approval(client):
+    sid, lid = _book_and_visit(client)
+    r = client.post("/api/staff/surveys/%s/quote" % sid, headers=H)
+    assert r.status_code == 200, r.text
+    oid = r.json()["id"]
+    o = client.get("/api/staff/orders/%s" % oid).json()
+    assert o["state"] == "draft" and "financials" not in o and not o["can_confirm"]
+    assert "cost" not in str(o["lines"][0].keys())
+    line = o["lines"][0]
+    assert client.put("/api/staff/orders/%s/lines" % oid, json={"lines": [{"id": line["id"], "qty": 1, "discount": 8}]},
+                      headers=H).json()["ok"]
+    r = client.post("/api/staff/orders/%s/send" % oid, headers=H)
+    assert r.status_code == 400 and "approve" in r.json()["detail"]
+    assert client.post("/api/staff/orders/%s/confirm" % oid, headers=H).status_code == 403   # Sales confirms, not technicians
+    login(client, "sales@sunpower.demo")
+    assert client.get("/api/staff/orders/%s" % oid).json()["can_approve"]
+    assert client.post("/api/staff/orders/%s/approve-discount" % oid, headers=H).json()["ok"]
+    login(client, "tech01@sunpower.demo")
+    assert client.post("/api/staff/orders/%s/send" % oid, headers=H).json()["ok"]
+    # another technician can't see this quote
+    login(client, "tech02@sunpower.demo")
+    assert client.get("/api/staff/orders/%s" % oid).status_code == 404
+    assert all(x["id"] != oid for x in client.get("/api/staff/orders").json()["rows"])
+
+
+def test_customer_pays_in_full_upfront_with_discount():
+    from app.db import session
+    from app import rules
+    with session() as db:
+        o = db.one("SELECT * FROM orders WHERE state = 'sent' ORDER BY id LIMIT 1") or db.one(
+            "SELECT * FROM orders WHERE state = 'draft' ORDER BY id LIMIT 1")
+        if o["state"] == "draft":
+            db.update("orders", o["id"], {"state": "sent"})
+            o = db.get("orders", o["id"])
+        if rules.order_paid(db, o["id"]) > 0:
+            db.rollback()
+            return
+        total = o["amount_total"]
+        pay = rules.full_upfront_amount(db, o)
+        assert abs(pay - total * 0.98) < 1
+        info = rules.start_online_payment(db, o, pay, "full", None)
+        rules.complete_online_payment(db, db.get("payments", info["payment_id"]))
+        o2 = db.get("orders", o["id"])
+        assert o2["state"] == "sale" and abs(o2["amount_total"] - pay) < 1          # discount line makes the total match
+        assert rules.advance_due(db, o2) == 0 and rules.order_paid(db, o["id"]) + 1 >= o2["amount_total"]
+        db.rollback()

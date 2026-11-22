@@ -60,7 +60,9 @@ DEFAULT_SETTINGS = {
     "company_address": "12 Solar Park Road, SG Highway, Ahmedabad 380054",
     "company_gstin": "24ABCDE1234F1Z5",
     "frontend_url": "http://localhost:5173",       # used to build links in emails
-    "advance_pct": "30",                           # % to pay before the kit can be dispatched
+    "advance_pct": "30",
+    "full_upfront_discount_pct": "2",   # off the total when the customer pays 100% upfront
+    "discount_approval_pct": "5",       # quote discounts above this need Sales / Admin approval                           # % to pay before the kit can be dispatched
     "quote_valid_days": "15",
     "labour_rate": "500",                          # ₹ per hour for repairs
     # Two text pieces next to each other inside (...) are joined into one string by Python.

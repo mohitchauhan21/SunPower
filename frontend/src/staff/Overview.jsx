@@ -42,7 +42,7 @@ export default function Today() {
               <section key={g.key} className={`today-card${g.count ? '' : ' is-clear'}`} style={{ animationDelay: `${120 + i * 70}ms` }}>
                 <header className="today-card__head">
                   <div>
-                    <h2>{g.title}</h2>
+                    <h2><Link to={g.path} className="today-card__link">{g.title}</Link></h2>
                     <p className="muted small">{g.hint}</p>
                   </div>
                   <span className={`today-count${g.count ? '' : ' is-zero'}`}>{g.count}</span>
@@ -63,7 +63,7 @@ export default function Today() {
                     ))}
                   </ul>
                 ) : <p className="today-clear">✓ Nothing waiting here.</p>}
-                {g.count > g.items.length && <Link to={g.path} className="link today-more">See all {g.count}</Link>}
+                {g.count > 0 && <Link to={g.path} className="link today-more">{g.count > g.items.length ? `See all ${g.count}` : 'Open the list'}</Link>}
               </section>
             ))}
           </div>

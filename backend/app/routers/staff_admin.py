@@ -1,5 +1,5 @@
 """Staff: overview (role-aware), Director dashboard, reports, settings, users."""
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 
@@ -14,8 +14,13 @@ router = APIRouter(prefix="/api/staff")
 
 def _range(period):
     start, end = rules.period_bounds(period)
-    return start, end, datetime.combine(start, time.min).strftime("%Y-%m-%d %H:%M:%S"), \
-        datetime.combine(end, time.max).strftime("%Y-%m-%d %H:%M:%S")
+    return start, end, _utc(datetime.combine(start, time.min)), _utc(datetime.combine(end, time.max))
+
+
+def _utc(local_dt):
+    """A local wall-clock time as the UTC text that event times are stored in (db.now()),
+    so "today" / "this month" start at local midnight, not at 05:30 IST."""
+    return local_dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def dashboard_data(db, period="month"):
@@ -47,7 +52,7 @@ def dashboard_data(db, period="month"):
         y, m = divmod(first.month - 1 - i, 12)
         ms = date(first.year + y, m + 1, 1)
         me = (date(ms.year + (ms.month // 12), ms.month % 12 + 1, 1) - timedelta(days=1))
-        a, b = ms.isoformat() + " 00:00:00", me.isoformat() + " 23:59:59"
+        a, b = _utc(datetime.combine(ms, time.min)), _utc(datetime.combine(me, time.max))
         months.append({"label": ms.strftime("%b"),
                        "sales": db.val("SELECT COALESCE(SUM(amount_untaxed),0) FROM orders WHERE state='sale' AND confirmed_at BETWEEN ? AND ?", a, b),
                        "installs": db.val("SELECT COUNT(*) FROM jobs WHERE site_end BETWEEN ? AND ?", a, b)})
@@ -151,7 +156,7 @@ def report_invoices(status: str = "", user=Depends(director_only), db=Depends(ge
 
 @router.post("/reports/share")
 def share_report(body: dict = Body(default={}), user=Depends(director_only), db=Depends(get_db)):
-    email = (body.get("email") or "").strip()
+    email = rules.text(body.get("email")).strip()
     period = body.get("period") or "month"
     if "@" not in email:
         raise HTTPException(400, "Enter an email address.")
@@ -192,11 +197,21 @@ def put_settings(body: dict = Body(default={}), user=Depends(director_only), db=
     for k in SECRET_SETTINGS:  # only replaced when a new value is typed
         if body.get(k):
             db.set_setting(k, str(body[k]).strip())
-    try:
-        pct = float(db.setting("advance_pct") or 0)
-        assert 0 <= pct <= 100
-    except (ValueError, AssertionError):
-        raise HTTPException(400, "The advance must be between 0 and 100%.")
+    # Number settings are read with float()/int() all over the app (quotes, tickets, dispatch),
+    # so a bad value would break those screens later: refuse it here (the request rolls back).
+    numbers = (("advance_pct", 0, 100, False, "The advance must be between 0 and 100%."),
+               ("quote_valid_days", 1, 365, True, "Quote validity must be a whole number of days (1 to 365)."),
+               ("labour_rate", 0, 100000, False, "The labour rate must be a number (₹ per hour)."),
+               ("smtp_port", 1, 65535, True, "The SMTP port must be a whole number (e.g. 587)."))
+    for k, lo, hi, whole, msg in numbers:
+        raw = db.setting(k)
+        if raw in (None, "") and k == "smtp_port":
+            continue
+        try:
+            v = rules.as_int(raw, k) if whole else rules.as_float(raw, k)
+            assert lo <= v <= hi
+        except (rules.RuleError, AssertionError):
+            raise HTTPException(400, msg)
     for o in db.q("SELECT id FROM orders WHERE state = 'sale'"):
         rules.refresh_delivery_state(db, o["id"])
     return {"ok": True}
@@ -215,11 +230,11 @@ def update_product(pid: int, body: dict = Body(default={}), user=Depends(directo
     for k in ("price", "cost", "warranty_months", "min_qty", "tax_rate"):
         if k in body:
             try:
-                vals[k] = max(float(body[k]), 0)
-            except (TypeError, ValueError):
+                vals[k] = max(rules.as_float(body[k], k), 0)
+            except rules.RuleError:
                 raise HTTPException(400, "%s must be a number." % k)
-    if "name" in body and body["name"].strip():
-        vals["name"] = body["name"].strip()[:120]
+    if rules.text(body.get("name")).strip():
+        vals["name"] = rules.text(body.get("name")).strip()[:120]
     db.update("products", pid, vals)
     return {"ok": True}
 
@@ -234,20 +249,21 @@ def kit(pid: int, user=Depends(staff_only), db=Depends(get_db)):
 # ------------------------------------------------------------------- users
 @router.get("/users")
 def users(user=Depends(director_only), db=Depends(get_db)):
-    return {"rows": db.q("SELECT id, name, email, phone, role, hourly_rate, active, last_login, "
+    return {"rows": db.q("SELECT id, name, email, phone, role, hourly_rate, service_area, active, last_login, "
                          "password_hash IS NOT NULL AS has_password FROM users WHERE role != 'customer' ORDER BY active DESC, role, name"),
             "roles": [r for r in ROLES if r != "customer"]}
 
 
 @router.post("/users")
 def create_user(body: dict = Body(default={}), user=Depends(director_only), db=Depends(get_db)):
-    name, email, role = (body.get("name") or "").strip(), (body.get("email") or "").strip().lower(), body.get("role")
+    name, email, role = rules.text(body.get("name")).strip(), rules.text(body.get("email")).strip().lower(), body.get("role")
     if not name or "@" not in email or role not in STAFF:
         raise HTTPException(400, "Enter a name, an email and a role.")
     if db.one("SELECT id FROM users WHERE email = ? COLLATE NOCASE", email):
         raise HTTPException(400, "Someone already uses this email.")
-    uid = db.insert("users", {"name": name[:120], "email": email, "phone": (body.get("phone") or "").strip() or None,
-                              "role": role, "hourly_rate": float(body.get("hourly_rate") or 0), "created_at": now()})
+    uid = db.insert("users", {"name": name[:120], "email": email, "phone": rules.text(body.get("phone")).strip() or None,
+                              "role": role, "hourly_rate": rules.as_float(body.get("hourly_rate")),
+                              "service_area": rules.text(body.get("service_area")).strip()[:300] or None, "created_at": now()})
     link = rules.send_account_email(db, uid, "staff", make_token(db, uid, "staff"))
     return {"ok": True, "id": uid, "link": link}
 
@@ -259,13 +275,13 @@ def update_user(uid: int, body: dict = Body(default={}), user=Depends(director_o
         raise HTTPException(400, "Customers are managed from their account.")
     vals = {}
     if "name" in body:
-        if not (body.get("name") or "").strip():
+        if not rules.text(body.get("name")).strip():
             raise HTTPException(400, "The name can't be empty.")
-        vals["name"] = body["name"].strip()[:120]
+        vals["name"] = rules.text(body.get("name")).strip()[:120]
     if "phone" in body:
-        vals["phone"] = (body.get("phone") or "").strip()[:40] or None
+        vals["phone"] = rules.text(body.get("phone")).strip()[:40] or None
     if "email" in body:
-        email = (body.get("email") or "").strip().lower()
+        email = rules.text(body.get("email")).strip().lower()
         if "@" not in email:
             raise HTTPException(400, "Enter a valid email.")
         if db.val("SELECT id FROM users WHERE email = ? COLLATE NOCASE AND id != ?", email, uid):
@@ -278,7 +294,9 @@ def update_user(uid: int, body: dict = Body(default={}), user=Depends(director_o
     if "active" in body:
         vals["active"] = 1 if body["active"] else 0
     if "hourly_rate" in body:
-        vals["hourly_rate"] = max(float(body["hourly_rate"] or 0), 0)
+        vals["hourly_rate"] = max(rules.as_float(body["hourly_rate"]), 0)
+    if "service_area" in body:
+        vals["service_area"] = rules.text(body.get("service_area")).strip()[:300] or None
     if uid == user["id"] and (vals.get("active") == 0 or vals.get("role", "director") != "director"):
         raise HTTPException(400, "You can't remove your own Director access.")
     db.update("users", uid, vals)
@@ -358,6 +376,19 @@ def today_view(user=Depends(staff_only), db=Depends(get_db)):
         return [_item(p["name"], "%g in stock · minimum %g" % (p["qty_on_hand"], p["min_qty"]), "/app/stock", "Reorder", tone="bad")
                 for p in rows]
 
+    def due(at):
+        """(tag, tone) for an appointment from its real date: Overdue / Today / Tomorrow / In N days."""
+        d = str(at or "")[:10]
+        if not d:
+            return "Not scheduled", "warn"
+        diff = (date.fromisoformat(d) - day).days
+        if diff < 0:
+            return "Overdue %d day%s" % (-diff, "" if diff == -1 else "s"), "bad"
+        return ("Today", "ok") if diff == 0 else ("Tomorrow", "") if diff == 1 else ("In %d days" % diff, "")
+
+    def line(*parts):
+        return " · ".join(str(p) for p in parts if p not in (None, ""))   # no "· ·" when a field is empty
+
     def jobs(mine=False, only_today=False):
         sql = ("SELECT j.*, c.name AS customer, c.city FROM jobs j JOIN customers c ON c.id = j.customer_id WHERE j.state != 'done'")
         args = []
@@ -368,9 +399,12 @@ def today_view(user=Depends(staff_only), db=Depends(get_db)):
             sql += " AND j.scheduled_at BETWEEN ? AND ?"
             args += [ls, le]
         rows = db.q(sql + " ORDER BY CASE j.state WHEN 'in_progress' THEN 0 ELSE 1 END, j.scheduled_at", *args)
-        return [_item(j["customer"], "%s · %g kW · %s" % (j["ref"], j["kw_planned"] or 0, j["city"] or ""), "/app/jobs/%s" % j["id"],
-                      "On site" if j["state"] == "in_progress" else ("Today" if ls <= (j["scheduled_at"] or "") <= le else "Upcoming"),
-                      j["scheduled_at"], "warn" if j["state"] == "in_progress" else "") for j in rows]
+        out = []
+        for j in rows:
+            tag, tone = ("On site", "warn") if j["state"] == "in_progress" else due(j["scheduled_at"])
+            out.append(_item(j["customer"], line(j["ref"], "%g kW" % (j["kw_planned"] or 0), j["city"]), "/app/jobs/%s" % j["id"],
+                             tag, j["scheduled_at"], tone))
+        return out
 
     def visits(mine=False, only_today=False):
         sql = ("SELECT s.*, l.contact_name, l.city FROM surveys s JOIN leads l ON l.id = s.lead_id WHERE s.state = 'scheduled'")
@@ -382,8 +416,12 @@ def today_view(user=Depends(staff_only), db=Depends(get_db)):
             sql += " AND s.survey_date BETWEEN ? AND ?"
             args += [ls, le]
         rows = db.q(sql + " ORDER BY s.survey_date", *args)
-        return [_item(s["contact_name"], "%s · roof survey · %s" % (s["ref"], s["city"] or ""), "/app/surveys/%s" % s["id"],
-                      "Today" if ls <= (s["survey_date"] or "") <= le else "Visit", s["survey_date"]) for s in rows]
+        out = []
+        for s in rows:
+            tag, tone = due(s["survey_date"])
+            out.append(_item(s["contact_name"], line(s["ref"], "roof survey", s["city"]), "/app/surveys/%s" % s["id"],
+                             tag, s["survey_date"], tone))
+        return out
 
     def tickets(where, mine=False, tag=""):
         sql = ("SELECT t.*, c.name AS customer FROM tickets t JOIN customers c ON c.id = t.customer_id WHERE " + where)
@@ -436,10 +474,12 @@ def today_view(user=Depends(staff_only), db=Depends(get_db)):
     elif role == "warehouse":
         stats = [
             {"label": "Ready to dispatch", "value": count("SELECT COUNT(*) FROM deliveries WHERE state = 'ready'")},
-            {"label": "Dispatched today", "value": count("SELECT COUNT(*) FROM deliveries WHERE state = 'done' AND date_done BETWEEN ? AND ?", us, ue)},
+            {"label": "Shipped today", "value": count("SELECT COUNT(*) FROM deliveries WHERE state IN ('done','delivered') AND date_done BETWEEN ? AND ?", us, ue)},
             {"label": "Items to reorder", "value": count("SELECT COUNT(*) FROM products WHERE is_kit = 0 AND is_service = 0 AND qty_on_hand < min_qty")},
         ]
-        group("ready", "Ready to dispatch", "Advance paid: pack, scan serials and send.", deliveries("ready"), "/app/dispatch?state=ready")
+        group("ready", "Ready to pack", "Advance paid: pack the kit.", deliveries("ready"), "/app/dispatch?state=ready")
+        group("packed", "Packed, to ship", "Scan serials and send with the vehicle.", deliveries("packed"), "/app/dispatch?state=packed")
+        group("transit", "On the way", "Mark delivered when the site confirms.", deliveries("done"), "/app/dispatch?state=done")
         group("waiting", "Waiting for the advance", "Can't leave until the customer pays.", deliveries("waiting"), "/app/dispatch?state=waiting")
         group("stock", "Items to reorder", "Below the minimum stock level.", low_stock(), "/app/stock")
     elif role == "technician":
@@ -449,10 +489,11 @@ def today_view(user=Depends(staff_only), db=Depends(get_db)):
             {"label": "My visits today", "value": len(visits(mine=True, only_today=True))},
             {"label": "My open repairs", "value": count("SELECT COUNT(*) FROM tickets WHERE technician_id = ? AND stage NOT IN ('closed','cancel')", uid)},
         ]
-        group("jobs", "My installations", "Start on site, then checklist, photos and the customer's signature.", mine_jobs, "/app/jobs")
-        group("visits", "My roof surveys", "Measure the roof and mark the visit done.", visits(mine=True), "/app/surveys")
+        # Each card links to its list with the same filter, so the counts match (e.g. 3 here = "Scheduled 3" there).
+        group("jobs", "My installations", "Start on site, then checklist, photos and the customer's signature.", mine_jobs, "/app/jobs?state=open")
+        group("visits", "My roof surveys", "Measure the roof and mark the visit done.", visits(mine=True), "/app/surveys?state=scheduled")
         group("repairs", "My repairs", "Fix, add parts and hours, then ask the customer to confirm.",
-              tickets("t.stage NOT IN ('closed','cancel','awaiting')", mine=True), "/app/service")
+              tickets("t.stage NOT IN ('closed','cancel','awaiting')", mine=True), "/app/service?stage=active")
     elif role == "support":
         stats = [
             {"label": "New today", "value": count("SELECT COUNT(*) FROM tickets WHERE reported_on BETWEEN ? AND ?", us, ue)},
@@ -492,7 +533,7 @@ def pay_service_invoice(iid: int, body: dict = Body(default={}), user=Depends(st
     if inv["kind"] != "service" or inv["state"] != "posted":
         raise HTTPException(400, "Only unpaid repair invoices are paid here; order payments go on the order.")
     try:
-        amount = rules.r2(float(body.get("amount") or 0))
+        amount = rules.r2(rules.as_float(body.get("amount")))
     except (TypeError, ValueError):
         raise HTTPException(400, "Enter the amount received.")
     due = rules.r2(inv["amount_total"] - inv["amount_paid"])

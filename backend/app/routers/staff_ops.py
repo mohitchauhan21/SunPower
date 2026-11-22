@@ -41,8 +41,12 @@ def products(q: str = "", category: str = "", user=Depends(staff_only), db=Depen
         sql += " AND (name LIKE ? OR code LIKE ?)"
         args += [like(q)] * 2
     rows = db.q(sql + " ORDER BY is_kit, is_service, category, code", *args)
+    reserved, unpaid = rules.reserved_stock(db), rules.unpaid_demand(db)
     for r in rows:
-        r["low"] = not r["is_kit"] and not r["is_service"] and r["qty_on_hand"] < r["min_qty"]
+        r["reserved"] = reserved.get(r["id"], 0)
+        r["unpaid_demand"] = unpaid.get(r["id"], 0)
+        r["available"] = r["qty_on_hand"] - r["reserved"]
+        r["low"] = not r["is_kit"] and not r["is_service"] and r["available"] < r["min_qty"]
         if user["role"] != "director":
             r.pop("cost", None)
     return {"rows": rows}
@@ -55,7 +59,7 @@ def receive(pid: int, body: dict = Body(default={}), user=Depends(staff_only), d
     serials = body.get("serials") or []
     if isinstance(serials, str):
         serials = [s for s in serials.replace(",", "\n").splitlines()]
-    qty = rules.receive_stock(db, p, body.get("qty"), serials, user["id"], (body.get("note") or "")[:200] or None)
+    qty = rules.receive_stock(db, p, body.get("qty"), serials, user["id"], rules.text(body.get("note"))[:200] or None)
     return {"ok": True, "qty": qty}
 
 
@@ -108,12 +112,16 @@ def delivery(did: int, user=Depends(staff_only), db=Depends(get_db)):
                  "JOIN products p ON p.id = dl.product_id WHERE dl.delivery_id = ? ORDER BY p.tracking DESC, p.code", did)
     for l in lines:
         l["serials"] = json.loads(l["serials"]) if l["serials"] else []
-        if l["tracking"] == "serial" and d["state"] != "done":
+        if l["tracking"] == "serial" and d["state"] not in ("done", "delivered"):
             l["available"] = [r["name"] for r in db.q("SELECT name FROM serials WHERE product_id = ? AND state = 'in_stock' "
                                                        "ORDER BY id LIMIT 50", l["product_id"])]
-        elif l["tracking"] == "lot" and d["state"] != "done":  # batches: suggest the ones in use
+        elif l["tracking"] == "lot" and d["state"] not in ("done", "delivered"):  # batches: suggest the ones in use
             l["available"] = [r["name"] for r in db.q("SELECT name FROM serials WHERE product_id = ? GROUP BY name "
                                                        "ORDER BY MAX(id) DESC LIMIT 5", l["product_id"])]
+    reserved = rules.reserved_stock(db)
+    mine = d["state"] in ("ready", "packed")
+    for l in lines:   # free stock for this kit = on hand minus what other paid orders hold
+        l["free"] = l["qty_on_hand"] - reserved.get(l["product_id"], 0) + (l["qty"] if mine else 0)
     return {**d, "state_label": rules.label(rules.DELIVERY_STATES, d["state"]), "lines": lines,
             "advance_due": rules.advance_due(db, order), "paid": rules.order_paid(db, order["id"]),
             "advance_needed": rules.advance_needed(db, order), "notes": notes_for(db, "delivery", did),
@@ -124,8 +132,28 @@ def delivery(did: int, user=Depends(staff_only), db=Depends(get_db)):
 def validate(did: int, body: dict = Body(default={}), user=Depends(staff_only), db=Depends(get_db)):
     need(user, "deliveries", write=True)
     d = found(db.get("deliveries", did), "Delivery not found.")
-    started = rules.validate_delivery(db, d, body.get("serials") or {}, user, override=bool(body.get("override")))
+    serials = body.get("serials") or {}
+    if not isinstance(serials, dict):   # {delivery line id: [serial, ...]}
+        raise HTTPException(400, "Scan the serial numbers for each line.")
+    started = rules.validate_delivery(db, d, serials, user, override=bool(body.get("override")))
+    vals = {"vehicle": rules.text(body.get("vehicle")).strip()[:120] or None}
+    if body.get("expected_on"):
+        vals["expected_on"] = str(body["expected_on"])[:10]
+    db.update("deliveries", did, vals)
     return {"ok": True, "warranties": len(started)}
+
+
+@router.post("/deliveries/{did}/{action}")
+def delivery_action(did: int, action: str, body: dict = Body(default={}), user=Depends(staff_only), db=Depends(get_db)):
+    need(user, "deliveries", write=True)
+    d = found(db.get("deliveries", did), "Delivery not found.")
+    if action == "pack":
+        rules.pack_delivery(db, d, user)
+    elif action == "deliver":
+        rules.deliver_delivery(db, d, user, rules.text(body.get("note")).strip()[:200] or None)
+    else:
+        raise HTTPException(404, "Unknown action.")
+    return {"ok": True}
 
 
 # ------------------------------------------------------------------- jobs
@@ -154,7 +182,9 @@ def jobs(state: str = "", q: str = "", user=Depends(staff_only), db=Depends(get_
     if lvl == "own":
         sql += " AND j.id IN (SELECT job_id FROM job_techs WHERE user_id = ?)"
         args.append(user["id"])
-    if state:
+    if state == "open":   # not finished yet (planned or on site)
+        sql += " AND j.state != 'done'"
+    elif state:
         sql += " AND j.state = ?"
         args.append(state)
     if q:
@@ -163,13 +193,16 @@ def jobs(state: str = "", q: str = "", user=Depends(staff_only), db=Depends(get_
     rows = db.q(sql + " ORDER BY CASE j.state WHEN 'in_progress' THEN 0 WHEN 'planned' THEN 1 ELSE 2 END, j.scheduled_at LIMIT 300", *args)
     for r in rows:
         r["state_label"] = rules.label(rules.JOB_STATES, r["state"])
-    return {"rows": rows}
+    mine = " WHERE id IN (SELECT job_id FROM job_techs WHERE user_id = %d)" % user["id"] if lvl == "own" else ""
+    counts = {r["state"]: r["n"] for r in db.q("SELECT state, COUNT(*) AS n FROM jobs%s GROUP BY state" % mine)}
+    counts["open"] = sum(n for s, n in counts.items() if s != "done")
+    return {"rows": rows, "counts": counts}
 
 
 @router.get("/jobs/{jid}")
 def job(jid: int, user=Depends(staff_only), db=Depends(get_db)):
     j, techs, lvl = _job(db, user, jid)
-    dispatched = bool(db.val("SELECT COUNT(*) FROM deliveries WHERE order_id = ? AND state = 'done'", j["order_id"]))
+    dispatched = bool(db.val("SELECT COUNT(*) FROM deliveries WHERE order_id = ? AND state IN ('done', 'delivered')", j["order_id"]))
     return {**j, "state_label": rules.label(rules.JOB_STATES, j["state"]), "techs": techs,
             "checklist": [{"field": f, "label": l, "done": bool(j[f])} for f, l in rules.CHECKLIST],
             "photos": db.q("SELECT id, filename, note, created_at FROM attachments WHERE owner_type = 'job' AND owner_id = ?", jid),
@@ -190,6 +223,17 @@ def update_job(jid: int, body: dict = Body(default={}), user=Depends(staff_only)
     for f in ("chk_stands", "chk_panels", "chk_wiring", "chk_earthing", "chk_generation"):
         if f in vals:
             vals[f] = 1 if vals[f] else 0
+    if vals.get("scheduled_at") is not None:
+        vals["scheduled_at"] = rules.as_local_datetime(vals["scheduled_at"], "installation date")
+        # A new date can't be in the past (an old job keeps its original date when other fields are saved).
+        if vals["scheduled_at"] != j["scheduled_at"] and vals["scheduled_at"][:10] < rules.date.today().isoformat():
+            raise HTTPException(400, "The installation can't be scheduled in the past.")
+    for f, what in (("kw_confirmed", "installed size"), ("generation_reading_kw", "generation reading")):
+        if vals.get(f) is not None:   # stored as numbers: the certificate and emails format them as kW
+            v = rules.as_float(vals[f], what)
+            if v > 1000 or v < 0 or (v == 0 and f == "kw_confirmed"):   # a reading of 0 (cloudy) is fine
+                raise HTTPException(400, "The %s must be between 0 and 1000 kW." % what)
+            vals[f] = v
     if vals.get("signature") and not str(vals["signature"]).startswith("data:image/"):
         raise HTTPException(400, "Invalid signature.")
     if vals.get("signature"):
@@ -197,9 +241,10 @@ def update_job(jid: int, body: dict = Body(default={}), user=Depends(staff_only)
     db.update("jobs", jid, vals)
     if lvl == "rw" and "techs" in body:
         db.exec("DELETE FROM job_techs WHERE job_id = ?", jid)
-        for uid in body.get("techs") or []:
-            if db.val("SELECT COUNT(*) FROM users WHERE id = ? AND role = 'technician' AND active = 1", int(uid)):
-                db.insert("job_techs", {"job_id": jid, "user_id": int(uid)})
+        for uid in rules.as_list(body.get("techs")):
+            uid = rules.as_int(uid, "technician")
+            if db.val("SELECT COUNT(*) FROM users WHERE id = ? AND role = 'technician' AND active = 1", uid):
+                db.insert("job_techs", {"job_id": jid, "user_id": uid})
     return {"ok": True}
 
 
@@ -267,6 +312,8 @@ def tickets(stage: str = "", q: str = "", user=Depends(staff_only), db=Depends(g
         args.append(user["id"])
     if stage == "open":
         sql += " AND t.stage NOT IN ('closed','cancel')"
+    elif stage == "active":   # someone has to work on it (not waiting for the customer)
+        sql += " AND t.stage NOT IN ('closed','cancel','awaiting')"
     elif stage:
         sql += " AND t.stage = ?"
         args.append(stage)
@@ -277,16 +324,20 @@ def tickets(stage: str = "", q: str = "", user=Depends(staff_only), db=Depends(g
     for r in rows:
         r["stage_label"] = rules.label(rules.TICKET_STAGES, r["stage"])
         r["days_open"] = max((rules.parse_dt(now()) - rules.parse_dt(r["reported_on"])).days, 0)
-    return {"rows": rows, "stages": [{"value": k, "label": v} for k, v in rules.TICKET_STAGES]}
+    mine = " WHERE technician_id = %d" % user["id"] if lvl == "own" else ""
+    counts = {r["stage"]: r["n"] for r in db.q("SELECT stage, COUNT(*) AS n FROM tickets%s GROUP BY stage" % mine)}
+    counts["open"] = sum(n for s, n in counts.items() if s not in ("closed", "cancel"))
+    counts["active"] = counts["open"] - counts.get("awaiting", 0)
+    return {"rows": rows, "counts": counts, "stages": [{"value": k, "label": v} for k, v in rules.TICKET_STAGES]}
 
 
 @router.post("/tickets")
 def create_ticket(body: dict = Body(default={}), user=Depends(staff_only), db=Depends(get_db)):
     need(user, "tickets", write=True)
     serial_id = None
-    cid = int(body.get("customer_id") or 0)
+    cid = rules.as_int(body.get("customer_id"))
     if body.get("serial"):
-        s = db.one("SELECT * FROM serials WHERE name = ? AND customer_id IS NOT NULL", body["serial"].strip())
+        s = db.one("SELECT * FROM serials WHERE name = ? AND customer_id IS NOT NULL", rules.text(body.get("serial")).strip())
         if not s:
             raise HTTPException(400, "No delivered equipment has serial %s." % body["serial"])
         serial_id, cid = s["id"], s["customer_id"]
@@ -294,7 +345,7 @@ def create_ticket(body: dict = Body(default={}), user=Depends(staff_only), db=De
         raise HTTPException(400, "Choose the customer (or enter a serial number).")
     tid = rules.create_ticket(db, cid, body.get("description"), user["id"], serial_id, body.get("fault_code"),
                               channel=body.get("channel") or "phone",
-                              technician_id=int(body.get("technician_id") or 0) or None)
+                              technician_id=rules.as_int(body.get("technician_id")) or None)
     return {"ok": True, "id": tid}
 
 
@@ -323,30 +374,32 @@ def update_ticket(tid: int, body: dict = Body(default={}), user=Depends(staff_on
         raise HTTPException(400, "This request is closed.")
     fields = ("resolution", "labour_hours", "fault_code") + (("technician_id", "priority") if lvl == "rw" else ())
     vals = clean(body, fields)
-    if vals.get("technician_id") and not rules.is_active_role(db, vals["technician_id"], ("technician",)):
+    if vals.get("technician_id") is not None:   # null / "" = unassign; anything else must be an active person
+        vals["technician_id"] = rules.as_int(vals["technician_id"], "person")
+    if vals.get("technician_id") is not None and not rules.is_active_role(db, vals["technician_id"], ("technician",)):
         raise HTTPException(400, "Choose an active technician.")
     if vals.get("priority") is not None and str(vals["priority"]) not in ("0", "1", "2"):
         raise HTTPException(400, "Priority must be normal, high or urgent.")
     if vals.get("labour_hours") is not None:
         try:
-            vals["labour_hours"] = float(vals["labour_hours"])
+            vals["labour_hours"] = rules.as_float(vals["labour_hours"], "labour hours")
             assert 0 <= vals["labour_hours"] <= 200
-        except (TypeError, ValueError, AssertionError):
+        except (rules.RuleError, AssertionError):
             raise HTTPException(400, "Labour hours must be between 0 and 200.")
     if "ai_diagnosis" in body and body["ai_diagnosis"]:
         vals["ai_diagnosis"] = json.dumps(body["ai_diagnosis"])[:8000]
     db.update("tickets", tid, vals)
     if "lines" in body:
         db.exec("DELETE FROM ticket_lines WHERE ticket_id = ?", tid)
-        for l in body.get("lines") or []:
-            p = db.get("products", int(l.get("product_id") or 0))
+        for l in rules.as_list(body.get("lines"), dict):
+            p = db.get("products", rules.as_int(l.get("product_id")))
             if p:
-                qty = float(l.get("qty") or 1)
+                qty = rules.as_float(l.get("qty"), "quantity", 1)
                 if not 0 < qty <= 1000:
                     raise HTTPException(400, "Part quantities must be between 1 and 1000.")
                 db.insert("ticket_lines", {"ticket_id": tid, "product_id": p["id"], "qty": qty,
                                            "price_unit": p["price"], "cost": p["cost"],
-                                           "new_serial": (l.get("new_serial") or "").strip() or None})
+                                           "new_serial": rules.text(l.get("new_serial")).strip() or None})
     return {"ok": True}
 
 
@@ -418,8 +471,8 @@ def create_product(body: dict = Body(default={}), user=Depends(staff_only), db=D
     need(user, "stock", write=True)
     if user["role"] != "director":
         raise HTTPException(403, "Only the Director can add products.")
-    code = (body.get("code") or "").strip().upper()[:30]
-    name = (body.get("name") or "").strip()[:120]
+    code = rules.text(body.get("code")).strip().upper()[:30]
+    name = rules.text(body.get("name")).strip()[:120]
     category = body.get("category")
     if not code or not name or category not in CATEGORIES or category in ("kit",):
         raise HTTPException(400, "Enter a code, a name and a category.")
@@ -429,8 +482,8 @@ def create_product(body: dict = Body(default={}), user=Depends(staff_only), db=D
 
     def number(k, default=0):
         try:
-            return max(float(body.get(k) if body.get(k) not in (None, "") else default), 0)
-        except (TypeError, ValueError):
+            return max(rules.as_float(body.get(k), k, default), 0)
+        except rules.RuleError:
             raise HTTPException(400, "%s must be a number." % k.replace("_", " "))
     pid = db.insert("products", {
         "code": code, "name": name, "category": category, "tracking": tracking,

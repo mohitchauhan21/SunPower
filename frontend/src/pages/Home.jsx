@@ -3,6 +3,7 @@ import MaskedHeading from '../components/reactbits/MaskedHeading.jsx';
 import ScrollStack, { ScrollStackItem } from '../components/reactbits/ScrollStack.jsx';
 import AccordionGallery from '../components/reactbits/AccordionGallery.jsx';
 import PixelCard from '../components/reactbits/PixelCard.jsx';
+import Grainient from '../components/reactbits/Grainient.jsx';
 import Reveal from '../components/ui/Reveal.jsx';
 import { packagesWith } from '../solar.js';
 import { useSubsidyTable } from '../subsidy.js';
@@ -31,18 +32,18 @@ const FEATURES = [
 ];
 
 const STEPS = [
-  { title: 'Tell us about your home.', text: 'Share your bill or monthly units. An advisor calls you back within two hours to check your roof and grid connection.', meta: 'Takes about 30 seconds' },
-  { title: 'We survey your roof.', text: 'A free visit records usable area, tilt, direction and shading, so your system is sized to what your roof can really give.', meta: 'Free, no obligation' },
-  { title: 'Get a fixed-price quote.', text: 'One package covers panels, inverter, structure, wiring, installation and paperwork, with the subsidy shown up front.', meta: 'Subsidy filed for you' },
-  { title: 'Switch on. Stay covered.', text: 'Our crew installs and tests on site. Your warranties start automatically, and service is a message away.', meta: '20-year panel warranty' }
+  { title: 'Estimate, then book a survey.', text: 'See your savings in seconds, then pick a day and time for a free roof survey. Our team calls you to confirm the booking.', meta: 'Takes about a minute' },
+  { title: 'We survey your roof.', text: 'A technician from your area measures usable area, direction, tilt and shade, and works out the right capacity for your home.', meta: 'Free, no obligation' },
+  { title: 'Your exact quote.', text: 'One package covers panels, inverter, structure, wiring, installation and paperwork. Pay an advance and the rest after installation, or pay in full upfront.', meta: 'Subsidy filed for you' },
+  { title: 'Installed, switched on, covered.', text: 'We deliver, install and test on site. Once it’s paid in full we switch it on, and your warranties start that day.', meta: 'Panel, inverter and workmanship warranties' }
 ];
 
 const GALLERY = [
   { image: '/img/home-rooftop.jpg', label: 'Independent homes · 2–5 kW', link: '/estimate' },
-  { image: '/img/city-rooftops.jpg', label: 'Apartments & societies', link: '/quote' },
-  { image: '/img/crew-installing.jpg', label: 'Installed by our own crew', link: '/quote' },
+  { image: '/img/city-rooftops.jpg', label: 'Apartments & societies', link: '/book-survey' },
+  { image: '/img/crew-installing.jpg', label: 'Installed by our own crew', link: '/book-survey' },
   { image: '/img/panel-rows.jpg', label: 'Flat RCC roofs', link: '/estimate' },
-  { image: '/img/commercial-array.jpg', label: 'Shops, offices & factories', link: '/quote' }
+  { image: '/img/commercial-array.jpg', label: 'Shops, offices & factories', link: '/book-survey' }
 ];
 
 export default function Home() {
@@ -50,6 +51,12 @@ export default function Home() {
   const packages = packagesWith(subsidyTable?.average);
   return (
     <>
+      {/* Animated grainy sunrise gradient behind the whole home page (fixed, so it stays while you scroll).
+          Light palette so the dark text stays readable; move the pointer to stir it, click to swirl it. */}
+      <div className="home-bg" aria-hidden="true">
+        <Grainient colors={['#ffffff', '#fff7ee', '#ffe7cb', '#ffcf9c', '#ffb46e']} angle={160} flow={0.9} silk={0.3}
+                   grainAmount={0.05} speed={0.8} saturation={0.95} />
+      </div>
       {/* HERO */}
       <section className="hero">
         <div className="wrap">
@@ -58,7 +65,7 @@ export default function Home() {
             <h1 className="display">Sunlight,<br />well spent.</h1>
             <p className="lead">Rooftop solar for homes across India. Surveyed, installed and serviced by one team, with the government subsidy handled for you.</p>
             <div className="actions">
-              <Link to="/quote" className="btn btn--primary">Book a free survey</Link>
+              <Link to="/book-survey" className="btn btn--primary">Book a free survey</Link>
               <Link to="/estimate" className="link">Estimate your savings</Link>
             </div>
           </Reveal>
@@ -107,7 +114,7 @@ export default function Home() {
       </section>
 
       {/* HOW IT WORKS */}
-      <section className="section" style={{ paddingBottom: 0 }}>
+      <section className="section" id="how-it-works" style={{ paddingBottom: 0 }}>
         <div className="wrap">
           <div className="section__head">
             <span className="eyebrow">How it works</span>
@@ -133,7 +140,7 @@ export default function Home() {
       </section>
 
       {/* PACKAGES */}
-      <section className="section section--alt">
+      <section className="section section--alt" id="packages">
         <div className="wrap">
           <div className="section__head">
             <span className="eyebrow">Packages</span>
@@ -177,7 +184,7 @@ export default function Home() {
       </section>
 
       {/* INSTALLATIONS */}
-      <section className="section">
+      <section className="section section--dark" id="installations">
         <div className="wrap">
           <div className="section__head">
             <span className="eyebrow">Installations</span>
@@ -196,7 +203,7 @@ export default function Home() {
             <p className="lead">Enter your monthly bill and get a system size, savings and payback in seconds.</p>
             <div className="actions">
               <Link to="/estimate" className="btn btn--primary">Estimate my savings</Link>
-              <Link to="/quote" className="link">Or request a quote</Link>
+              <Link to="/book-survey" className="link">Or book a free roof survey</Link>
             </div>
           </Reveal>
         </div>

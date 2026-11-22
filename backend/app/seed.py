@@ -106,6 +106,9 @@ def load_demo(db):
     support = _user(db, "Farah Khan", "support@sunpower.demo", "support")
     techs = [_user(db, name, "tech%02d@sunpower.demo" % (i + 1), "technician", TECH_RATES[i % len(TECH_RATES)])
              for i, name in enumerate(TECHS)]
+    for i, tid in enumerate(techs):   # each technician covers one city (and its state)
+        place = PLACES[i % len(PLACES)]
+        db.update("users", tid, {"service_area": "%s, %s" % (place[1], place[2])})
     _receive_stock(db, warehouse["id"])
 
     today = datetime.now().replace(minute=0, second=0, microsecond=0)
@@ -138,7 +141,7 @@ def load_demo(db):
             customer_id=cid)
         db.update("leads", lid, {"grid_suitable": "yes"})
         tech = rnd.choice(techs)
-        sid = rules.schedule_survey(db, db.get("leads", lid), tech, _ts(when - timedelta(days=5)), director["id"])
+        sid = rules.schedule_survey(db, db.get("leads", lid), tech, _ts(when - timedelta(days=5)), director["id"], allow_past=True)
         db.update("surveys", sid, {"roof_type": "rcc", "roof_direction": rnd.choice(["S", "S", "SE", "SW"]),
                                    "roof_tilt": rnd.choice([10, 15, 20]), "cable_distance_m": rnd.randint(8, 35),
                                    "recommended_kw": plan["kw"], "latitude": 23.0225, "longitude": 72.5714})
@@ -297,7 +300,7 @@ def _pipeline(db, rnd, techs, sales, director, today):
             continue                                    # screened, survey to book
         tech = techs[0] if i in (3, 4) else rnd.choice(techs)
         sid = rules.schedule_survey(db, db.get("leads", lid), tech,
-                                    _ts((today + timedelta(days=1)).replace(hour=10 + i)), director["id"])
+                                    _ts((today + timedelta(days=1)).replace(hour=10 + i)), director["id"], allow_past=True)
         if i < 5:
             continue                                    # survey scheduled (Ramesh visits tomorrow)
         db.update("surveys", sid, {"roof_type": "rcc", "roof_direction": "S", "roof_tilt": 15, "recommended_kw": kw})

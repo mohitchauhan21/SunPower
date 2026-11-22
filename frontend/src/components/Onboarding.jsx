@@ -82,8 +82,12 @@ export default function Onboarding() {
     if (!audience || AUTH_PAGES.some((p) => pathname.startsWith(p)) || pathname.startsWith('/print')) return;
     if (seenLocally(key)) return;
     if (me.authenticated && me.onboarded) return;
-    const t = setTimeout(() => { setStep(0); setOpen(true); }, 700);
-    return () => clearTimeout(t);
+    let t;
+    const start = () => { t = setTimeout(() => { setStep(0); setOpen(true); }, 700); };
+    // On the first visit the logo preloader is still playing: start the tour once it has gone.
+    if (document.getElementById('intro')) window.addEventListener('sp:intro-done', start, { once: true });
+    else start();
+    return () => { clearTimeout(t); window.removeEventListener('sp:intro-done', start); };
   }, [audience, key, me, pathname]);
 
   const finish = useCallback(async (to) => {

@@ -53,6 +53,7 @@
 .ws-head .chips, .ws-toolbar .chips { margin-bottom: 0; }
 .table tr.is-link:hover td { background: #fafafa; }
 .row-link { font-weight: 600; color: var(--ink); }
+.table tr.is-link { cursor: pointer; }   /* the whole row opens the record (Table's onClick) */
 .row-link:hover { color: var(--accent); }
 .table .tot td { font-weight: 600; border-bottom: 0; }
 .table .tot--grand td { font-size: 16px; border-top: 2px solid var(--ink); }
@@ -119,3 +120,5 @@ code { background: var(--bg-alt); border-radius: 6px; padding: 1px 6px; }
   .ws-form { grid-template-columns: 1fr; }
   .ws-main { padding: 16px 16px 64px; }
 }
+
+.booking { display: grid; gap: 10px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }

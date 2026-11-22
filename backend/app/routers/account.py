@@ -17,7 +17,7 @@ def _cid(user):
 
 
 def _order(db, user, order_id, states=None):
-    o = db.one("SELECT * FROM orders WHERE id = ? AND customer_id = ?", int(order_id or 0), _cid(user))
+    o = db.one("SELECT * FROM orders WHERE id = ? AND customer_id = ?", rules.as_int(order_id), _cid(user))
     if not o or (states and o["state"] not in states):
         raise HTTPException(404, "Order not found.")
     return o
@@ -30,13 +30,20 @@ def order_summary(db, o):
     job = db.one("SELECT * FROM jobs WHERE order_id = ? ORDER BY id LIMIT 1", o["id"])
     sub = db.one("SELECT * FROM subsidies WHERE order_id = ?", o["id"])
     chk = [job[f] for f, _l in rules.CHECKLIST] if job else []
-    delivered = bool(deliveries) and all(d["state"] == "done" for d in deliveries)
+    shipped = bool(deliveries) and all(d["state"] in ("done", "delivered") for d in deliveries)
+    # A finished installation means the kit reached the site, even if the warehouse never marked it delivered.
+    delivered = bool(deliveries) and (all(d["state"] == "delivered" for d in deliveries) or bool(job and job["state"] == "done"))
+    packed = bool(deliveries) and all(d["state"] in ("packed", "done", "delivered") for d in deliveries)
+    last = deliveries[-1] if deliveries else {}
     return {
         "id": o["id"], "name": o["ref"], "kw": o["kw"] or 0, "state": o["state"],
+        "project": db.val("SELECT project_ref FROM leads WHERE id = ?", o["lead_id"]) if o["lead_id"] else None,
         "quote_pending": o["state"] in ("draft", "sent"), "date": o["date_order"], "valid_until": o["valid_until"],
         "total": o["amount_total"], "paid": paid, "due": max(rules.r2(o["amount_total"] - paid), 0),
         "advance_pct": float(db.setting("advance_pct", 30)), "advance_due": due,
         "advance_amount": rules.advance_needed(db, o),
+        "payment_plan": o["payment_plan"], "full_discount_pct": rules.full_discount_pct(db),
+        "full_amount": rules.full_upfront_amount(db, o) if paid < 0.5 else None,
         "pdf_url": "/print/quote/%s?token=%s" % (o["id"], o["access_token"]),
         "review_url": "/account/quote/%s" % o["id"],
         "certificate_url": ("/print/certificate/%s?token=%s" % (job["id"], o["access_token"])
@@ -44,7 +51,10 @@ def order_summary(db, o):
         "steps": [
             {"label": "Order confirmed", "done": o["state"] == "sale"},
             {"label": "Advance paid", "done": o["state"] == "sale" and due == 0},
-            {"label": "Kit dispatched", "done": delivered},
+            {"label": "Kit packed", "done": packed, "date": last.get("packed_at")},
+            {"label": "Kit shipped", "done": shipped, "date": last.get("date_done"),
+             "note": ("Expected %s" % last["expected_on"]) if shipped and not delivered and last.get("expected_on") else None},
+            {"label": "Kit delivered", "done": delivered, "date": last.get("delivered_at")},
             {"label": "Installation scheduled", "done": bool(job and job["scheduled_at"]),
              "date": job["scheduled_at"] if job else None},
             {"label": "Crew on site", "done": bool(job) and job["state"] in ("in_progress", "done")},
@@ -67,7 +77,8 @@ def overview(user=Depends(customer), db=Depends(get_db)):
             continue
         s = db.one("SELECT s.*, u.name AS tech FROM surveys s LEFT JOIN users u ON u.id = s.technician_id "
                    "WHERE s.lead_id = ? ORDER BY s.id DESC LIMIT 1", l["id"])
-        enquiries.append({"id": l["id"], "name": l["ref"], "created": l["created_at"], "kw": l["requested_kw"] or 0,
+        enquiries.append({"id": l["id"], "name": l["ref"], "project": l["project_ref"], "created": l["created_at"],
+                          "kw": l["requested_kw"] or 0,
                           "stage": rules.label(rules.LEAD_STAGES, l["stage"]), **rules.enquiry_progress(l, s),
                           "survey": {"state": rules.label(rules.SURVEY_STATES, s["state"]), "date": s["survey_date"],
                                      "technician": s["tech"]} if s else None})
@@ -116,18 +127,32 @@ def quote(order_id: int, user=Depends(customer), db=Depends(get_db)):
 @router.post("/quote/{order_id}/accept")
 def accept_quote(order_id: int, body: dict = Body(default={}), user=Depends(customer), db=Depends(get_db)):
     o = _order(db, user, order_id, ("sent",))
-    name = (body.get("name") or "").strip()[:120]
+    name = rules.text(body.get("name")).strip()[:120]
+    plan = body.get("plan") if body.get("plan") in ("advance", "full") else None
     if len(name) < 2:
         return {"ok": False, "field": "name", "error": "Type your full name to accept."}
+    if not plan:
+        return {"ok": False, "field": "plan", "error": "Choose how you'd like to pay."}
     if o["valid_until"] and o["valid_until"] < today():
         return {"ok": False, "error": "This quotation has expired. Please contact us for a fresh one."}
-    db.update("orders", o["id"], {"accepted_by": name, "accepted_at": rules.now()})
-    db.note("order", o["id"], "Quotation accepted online by %s." % name, user["id"])
-    return {"ok": True, **_pay(db, user, db.get("orders", o["id"]), "advance")}
+    db.update("orders", o["id"], {"accepted_by": name, "accepted_at": rules.now(), "payment_plan": plan})
+    db.note("order", o["id"], "Quotation accepted online by %s (%s)." % (
+        name, "pays 100% upfront" if plan == "full" else "advance now, balance after installation"), user["id"])
+    try:
+        return {"ok": True, **_pay(db, user, db.get("orders", o["id"]), plan)}
+    except rules.RuleError as e:
+        # The acceptance stands even if payment can't start now (e.g. online payment switched off):
+        # the customer pays later from the same page or by phone.
+        return {"ok": False, "accepted": True, "error": str(e)}
 
 
 def _pay(db, user, o, kind):
     paid = rules.order_paid(db, o["id"])
+    if kind == "full":
+        if paid > 0.5:   # the upfront discount is only for paying everything in one go
+            kind = "balance"
+        else:
+            return rules.start_online_payment(db, o, rules.full_upfront_amount(db, o), "full", user["id"])
     amount = (o["amount_total"] - paid) if kind == "balance" else rules.advance_needed(db, o) - paid
     return rules.start_online_payment(db, o, amount, "balance" if kind == "balance" else "advance", user["id"])
 
@@ -144,7 +169,7 @@ def order_pay(body: dict = Body(default={}), user=Depends(customer), db=Depends(
 
 
 def _pending(db, user, payment_id):
-    p = db.one("SELECT * FROM payments WHERE id = ? AND customer_id = ?", int(payment_id or 0), _cid(user))
+    p = db.one("SELECT * FROM payments WHERE id = ? AND customer_id = ?", rules.as_int(payment_id), _cid(user))
     if not p:
         raise HTTPException(404, "Payment not found.")
     return p
@@ -158,7 +183,7 @@ def test_confirm(body: dict = Body(default={}), user=Depends(customer), db=Depen
     p = _pending(db, user, body.get("payment_id"))
     if p["method"] != "test" or p["state"] != "pending":
         return {"ok": False, "error": "This payment can't be completed."}
-    card = "".join(ch for ch in str(body.get("card") or "") if ch.isdigit())
+    card = "".join(ch for ch in rules.text(body.get("card")) if ch.isdigit())
     if len(card) < 12:
         return {"ok": False, "field": "card", "error": "Enter the test card number."}
     if card.endswith("0002"):
@@ -186,20 +211,20 @@ def razorpay_verify(body: dict = Body(default={}), user=Depends(customer), db=De
 def complaint(body: dict = Body(default={}), user=Depends(customer), db=Depends(get_db)):
     serial_id = None
     if body.get("warranty_id"):
-        w = db.one("SELECT * FROM warranties WHERE id = ? AND customer_id = ?", int(body["warranty_id"]), _cid(user))
+        w = db.one("SELECT * FROM warranties WHERE id = ? AND customer_id = ?", rules.as_int(body["warranty_id"]), _cid(user))
         if not w:
             return {"ok": False, "field": "warranty_id", "error": "Please pick your own equipment."}
         serial_id = w["serial_id"]
     try:
-        tid = rules.create_ticket(db, _cid(user), (body.get("description") or "")[:2000], user["id"], serial_id,
-                                  (body.get("fault_code") or "")[:20], channel="website")
+        tid = rules.create_ticket(db, _cid(user), rules.text(body.get("description"))[:2000], user["id"], serial_id,
+                                  rules.text(body.get("fault_code"))[:20], channel="website")
     except rules.RuleError as e:
         return {"ok": False, "field": "description", "error": str(e)}
     return {"ok": True, "id": tid, "name": db.val("SELECT ref FROM tickets WHERE id = ?", tid)}
 
 
 def _ticket(db, user, ticket_id):
-    t = db.one("SELECT * FROM tickets WHERE id = ? AND customer_id = ?", int(ticket_id or 0), _cid(user))
+    t = db.one("SELECT * FROM tickets WHERE id = ? AND customer_id = ?", rules.as_int(ticket_id), _cid(user))
     if not t:
         raise HTTPException(404, "Request not found.")
     return t
@@ -219,7 +244,7 @@ def ticket_reopen(body: dict = Body(default={}), user=Depends(customer), db=Depe
     t = _ticket(db, user, body.get("ticket_id"))
     if t["stage"] != "awaiting":
         return {"ok": False, "error": "This request is not waiting for your confirmation."}
-    rules.ticket_reopen(db, t, user["id"], (body.get("note") or "")[:1000])
+    rules.ticket_reopen(db, t, user["id"], rules.text(body.get("note"))[:1000])
     return {"ok": True}
 
 
@@ -228,13 +253,13 @@ def ticket_reopen(body: dict = Body(default={}), user=Depends(customer), db=Depe
 def profile(body: dict = Body(default={}), user=Depends(customer), db=Depends(get_db)):
     vals = {}
     if "name" in body:
-        name = (body.get("name") or "").strip()[:120]
+        name = rules.text(body.get("name")).strip()[:120]
         if not name:
             return {"ok": False, "field": "name", "error": "Please enter your name."}
         vals["name"] = name
     for k in ("phone", "street", "city"):
         if k in body:
-            vals[k] = (body.get(k) or "").strip()[:200] or None
+            vals[k] = rules.text(body.get(k)).strip()[:200] or None
     db.update("customers", _cid(user), vals)
     if "name" in vals or "phone" in vals:
         db.update("users", user["id"], {k: v for k, v in vals.items() if k in ("name", "phone")})
@@ -245,13 +270,13 @@ def profile(body: dict = Body(default={}), user=Depends(customer), db=Depends(ge
 def password(request: Request, body: dict = Body(default={}), user=Depends(require("customer", "director", "sales",
                                                                                      "warehouse", "technician", "support")),
              db=Depends(get_db)):
-    new = body.get("new") or ""
+    new = rules.text(body.get("new"))
     problem = password_problem(new)
     if problem:
         return {"ok": False, "field": "new", "error": problem}
     if "confirm" in body and body.get("confirm") != new:
         return {"ok": False, "field": "confirm", "error": "The two new passwords don't match."}
-    if not check_password(body.get("old") or "", user["password_hash"]):
+    if not check_password(rules.text(body.get("old")), user["password_hash"]):
         return {"ok": False, "field": "old", "error": "Your current password is not correct."}
     db.update("users", user["id"], {"password_hash": hash_password(new)})
     end_all_sessions(db, user["id"], keep_token=request.cookies.get(COOKIE))
@@ -273,7 +298,7 @@ def ticket_cancel(body: dict = Body(default={}), user=Depends(customer), db=Depe
 @router.post("/enquiry/cancel")
 def enquiry_cancel(body: dict = Body(default={}), user=Depends(customer), db=Depends(get_db)):
     """The customer withdraws an enquiry before any quotation was sent."""
-    lead = db.one("SELECT * FROM leads WHERE id = ? AND customer_id = ?", int(body.get("lead_id") or 0), _cid(user))
+    lead = db.one("SELECT * FROM leads WHERE id = ? AND customer_id = ?", rules.as_int(body.get("lead_id")), _cid(user))
     if not lead or lead["stage"] in ("won", "lost"):
         return {"ok": False, "error": "This enquiry can't be cancelled."}
     if db.val("SELECT COUNT(*) FROM orders WHERE lead_id = ? AND state IN ('sent','sale')", lead["id"]):

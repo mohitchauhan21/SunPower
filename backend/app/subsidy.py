@@ -62,7 +62,7 @@ BY_NAME = {s[0].lower(): s for s in STATES}
 
 def state_row(state):
     """The state's row, or the standard all-India (general) rate when none / unknown is given."""
-    return BY_NAME.get((state or "").strip().lower()) or ALL_INDIA
+    return BY_NAME.get((state if isinstance(state, str) else "").strip().lower()) or ALL_INDIA
 
 
 def central(kw, category="general"):

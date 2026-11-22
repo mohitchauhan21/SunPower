@@ -88,13 +88,13 @@ The first start downloads about 2.2 GB of free models. Without the AI service ev
 ## Who can do what (create, read, update, delete)
 
 The server enforces this for every request (`backend/app/access.py`); the website only shows the buttons a person may use.
-"Own" = only records assigned to them. Deletes are also refused when they would break history (e.g. a confirmed order, a customer with orders, a request with an invoice); use Cancel instead.
+"Own" = only records assigned to them. Only the Director deletes records (the Service desk also deletes unbilled requests); Sales, technicians and customers cancel, reject or mark lost instead. Deletes are also refused when they would break history (e.g. a confirmed order, a customer with orders, a request with an invoice); use Cancel instead.
 
 | Records | Director | Sales | Warehouse | Service desk | Technician | Customer |
 |---|---|---|---|---|---|---|
-| Enquiries | CRUD | CRUD | – | read | – | create, cancel own |
-| Roof surveys | CRUD | CRUD | – | read | read + update own | – |
-| Quotes & orders (lines, payments) | CRUD, void payments, cancel invoices | CRUD (delete quotes only) | read | read | – | accept + pay own |
+| Enquiries | CRUD | create, read, update (mark lost) | – | read | – | create, cancel own |
+| Roof surveys | CRUD | create, read, update (reject, reschedule) | – | read | read + update own | – |
+| Quotes & orders (lines, payments) | CRUD, void payments, cancel invoices | create, read, update (cancel quotes) | read | read | – | accept + pay own |
 | Customers | CRUD | create, read, update | – | create, read, update | – | update own profile |
 | Subsidy files | CRUD | create, read, update | – | read | – | read own |
 | Dispatch | read, update (+ override) | read | read, update | – | – | – |

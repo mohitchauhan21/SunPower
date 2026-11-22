@@ -25,7 +25,7 @@ import { Deliveries, Delivery, Job, Jobs, Stock, Ticket, Tickets, Warranties } f
 import { Reports, Settings } from './staff/Admin.jsx';
 
 const TITLES = {
-  '/': 'Rooftop solar', '/estimate': 'Savings estimate', '/quote': 'Get a quote', '/login': 'Sign in',
+  '/': 'Rooftop solar', '/estimate': 'Savings estimate', '/book-survey': 'Book a survey', '/login': 'Sign in',
   '/forgot-password': 'Forgot password', '/reset-password': 'New password', '/signup': 'Create account', '/account': 'My account',
   '/app': 'Today', '/app/insights': 'Insights', '/app/me': 'My account', '/app/enquiries': 'Enquiries', '/app/surveys': 'Surveys', '/app/orders': 'Quotes & orders',
   '/app/dispatch': 'Dispatch', '/app/stock': 'Stock', '/app/jobs': 'Installations', '/app/service': 'Service',
@@ -34,10 +34,30 @@ const TITLES = {
 };
 
 export default function App() {
-  const { pathname } = useLocation();
+  const { pathname, hash } = useLocation();
   const inApp = pathname.startsWith('/app');
+  // Navbar links like /#packages jump to that section (also when already on the page).
   useEffect(() => {
-    window.scrollTo(0, 0);
+    if (!hash) return undefined;
+    // Animated sections above (stacking cards, reveals) change the page height while it lays out,
+    // so jump, then re-check the position a few times until the section stays put.
+    let tries = 0;
+    let timer;
+    const go = () => {
+      const el = document.getElementById(hash.slice(1));
+      if (el) {
+        const offset = el.getBoundingClientRect().top - 72;   // leave room for the navbar
+        if (Math.abs(offset) > 4) window.scrollTo(0, window.scrollY + offset);
+        if (tries++ < 8) timer = setTimeout(go, 150);
+      } else if (tries++ < 20) {
+        timer = setTimeout(go, 50);   // the page may still be rendering
+      }
+    };
+    go();
+    return () => clearTimeout(timer);
+  }, [pathname, hash]);
+  useEffect(() => {
+    if (!window.location.hash) window.scrollTo(0, 0);
     const key = Object.keys(TITLES).filter((k) => pathname === k || (k !== '/' && pathname.startsWith(k + '/'))).pop() || pathname;
     const title = pathname.startsWith('/account/quote') ? 'Your quotation' : TITLES[key] || 'Not found';
     document.title = `${title} · SunPower`;
@@ -51,7 +71,8 @@ export default function App() {
           <ErrorBoundary resetKey={pathname}>
           <Routes>
             <Route path="/" element={<Home />} />
-            <Route path="/quote" element={<Quote />} />
+            <Route path="/book-survey" element={<Quote />} />
+            <Route path="/quote" element={<Navigate to="/book-survey" replace />} />
             <Route path="/estimate" element={<Estimate />} />
             <Route path="/login" element={<Login />} />
             <Route path="/signup" element={<Signup />} />

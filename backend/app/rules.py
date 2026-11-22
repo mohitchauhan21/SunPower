@@ -31,6 +31,60 @@ class RuleError(Exception):
     """A business rule stopped the action; the message is shown to the user."""
 
 
+# ------------------------------------------------------- request input
+# Request bodies are plain JSON, so a field can arrive as any type. These turn a
+# field into the type the code expects, or stop the request with a clear 400
+# (RuleError) instead of crashing with a 500 on input like {"name": 5} or {"amount": "abc"}.
+def text(v):
+    """A text field: numbers become text; lists, objects, true/false and null count as empty."""
+    if isinstance(v, str):
+        return v
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        return str(v)
+    return ""
+
+
+def as_float(v, what="amount", default=0.0):
+    """A number field ("" / null = default). Refuses text, true/false, NaN and infinity."""
+    if v is None or v == "":
+        return default
+    if isinstance(v, bool) or not isinstance(v, (int, float, str)):
+        raise RuleError("%s must be a number." % what.capitalize())
+    try:
+        f = float(v)
+    except ValueError:
+        raise RuleError("%s must be a number." % what.capitalize())
+    if f != f or abs(f) > 1e15:   # NaN, infinity or absurdly large (SQLite can't store it as a whole number)
+        raise RuleError("%s must be a number." % what.capitalize())
+    return f
+
+
+def as_local_datetime(v, what="date"):
+    """An appointment time ("YYYY-MM-DD HH:MM[:SS]" or with a T), stored as local "YYYY-MM-DD HH:MM:SS"."""
+    try:
+        return datetime.fromisoformat(text(v).strip().replace(" ", "T")[:19]).strftime("%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        raise RuleError("Enter a valid %s and time." % what)
+
+
+def as_list(v, of=None):
+    """A list field (quote lines, technicians). null = empty; anything that isn't a list is
+    refused. of=dict also refuses items that aren't objects (each line is {"id": .., "qty": ..})."""
+    if v is None or v == "":
+        return []
+    if not isinstance(v, list) or (of and not all(isinstance(x, of) for x in v)):
+        raise RuleError("The list sent is not in the expected format.")
+    return v
+
+
+def as_int(v, what="id", default=0):
+    """A whole-number field such as a record id ("" / null = default)."""
+    f = as_float(v, what, default)
+    if f != int(f):
+        raise RuleError("%s must be a whole number." % what.capitalize())
+    return int(f)
+
+
 # ------------------------------------------------------------------ helpers
 # Rules of thumb for India: 1 kW of panels makes ~120 units (kWh) a month;
 # electricity costs ~₹8 per unit; an installed system costs ~₹65,000 per kW;
@@ -49,8 +103,8 @@ SURVEY_STATES = [("scheduled", "Scheduled"), ("done", "Visited"), ("approved", "
                  ("rejected", "Rejected")]
 ORDER_STATES = [("draft", "Draft quote"), ("sent", "Quote sent"), ("sale", "Confirmed"),
                 ("cancel", "Cancelled")]
-DELIVERY_STATES = [("waiting", "Waiting for advance"), ("ready", "Ready to dispatch"),
-                   ("done", "Dispatched")]
+DELIVERY_STATES = [("waiting", "Waiting for advance"), ("ready", "Ready to pack"), ("packed", "Packed"),
+                   ("done", "Shipped"), ("delivered", "Delivered")]
 JOB_STATES = [("planned", "Planned"), ("in_progress", "On site"), ("done", "Completed")]
 TICKET_STAGES = [("new", "New"), ("diagnosed", "Diagnosed"), ("repair", "Repair in progress"),
                  ("awaiting", "Awaiting customer"), ("closed", "Closed"), ("cancel", "Cancelled")]
@@ -69,7 +123,7 @@ def is_active_role(db, user_id, roles):
     """True if `user_id` is an active user with one of `roles` (for assignment pickers)."""
     marks = ",".join("?" for _ in roles)
     return bool(user_id) and bool(db.val("SELECT COUNT(*) FROM users WHERE id = ? AND active = 1 AND role IN (%s)" % marks,
-                                         int(user_id), *roles))
+                                         as_int(user_id), *roles))
 
 
 def claim(db, table, rid, from_states, to_state):
@@ -208,7 +262,7 @@ def estimate(units=0.0, bill=0.0, state=None, include_topup=False, kw=None, cost
 # Find a customer by email (then by phone); create one if none exists.
 # Fills in missing phone/address on an existing customer. Returns the customer id.
 def ensure_customer(db, name, email=None, phone=None, street=None, city=None):
-    email = (email or "").strip().lower() or None
+    email = text(email).strip().lower() or None
     row = None
     if email:
         row = db.one("SELECT * FROM customers WHERE email = ? COLLATE NOCASE", email)
@@ -282,12 +336,13 @@ def pick_salesperson(db):
 # Create an enquiry (lead) from the website, a call, WhatsApp... Required: name and phone.
 # Assigns a salesperson and sets the "call within 2 hours" reminder. Returns the lead id.
 def create_enquiry(db, vals, channel="web", customer_id=None, actor_id=None):
-    name = (vals.get("contact_name") or "").strip()
-    if not name or not (vals.get("phone") or "").strip():
+    name = text(vals.get("contact_name")).strip()
+    if not name or not text(vals.get("phone")).strip():
         raise RuleError("Please enter the customer's name and phone number.")
     data = {k: vals.get(k) for k in ("contact_name", "phone", "email", "street", "city", "requested_kw",
                                      "system_type", "subsidy_requested", "monthly_bill", "monthly_units", "state",
-                                     "roof_area_sqft", "notes", "discom", "consumer_no") if vals.get(k) is not None}
+                                     "roof_area_sqft", "notes", "discom", "consumer_no", "preferred_date",
+                                     "preferred_slot") if vals.get(k) is not None}
     data.update({"channel": channel, "stage": "new", "customer_id": customer_id,
                  "salesperson_id": vals.get("salesperson_id") or pick_salesperson(db),
                  "next_action": "Call within 2 hours: screen roof, bill and grid",
@@ -296,11 +351,72 @@ def create_enquiry(db, vals, channel="web", customer_id=None, actor_id=None):
     data["subsidy_requested"] = 1 if data.get("subsidy_requested") else 0
     data["ref"] = db.next_ref("lead", "ENQ-")
     lid = db.insert("leads", data)
+    db.update("leads", lid, {"project_ref": project_ref(data["created_at"], lid)})
     db.note("lead", lid, "Enquiry received (%s)." % channel, actor_id)
     return lid
 
 
 # Phone screening is complete when we know the roof area, the bill or units, and the grid is suitable.
+SURVEY_SLOTS = [("morning", "Morning (9am–12pm)"), ("afternoon", "Afternoon (12–3pm)"), ("evening", "Evening (3–6pm)")]
+
+
+def check_preferred_visit(day, slot):
+    """(date, slot) for a survey request, or RuleError. Day: tomorrow up to 30 days ahead."""
+    if not day and not slot:
+        return None, None
+    try:
+        d = date.fromisoformat(str(day)[:10])
+    except (TypeError, ValueError):
+        raise RuleError("Choose the day you'd like the survey.")
+    if not date.today() < d <= date.today() + timedelta(days=30):
+        raise RuleError("Choose a day between tomorrow and 30 days from now.")
+    if slot not in dict(SURVEY_SLOTS):
+        raise RuleError("Choose a time slot.")
+    return d.isoformat(), slot
+
+
+def project_ref(created_at, lead_id):
+    """One ID for the customer's whole journey (enquiry, survey, quote, order, job, warranty, repairs)."""
+    return "SP-%s-%05d" % (str(created_at)[2:4], lead_id)
+
+
+SLOT_TIMES = {"morning": "10:00:00", "afternoon": "13:00:00", "evening": "16:00:00"}
+
+
+def slot_of(survey_date):
+    """morning / afternoon / evening for a visit time."""
+    hour = (parse_dt(survey_date) or datetime(2000, 1, 1, 10)).hour
+    return "morning" if hour < 12 else "afternoon" if hour < 15 else "evening"
+
+
+def in_area(tech, city, state):
+    """True if the technician covers this city or state (service area: comma-separated names)."""
+    areas = [a.strip().lower() for a in (tech.get("service_area") or "").split(",") if a.strip()]
+    return bool(areas) and any(a in ((city or "").lower(), (state or "").lower()) for a in areas)
+
+
+def suggest_technicians(db, lead, day=None, slot=None, skip_survey=0):
+    """Technicians for a survey or job, best first: covers the area, free in that slot, fewest open visits.
+    skip_survey: the survey being rescheduled (it doesn't make its own technician busy)."""
+    out = []
+    for t in db.q("SELECT id, name, service_area FROM users WHERE role = 'technician' AND active = 1 ORDER BY name"):
+        busy = []
+        if day:
+            for s in db.q("SELECT survey_date FROM surveys WHERE technician_id = ? AND state = 'scheduled' "
+                          "AND substr(survey_date, 1, 10) = ? AND id != ?", t["id"], day, skip_survey or 0):
+                if not slot or slot_of(s["survey_date"]) == slot:
+                    busy.append("survey")
+            if db.val("SELECT COUNT(*) FROM jobs j JOIN job_techs jt ON jt.job_id = j.id WHERE jt.user_id = ? "
+                      "AND j.state != 'done' AND substr(j.scheduled_at, 1, 10) = ?", t["id"], day):
+                busy.append("installation")
+        load = (db.val("SELECT COUNT(*) FROM surveys WHERE technician_id = ? AND state = 'scheduled'", t["id"]) +
+                db.val("SELECT COUNT(*) FROM jobs j JOIN job_techs jt ON jt.job_id = j.id WHERE jt.user_id = ? AND j.state != 'done'", t["id"]))
+        out.append({"id": t["id"], "name": t["name"], "service_area": t["service_area"] or "",
+                    "in_area": in_area(t, lead.get("city"), lead.get("state")), "busy": busy, "open_work": load})
+    out.sort(key=lambda t: (not t["in_area"], bool(t["busy"]), t["open_work"], t["name"]))
+    return out
+
+
 def lead_screening_ok(lead):
     return bool(lead["roof_area_sqft"] and (lead["monthly_bill"] or lead["monthly_units"])
                 and lead["grid_suitable"] == "yes")
@@ -317,10 +433,53 @@ def approved_survey(db, lead_id):
 
 
 # Book a roof survey with a technician. Refused until phone screening is complete.
-def schedule_survey(db, lead, technician_id, survey_date, actor_id):
-    if not lead_screening_ok(lead):
-        raise RuleError("Complete the phone screening first: shadow-free roof area, monthly bill or "
-                        "units, and a suitable grid connection.")
+def visit_time(survey_date, slot=None, allow_past=False):
+    """The visit's local date-time from a day + slot (booking form) or a full date-time. Not in the past."""
+    if survey_date and len(str(survey_date)) <= 10:   # a day + slot (from the booking form)
+        if slot not in SLOT_TIMES:
+            raise RuleError("Choose a time slot.")
+        survey_date = "%s %s" % (str(survey_date)[:10], SLOT_TIMES[slot])
+    when = parse_dt(survey_date)
+    if not when:
+        raise RuleError("Choose the day and time slot for the visit.")
+    if when.date() < date.today() and not allow_past:   # allow_past: demo history only
+        raise RuleError("The visit can't be in the past.")
+    return when
+
+
+# Move a booked (not yet visited) survey to another day / slot and/or another technician.
+# The visit simply changes owner: it leaves the old technician's dashboard and appears on the new one's.
+def reschedule_survey(db, survey, technician_id, survey_date, slot, actor_id):
+    if survey["state"] != "scheduled":
+        raise RuleError("Only a booked visit that hasn't happened yet can be rescheduled.")
+    lead = db.get("leads", survey["lead_id"]) if survey["lead_id"] else None
+    if lead and lead["stage"] in ("won", "lost"):
+        raise RuleError("This enquiry is closed.")
+    new_date = visit_time(survey_date, slot).strftime("%Y-%m-%d %H:%M:%S")
+    if not technician_id or not is_active_role(db, technician_id, ("technician",)):
+        raise RuleError("Choose an active technician for the visit.")
+    technician_id = as_int(technician_id)
+    if new_date == survey["survey_date"] and technician_id == survey["technician_id"]:
+        raise RuleError("Pick a different day, time slot or technician.")
+    old_tech = db.val("SELECT name FROM users WHERE id = ?", survey["technician_id"]) or "no technician"
+    new_tech = db.val("SELECT name FROM users WHERE id = ?", technician_id)
+    db.update("surveys", survey["id"], {"survey_date": new_date, "technician_id": technician_id})
+    fmt = lambda v: parse_dt(v).strftime("%d %b %Y, %H:%M") if parse_dt(v) else "no date"
+    msg = "Visit rescheduled to %s with %s (was %s with %s)." % (fmt(new_date), new_tech, fmt(survey["survey_date"]), old_tech)
+    db.note("survey", survey["id"], msg, actor_id)
+    if lead:
+        db.note("lead", lead["id"], msg, actor_id)
+
+
+def schedule_survey(db, lead, technician_id, survey_date, actor_id, slot=None, allow_past=False):
+    """Sales has called the customer: confirm the booking (day + slot) and assign the technician.
+    The visit can be booked on the call; screening details can be completed later by the technician."""
+    if lead["stage"] in ("won", "lost"):
+        raise RuleError("This enquiry is closed.")
+    if lead["grid_suitable"] == "no":
+        raise RuleError("The grid connection was marked unsuitable. Change it if that was a mistake.")
+    when = visit_time(survey_date, slot, allow_past)
+    survey_date = when.strftime("%Y-%m-%d %H:%M:%S")
     if not technician_id:
         raise RuleError("Choose the technician who will visit.")
     if not is_active_role(db, technician_id, ("technician",)):
@@ -330,10 +489,12 @@ def schedule_survey(db, lead, technician_id, survey_date, actor_id):
         "survey_date": survey_date, "state": "scheduled",
         "recommended_kw": lead["requested_kw"] or lead_recommended_kw(lead),
         "usable_area_sqft": lead["roof_area_sqft"], "created_at": now()})
-    if lead["stage"] in ("new", "contacted"):
-        db.update("leads", lead["id"], {"stage": "survey"})
+    db.update("leads", lead["id"], {"booking_confirmed_at": now(),
+                                    "stage": "survey" if lead["stage"] in ("new", "contacted") else lead["stage"],
+                                    "next_action": None, "next_action_due": None})
     tech = db.get("users", technician_id)
-    db.note("lead", lead["id"], "Roof survey scheduled with %s." % tech["name"], actor_id)
+    db.note("lead", lead["id"], "Booking confirmed with the customer: roof survey on %s, technician %s." % (
+        when.strftime("%d %b %Y, %H:%M"), tech["name"]), actor_id)
     return sid
 
 
@@ -382,6 +543,56 @@ def package_for(db, kw, system_type):
 
 # Turn an enquiry with an approved survey into a draft quotation:
 # the matching package + installation (kW x price per kW). Returns the order id.
+def quote_from_survey(db, survey, actor):
+    """The technician (or Sales) turns a visited survey into the customer's quote. Building the
+    quote approves the survey's recommended size; prices come from the catalogue."""
+    if survey["state"] == "scheduled":
+        survey_mark_done(db, survey, actor["id"])
+        survey = db.get("surveys", survey["id"])
+    if survey["state"] not in ("done", "approved"):
+        raise RuleError("Only a visited survey can be quoted.")
+    if not survey["recommended_kw"]:
+        raise RuleError("Set the recommended system size (kW) first.")
+    if db.val("SELECT COUNT(*) FROM orders WHERE lead_id = ? AND state != 'cancel'", survey["lead_id"]):
+        raise RuleError("This customer already has a quotation. Open it from the enquiry.")
+    if survey["state"] == "done":
+        db.update("surveys", survey["id"], {"state": "approved"})
+        db.update("leads", survey["lead_id"], {"requested_kw": survey["recommended_kw"]})
+        db.note("survey", survey["id"], "Survey completed and quoted (%s kW)." % survey["recommended_kw"], actor["id"])
+    oid = create_quote(db, db.get("leads", survey["lead_id"]), actor["id"])
+    db.update("orders", oid, {"created_by": actor["id"]})
+    return oid
+
+
+def discount_needs_approval(db, order):
+    """True if a line discount is above the limit and nobody has approved it yet."""
+    limit = float(db.setting("discount_approval_pct", 5) or 5)
+    big = db.val("SELECT MAX(discount) FROM order_lines WHERE order_id = ?", order["id"]) or 0
+    return big > limit and order.get("approval_state") != "approved"
+
+
+def full_discount_pct(db):
+    return float(db.setting("full_upfront_discount_pct", 2) or 0)
+
+
+def full_upfront_amount(db, order):
+    """What the customer pays to settle the whole order upfront (with the upfront discount)."""
+    return r2(order["amount_total"] * (1 - full_discount_pct(db) / 100.0))
+
+
+def apply_full_discount(db, order, actor_id=None):
+    """Add the 'paid in full upfront' discount line once, so the order total equals what was paid."""
+    pct = full_discount_pct(db)
+    if not pct or db.val("SELECT COUNT(*) FROM order_lines WHERE order_id = ? AND description LIKE 'Paid in full upfront%'", order["id"]):
+        return
+    untaxed, total = order["amount_untaxed"], order["amount_total"]
+    rate = round((total - untaxed) / untaxed * 100, 4) if untaxed else 0
+    db.insert("order_lines", {"order_id": order["id"], "description": "Paid in full upfront: %g%% off" % pct, "qty": 1,
+                              "price_unit": -r2(untaxed * pct / 100.0), "tax_rate": rate})
+    recompute_order(db, order["id"])
+    db.note("order", order["id"], "Paid in full upfront: %g%% discount applied." % pct, actor_id)
+
+
 def create_quote(db, lead, actor_id, kw=None, system_type=None):
     survey = approved_survey(db, lead["id"])
     if not survey:
@@ -459,6 +670,10 @@ def send_quote(db, order, actor_id):
     if order["state"] not in ("draft", "sent"):
         raise RuleError("Only quotations can be sent.")
     check_quote_lines(db, order)
+    if discount_needs_approval(db, order):
+        db.update("orders", order["id"], {"approval_state": "pending"})
+        raise RuleError("The discount is above %s%%, so Sales or Admin must approve it before the quote goes to the customer. "
+                        "It's now waiting for approval." % db.setting("discount_approval_pct", 5))
     if not approved_survey(db, order["lead_id"]) and order["lead_id"]:
         raise RuleError("The customer can only receive a quote after the roof survey is approved.")
     cust = db.get("customers", order["customer_id"])
@@ -548,15 +763,15 @@ def confirm_order(db, order, actor_id=None, invite=True, accepted_by=None):
 
 # Cancel an order (not possible once the kit has been dispatched).
 def cancel_order(db, order, actor_id):
-    if order["state"] == "sale" and db.val("SELECT COUNT(*) FROM deliveries WHERE order_id = ? AND state = 'done'", order["id"]):
+    if order["state"] == "sale" and db.val("SELECT COUNT(*) FROM deliveries WHERE order_id = ? AND state IN ('done', 'delivered')", order["id"]):
         raise RuleError("A dispatched order can't be cancelled.")
     if order["state"] == "cancel":
         raise RuleError("This order is already cancelled.")
     if db.val("SELECT COUNT(*) FROM jobs WHERE order_id = ? AND state != 'planned'", order["id"]):
         raise RuleError("The crew has already started this installation, so it can't be cancelled here.")
     db.update("orders", order["id"], {"state": "cancel"})
-    db.exec("DELETE FROM delivery_lines WHERE delivery_id IN (SELECT id FROM deliveries WHERE order_id = ? AND state != 'done')", order["id"])
-    db.exec("DELETE FROM deliveries WHERE order_id = ? AND state != 'done'", order["id"])
+    db.exec("DELETE FROM delivery_lines WHERE delivery_id IN (SELECT id FROM deliveries WHERE order_id = ? AND state NOT IN ('done', 'delivered'))", order["id"])
+    db.exec("DELETE FROM deliveries WHERE order_id = ? AND state NOT IN ('done', 'delivered')", order["id"])
     db.exec("DELETE FROM job_techs WHERE job_id IN (SELECT id FROM jobs WHERE order_id = ? AND state = 'planned')", order["id"])
     db.exec("DELETE FROM jobs WHERE order_id = ? AND state = 'planned'", order["id"])
     db.exec("UPDATE subsidies SET state = 'rejected' WHERE order_id = ? AND state NOT IN ('disbursed', 'rejected')", order["id"])
@@ -654,6 +869,11 @@ def record_payment(db, order, amount, method, actor_id=None, provider_ref=None, 
                                  "customer_id": order["customer_id"], "amount": amount, "method": method,
                                  "provider_ref": provider_ref, "state": "done", "purpose": purpose,
                                  "date": now(), "created_by": actor_id})
+    if purpose == "full":   # paid everything upfront: the discount line makes the total match
+        apply_full_discount(db, order, actor_id)
+        order = db.get("orders", order["id"])
+        open_amount = r2(db.val("SELECT COALESCE(SUM(amount_total - amount_paid), 0) FROM invoices "
+                                "WHERE order_id = ? AND state = 'posted' AND kind != 'service'", order["id"]))
     if amount > open_amount + 0.5:
         create_invoice(db, order, "advance" if purpose == "advance" else "final", r2(amount - open_amount))
     allocate_payments(db, order["id"])
@@ -671,15 +891,15 @@ def record_payment(db, order, amount, method, actor_id=None, provider_ref=None, 
 def refresh_delivery_state(db, order_id):
     order = db.get("orders", order_id)
     ready = advance_due(db, order) == 0
-    db.exec("UPDATE deliveries SET state = ? WHERE order_id = ? AND state != 'done'",
+    db.exec("UPDATE deliveries SET state = ? WHERE order_id = ? AND state IN ('waiting', 'ready')",
             "ready" if ready else "waiting", order_id)
 
 
 # -------------------------------------------------------------------- stock
 # Add stock: serial-tracked items need one serial per unit; others just a quantity.
 def receive_stock(db, product, qty, serials, actor_id, note=None):
-    qty = float(qty or 0)
-    names = [s.strip() for s in (serials or []) if s and s.strip()]
+    qty = as_float(qty, "quantity")
+    names = [text(s).strip() for s in as_list(serials) if text(s).strip()]
     if product["tracking"] == "serial":
         if not names:
             raise RuleError("Enter the serial number of each unit received.")
@@ -702,13 +922,13 @@ def receive_stock(db, product, qty, serials, actor_id, note=None):
 def validate_delivery(db, delivery, serials_by_line, actor, override=False):
     """Dispatch: advance paid, stock available, a serial for every tracked unit.
     Starts the warranty of every delivered serial/lot."""
-    if delivery["state"] == "done":
-        raise RuleError("Already dispatched.")
+    if delivery["state"] in ("done", "delivered"):
+        raise RuleError("Already shipped.")
     order = db.get("orders", delivery["order_id"])
     if order["state"] != "sale":
         raise RuleError("%s is not a confirmed order." % order["ref"])
-    if not claim(db, "deliveries", delivery["id"], ("waiting", "ready"), "done"):
-        raise RuleError("This kit was just dispatched by someone else.")
+    if not claim(db, "deliveries", delivery["id"], ("waiting", "ready", "packed"), "done"):
+        raise RuleError("This kit was just shipped by someone else.")
     due = advance_due(db, order)
     if due > 0 and not (override and actor["role"] == "director"):  # only the Director may dispatch without the advance
         raise RuleError("%s cannot be dispatched yet: %s%% advance (%s) is required, %s received so far." % (
@@ -717,8 +937,8 @@ def validate_delivery(db, delivery, serials_by_line, actor, override=False):
                  "JOIN products p ON p.id = dl.product_id WHERE dl.delivery_id = ?", delivery["id"])
     plan = []
     for l in lines:
-        names = [s.strip() for s in (serials_by_line.get(str(l["id"])) or serials_by_line.get(l["id"]) or [])
-                 if s and s.strip()]
+        names = [text(s).strip() for s in as_list(serials_by_line.get(str(l["id"])) or serials_by_line.get(l["id"]))
+                 if text(s).strip()]
         if l["tracking"] == "serial" and len(set(names)) != int(l["qty"]):
             raise RuleError("%s: scan %d serial numbers (got %d)." % (l["name"], int(l["qty"]), len(set(names))))
         if l["tracking"] == "lot" and not names:
@@ -762,6 +982,41 @@ def validate_delivery(db, delivery, serials_by_line, actor, override=False):
     return started
 
 
+def pack_delivery(db, delivery, actor):
+    """Warehouse: the kit is packed and waiting for the vehicle (only once the advance is paid)."""
+    if delivery["state"] == "waiting":
+        raise RuleError("The advance isn't paid yet, so this kit can't be packed.")
+    if not claim(db, "deliveries", delivery["id"], ("ready",), "packed"):
+        raise RuleError("This kit is already packed or shipped.")
+    db.update("deliveries", delivery["id"], {"packed_at": now()})
+    db.note("delivery", delivery["id"], "Kit packed.", actor["id"])
+    db.note("order", delivery["order_id"], "Kit packed at the warehouse.", actor["id"])
+
+
+def deliver_delivery(db, delivery, actor, note=None):
+    """The kit reached the customer's site."""
+    if not claim(db, "deliveries", delivery["id"], ("done",), "delivered"):
+        raise RuleError("Only a shipped kit can be marked delivered.")
+    db.update("deliveries", delivery["id"], {"delivered_at": now()})
+    msg = "Kit delivered to the site." + (" %s" % note if note else "")
+    db.note("delivery", delivery["id"], msg, actor["id"])
+    db.note("order", delivery["order_id"], msg, actor["id"])
+
+
+def reserved_stock(db):
+    """{product_id: qty} held for paid orders not yet shipped (ready or packed)."""
+    return {r["product_id"]: r["q"] for r in db.q(
+        "SELECT dl.product_id, SUM(dl.qty) AS q FROM delivery_lines dl JOIN deliveries d ON d.id = dl.delivery_id "
+        "WHERE d.state IN ('ready', 'packed') GROUP BY dl.product_id")}
+
+
+def unpaid_demand(db):
+    """{product_id: qty} for confirmed orders still waiting for their advance."""
+    return {r["product_id"]: r["q"] for r in db.q(
+        "SELECT dl.product_id, SUM(dl.qty) AS q FROM delivery_lines dl JOIN deliveries d ON d.id = dl.delivery_id "
+        "WHERE d.state = 'waiting' GROUP BY dl.product_id")}
+
+
 # --------------------------------------------------------------------- jobs
 # Technician starts the installation on site.
 def job_start(db, job, actor_id):
@@ -786,7 +1041,7 @@ def job_finish(db, job, actor):
         raise RuleError("Confirm the installed system size (kW).")
     if not job["signature"]:
         raise RuleError("The homeowner must sign to accept the work.")
-    if not db.val("SELECT COUNT(*) FROM deliveries WHERE order_id = ? AND state = 'done'", job["order_id"]):
+    if not db.val("SELECT COUNT(*) FROM deliveries WHERE order_id = ? AND state IN ('done', 'delivered')", job["order_id"]):
         raise RuleError("The kit hasn't been dispatched yet.")
     if not claim(db, "jobs", job["id"], ("planned", "in_progress"), "done"):
         raise RuleError("This job was just completed.")
@@ -822,7 +1077,7 @@ def warranty_active_on(w, day):
 # Create a service request. If a serial is given, links its product, order and warranty.
 def create_ticket(db, customer_id, description, actor_id=None, serial_id=None, fault_code=None,
                   channel="phone", technician_id=None):
-    description = (description or "").strip()
+    description = text(description).strip()
     if len(description) < 10:
         raise RuleError("Please describe the problem in a few words (at least 10 characters).")
     if technician_id and not is_active_role(db, technician_id, ("technician",)):
@@ -862,6 +1117,15 @@ def ticket_resolve(db, ticket, actor_id):
     if not (ticket["resolution"] or "").strip():
         raise RuleError("Describe what was repaired or replaced first.")
     amounts = ticket_amounts(db, ticket)
+    for part in db.q("SELECT tl.*, p.name, p.qty_on_hand FROM ticket_lines tl JOIN products p ON p.id = tl.product_id "
+                     "WHERE tl.ticket_id = ?", ticket["id"]):
+        if part["qty_on_hand"] < part["qty"]:
+            raise RuleError("Not enough %s in stock for this repair (%g needed, %g available)." % (
+                part["name"], part["qty"], part["qty_on_hand"]))
+    for part in db.q("SELECT * FROM ticket_lines WHERE ticket_id = ?", ticket["id"]):   # spare parts leave the warehouse
+        db.exec("UPDATE products SET qty_on_hand = qty_on_hand - ? WHERE id = ?", part["qty"], part["product_id"])
+        db.insert("stock_moves", {"product_id": part["product_id"], "qty": -part["qty"], "kind": "repair",
+                                  "note": "Repair %s" % ticket["ref"], "user_id": actor_id, "date": now()})
     if not amounts["under_warranty"] and amounts["customer_charge"] and not ticket["invoice_id"]:
         untaxed = amounts["customer_charge"]
         tax = r2(untaxed * GST_SERVICE / 100.0)
@@ -918,7 +1182,7 @@ def order_financials(db, order):
     revenue = order["amount_untaxed"] if order["state"] == "sale" else 0.0
     profit = r2(revenue - material - labour_row["cost"] - repair)  # the job's profit
     delivered = bool(db.val("SELECT COUNT(*) FROM deliveries WHERE order_id = ?", oid)) and not db.val(
-        "SELECT COUNT(*) FROM deliveries WHERE order_id = ? AND state != 'done'", oid)
+        "SELECT COUNT(*) FROM deliveries WHERE order_id = ? AND state NOT IN ('done', 'delivered')", oid)
     jobs = db.q("SELECT state FROM jobs WHERE order_id = ?", oid)
     installed = bool(jobs) and all(j["state"] == "done" for j in jobs)
     paid = collected + 0.5 >= order["amount_total"]
@@ -985,22 +1249,24 @@ def start_online_payment(db, order, amount, purpose, user_id):
     if amount <= 0:
         raise RuleError("Nothing to pay right now. Thank you!")
     mode = modes[0]
-    pid = db.insert("payments", {"ref": db.next_ref("payment", "PAY-"), "order_id": order["id"],
-                                 "customer_id": order["customer_id"], "amount": amount, "method": mode,
-                                 "state": "pending", "purpose": purpose, "date": now(), "created_by": user_id})
-    out = {"payment_id": pid, "mode": mode, "amount": amount, "currency": "INR",
-           "description": "%s %s" % ("Advance for" if purpose == "advance" else "Payment for", order["ref"])}
-    if mode == "razorpay":
+    ref = db.next_ref("payment", "PAY-")
+    rz = None
+    if mode == "razorpay":   # ask Razorpay first, so a failure leaves no half-made payment behind
         try:
             r = httpx.post("https://api.razorpay.com/v1/orders", timeout=15,
                            auth=(db.setting("razorpay_key_id"), db.setting("razorpay_key_secret")),
                            json={"amount": int(round(amount * 100)), "currency": "INR",
-                                 "receipt": "PAY-%s" % pid, "notes": {"order": order["ref"]}})
+                                 "receipt": ref, "notes": {"order": order["ref"]}})
             r.raise_for_status()
             rz = r.json()
         except Exception:
             raise RuleError("The payment service isn't reachable right now. Please try again in a minute.")
-        db.update("payments", pid, {"provider_ref": rz["id"]})
+    pid = db.insert("payments", {"ref": ref, "order_id": order["id"], "provider_ref": rz["id"] if rz else None,
+                                 "customer_id": order["customer_id"], "amount": amount, "method": mode,
+                                 "state": "pending", "purpose": purpose, "date": now(), "created_by": user_id})
+    out = {"payment_id": pid, "mode": mode, "amount": amount, "currency": "INR",
+           "description": "%s %s" % ("Advance for" if purpose == "advance" else "Payment for", order["ref"])}
+    if rz:
         out["razorpay"] = {"key": db.setting("razorpay_key_id"), "order_id": rz["id"],
                            "name": db.setting("company_name")}
     return out
@@ -1036,7 +1302,7 @@ def enquiry_progress(lead, survey):
     dated milestones. Only marks a step done when it really happened."""
     stage = lead["stage"]
     sstate = survey["state"] if survey else None
-    contacted = stage != "new" or bool(survey)
+    contacted = stage != "new" or bool(survey) or bool(lead.get("booking_confirmed_at"))
     booked = bool(survey) and sstate in ("scheduled", "done", "approved")
     visited = sstate in ("done", "approved")
     when = survey["survey_date"] if survey else None
@@ -1054,11 +1320,15 @@ def enquiry_progress(lead, survey):
     elif contacted:
         status, nxt = "Survey to be booked", "An advisor has spoken to you and will book your free roof survey."
     else:
-        status, nxt = "Awaiting advisor call", "An advisor will call you within two working hours (Mon–Sat, 9am–7pm)."
+        status = "Awaiting confirmation call"
+        pref = ""
+        if lead.get("preferred_date"):
+            pref = " for %s (%s)" % (lead["preferred_date"], dict(SURVEY_SLOTS).get(lead.get("preferred_slot"), "any time"))
+        nxt = "Our team will call you within two working hours to confirm your survey%s." % pref
     steps = [
         {"label": "Enquiry received", "done": True, "date": lead["created_at"]},
-        {"label": "Advisor call", "done": contacted},
-        {"label": "Survey booked", "done": booked, "date": when if booked else None},
+        {"label": "Booking confirmed", "done": contacted, "date": lead.get("booking_confirmed_at")},
+        {"label": "Technician assigned", "done": booked, "date": when if booked else None},
         {"label": "Survey done", "done": visited},
         {"label": "Quotation", "done": False},
     ]

@@ -37,7 +37,7 @@ WEAK_CODES = {"0000", "1111", "2222", "3333", "4444", "5555", "6666", "7777", "8
 def password_problem(password):
     """None if the password is strong enough, else what to fix (shown to the user).
     Same rules as frontend/src/password.js."""
-    p = password or ""                                   # treat None as an empty string
+    p = password if isinstance(password, str) else ""   # treat None (or a non-text value) as empty
     if len(p) < MIN_PASSWORD:
         return "Use at least %s characters." % MIN_PASSWORD   # "%s" % x inserts x into the text
     if len(p) > 128:

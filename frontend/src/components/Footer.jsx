@@ -15,7 +15,7 @@ export default function Footer() {
           <div>
             <h4>Explore</h4>
             <Link to="/estimate">Savings estimate</Link>
-            <Link to="/quote">Get a quote</Link>
+            <Link to="/book-survey">Book a survey</Link>
           </div>
           <div>
             <h4>Customers</h4>

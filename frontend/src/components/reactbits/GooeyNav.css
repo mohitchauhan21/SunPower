@@ -140,3 +140,7 @@
     color: var(--gn-ink);
   }
 }
+
+/* nothing selected: hide the pill */
+.gooey-nav--none .gooey-nav__canvas,
+.gooey-nav--none .gooey-nav__list--active { opacity: 0; }

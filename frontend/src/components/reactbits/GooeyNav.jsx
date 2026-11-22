@@ -223,6 +223,8 @@ const GooeyNav = ({
   style
 }) => {
   const [innerIndex, setInnerIndex] = useState(initialActiveIndex);
+  // activeIndex < 0: nothing is highlighted (e.g. on a page that isn't in the menu)
+  const none = activeIndex !== undefined && activeIndex !== null && activeIndex < 0;
   const current = Math.min(Math.max(0, activeIndex ?? innerIndex), Math.max(0, items.length - 1));
   const stageRef = useRef(null);
   const canvasRef = useRef(null);
@@ -252,7 +254,7 @@ const GooeyNav = ({
   settingsRef.current = settings;
 
   const select = index => {
-    if (index === current) return;
+    if (index === current && !none) return;
     if (activeIndex === undefined) setInnerIndex(index);
     onChange?.(index, items[index]);
   };
@@ -766,7 +768,7 @@ const GooeyNav = ({
       }
       const shared = {
         className: 'gooey-nav__link',
-        'aria-current': index === current ? 'page' : undefined,
+        'aria-current': index === current && !none ? 'page' : undefined,
         onClick: event => {
           if (!item.href || item.href === '#') event.preventDefault();
           select(index);
@@ -777,7 +779,7 @@ const GooeyNav = ({
           key={index}
           className="gooey-nav__item"
           data-gooey-index={index}
-          data-active={index === current ? '' : undefined}
+          data-active={index === current && !none ? '' : undefined}
         >
           {item.href ? (
             <a href={item.href} {...shared}>
@@ -794,7 +796,7 @@ const GooeyNav = ({
 
   return (
     <nav
-      className={`gooey-nav ${SIZES[size] ?? SIZES.md}${frame ? ' gooey-nav--framed' : ''} ${className}`.trim()}
+      className={`gooey-nav ${SIZES[size] ?? SIZES.md}${frame ? ' gooey-nav--framed' : ''}${none ? ' gooey-nav--none' : ''} ${className}`.trim()}
       style={{ ...THEMES[palette], '--gn-pill': pillColor, '--gn-active-ink': textColor, ...style }}
     >
       {frame && <span className="gooey-nav__rim" />}

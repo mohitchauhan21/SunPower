@@ -135,22 +135,23 @@ function Company({ connect }) {
 function Users() {
   const { busy, run } = useAction();
   const { data, error, reload } = useLoad(() => get('/api/staff/users'), []);
-  const [f, setF] = useState({ name: '', email: '', phone: '', role: 'sales', hourly_rate: '' });
+  const [f, setF] = useState({ name: '', email: '', phone: '', role: 'sales', hourly_rate: '', service_area: '' });
   const [link, setLink] = useState('');
+  const [edit, setEdit] = useState(null);   // the account being edited: {id, name, email, phone, hourly_rate, role}
+  // (every hook must run before the early returns below, in the same order on every render)
   if (error) return <ErrorBox error={error} onRetry={reload} />;
   if (!data) return <Loading />;
   const roles = data.roles.map((r) => ({ value: r, label: ROLE_LABELS[r] || r }));
   const add = async (e) => {
     e.preventDefault();
     const r = await run('add', () => post('/api/staff/users', { ...f, hourly_rate: Number(f.hourly_rate) || 0 }), 'Account created. An email with a link to set the password is queued.');
-    if (r) { setLink(r.link); setF({ name: '', email: '', phone: '', role: 'sales', hourly_rate: '' }); reload(); }
+    if (r) { setLink(r.link); setF({ name: '', email: '', phone: '', role: 'sales', hourly_rate: '', service_area: '' }); reload(); }
   };
   const change = (id, vals, msg) => run(`u${id}`, () => patch(`/api/staff/users/${id}`, vals), msg).then((r) => r && reload());
-  const [edit, setEdit] = useState(null);   // the account being edited: {id, name, email, phone, hourly_rate, role}
   const saveEdit = async (e) => {
     e.preventDefault();
     const r = await run('edit', () => patch(`/api/staff/users/${edit.id}`, { name: edit.name, email: edit.email, phone: edit.phone,
-      ...(edit.role === 'technician' ? { hourly_rate: Number(edit.hourly_rate) || 0 } : {}) }), 'Account updated.');
+      ...(edit.role === 'technician' ? { hourly_rate: Number(edit.hourly_rate) || 0, service_area: edit.service_area || '' } : {}) }), 'Account updated.');
     if (r) { setEdit(null); reload(); }
   };
   return (
@@ -162,6 +163,7 @@ function Users() {
           <F label="Phone" value={f.phone} onChange={(v) => setF({ ...f, phone: v })} />
           <F label="Role" type="select" value={f.role} onChange={(v) => setF({ ...f, role: v })} options={roles} />
           {f.role === 'technician' && <F label="Hourly rate (₹)" type="number" value={f.hourly_rate} onChange={(v) => setF({ ...f, hourly_rate: v })} />}
+          {f.role === 'technician' && <F label="Service area" value={f.service_area} onChange={(v) => setF({ ...f, service_area: v })} hint="Cities or states, separated by commas (e.g. Pune, Maharashtra)." />}
           <div className="field--full"><button className="btn btn--primary btn--sm" disabled={busy === 'add' || !f.name || !f.email}>Create account</button></div>
         </form>
         {link && <p className="form-hint">If email isn’t set up yet, send them this link to choose a password: <code className="breakall">{link}</code></p>}
@@ -173,6 +175,7 @@ function Users() {
             <F label="Email (their login)" type="email" value={edit.email} onChange={(v) => setEdit({ ...edit, email: v })} />
             <F label="Phone" value={edit.phone || ''} onChange={(v) => setEdit({ ...edit, phone: v })} />
             {edit.role === 'technician' && <F label="Hourly rate (₹)" type="number" value={edit.hourly_rate} onChange={(v) => setEdit({ ...edit, hourly_rate: v })} />}
+            {edit.role === 'technician' && <F label="Service area" value={edit.service_area || ''} onChange={(v) => setEdit({ ...edit, service_area: v })} hint="Cities or states, separated by commas." />}
             <div className="field--full"><button className="btn btn--primary btn--sm" disabled={busy === 'edit'}>Save changes</button></div>
           </form>
         </Section>

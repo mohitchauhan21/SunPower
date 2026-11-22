@@ -258,6 +258,18 @@ MIGRATIONS = [
     ("users", "onboarded", "INTEGER NOT NULL DEFAULT 0"),  # welcome tour shown once
     ("leads", "state", "TEXT"),                       # state / UT (sets the subsidy)
     ("customers", "state", "TEXT"),
+    ("leads", "preferred_date", "TEXT"),             # survey: the day the customer prefers
+    ("leads", "preferred_slot", "TEXT"),             # survey: morning / afternoon / evening
+    ("leads", "project_ref", "TEXT"),                # one project ID for the whole journey, e.g. SP-26-00042
+    ("leads", "booking_confirmed_at", "TEXT"),       # Sales called and confirmed the survey booking
+    ("users", "service_area", "TEXT"),               # technicians: cities / states they cover, comma separated
+    ("orders", "payment_plan", "TEXT"),              # advance (30% now, rest later) or full (100% upfront)
+    ("orders", "approval_state", "TEXT"),            # pending / approved: discount above the limit needs approval
+    ("orders", "created_by", "INTEGER"),             # who built the quote (technician or sales)
+    ("deliveries", "packed_at", "TEXT"),             # warehouse: kit packed
+    ("deliveries", "delivered_at", "TEXT"),          # kit received at the customer's site
+    ("deliveries", "vehicle", "TEXT"),               # vehicle / courier and tracking note
+    ("deliveries", "expected_on", "TEXT"),           # expected delivery day
 ]
 
 
@@ -271,6 +283,9 @@ def init_db(conn=None):
     for table, column, kind in MIGRATIONS:
         if column not in [r[1] for r in conn.execute("PRAGMA table_info(%s)" % table)]:
             conn.execute("ALTER TABLE %s ADD COLUMN %s %s" % (table, column, kind))
+    # Give older enquiries their project ID (same rule as rules.create_enquiry).
+    conn.execute("UPDATE leads SET project_ref = 'SP-' || substr(created_at, 3, 2) || '-' || printf('%05d', id) "
+                 "WHERE project_ref IS NULL")
     conn.commit()                      # save the changes to the file
     if own:
         conn.close()

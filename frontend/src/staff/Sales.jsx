@@ -3,12 +3,11 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api, del, fmtDate, fmtLocal, get, inr, patch, post, put } from '../api.js';
 import { useAuth } from '../auth.jsx';
 import {
-  Chips, DeleteButton, ErrorBox, F, KV, Loading, Notes, PageHead, Pill, Search, Section, Table, fromLocalInput, toLocalInput,
+  Chips, DeleteButton, ErrorBox, F, KV, Loading, Notes, PageHead, Pill, Search, Section, Table, fromLocalInput, toLocalInput, todayLocal,
   useAction, useCan, useLoad
 } from './ui.jsx';
 
 const SYSTEM = [{ value: 'on_grid', label: 'On-Grid' }, { value: 'off_grid', label: 'Off-Grid (battery)' }];
-const GRID = [{ value: 'unknown', label: 'To check' }, { value: 'yes', label: 'Suitable' }, { value: 'no', label: 'Not suitable' }];
 const CHANNEL = [{ value: 'call', label: 'Phone call' }, { value: 'whatsapp', label: 'WhatsApp' }, { value: 'walkin', label: 'Walk-in' }, { value: 'referral', label: 'Referral' }, { value: 'web', label: 'Website' }];
 const DIRS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'].map((d) => ({ value: d, label: d }));
 const ROOF = [{ value: '', label: '—' }, { value: 'rcc', label: 'RCC / concrete' }, { value: 'metal', label: 'Metal sheet' }, { value: 'tile', label: 'Tiles' }, { value: 'ground', label: 'Ground mount' }];
@@ -104,23 +103,37 @@ export function Enquiry() {
   const navigate = useNavigate();
   const { busy, run } = useAction();
   const { data: l, error, reload, setData } = useLoad(() => get(`/api/staff/leads/${id}`), [id]);
-  const techs = useLoad(() => get('/api/staff/people', { role: 'technician' }), []);
-  const [survey, setSurvey] = useState({ technician_id: '', survey_date: '' });
+  const [survey, setSurvey] = useState({ technician_id: '', day: '', slot: '' });
+  const [resched, setResched] = useState(null);   // the booked survey being moved to a new day / slot / technician
+  const day = survey.day || l?.preferred_date || '';
+  const slot = survey.slot || l?.preferred_slot || '';
+  const techs = useLoad(() => get(`/api/staff/leads/${id}/technicians`, { day, slot, skip: resched?.id || '' }), [id, day, slot, resched?.id]);
   if (error) return <ErrorBox error={error} onRetry={reload} />;
   if (!l) return <Loading />;
   const set = (k) => (v) => setData({ ...l, [k]: v });
   const save = () => run('save', () => patch(`/api/staff/leads/${id}`, {
     contact_name: l.contact_name, phone: l.phone, email: l.email, street: l.street, city: l.city, requested_kw: l.requested_kw || 0,
-    system_type: l.system_type, subsidy_requested: l.subsidy_requested ? 1 : 0, monthly_bill: l.monthly_bill || 0,
-    monthly_units: l.monthly_units || 0, roof_area_sqft: l.roof_area_sqft || 0, grid_suitable: l.grid_suitable,
-    discom: l.discom, consumer_no: l.consumer_no, notes: l.notes, next_action: l.next_action }), 'Saved.').then((r) => r && reload());
+    system_type: l.system_type, subsidy_requested: l.subsidy_requested ? 1 : 0, next_action: l.next_action }), 'Saved.').then((r) => r && reload());
   const ro = !l.can_edit;
+  const canBook = l.can_edit && !['won', 'lost'].includes(l.stage) && (!l.surveys.length || l.surveys.every((s) => s.state === 'rejected'));
+  const slotOf = (dt) => { const h = Number(String(dt || '').slice(11, 13)); return !dt ? '' : h < 12 ? 'morning' : h < 15 ? 'afternoon' : 'evening'; };
+  const startResched = (s) => {
+    setResched(s);
+    setSurvey({ technician_id: s.technician_id ? String(s.technician_id) : '', day: String(s.survey_date || '').slice(0, 10), slot: slotOf(s.survey_date) });
+  };
+  const stopResched = () => { setResched(null); setSurvey({ technician_id: '', day: '', slot: '' }); };
+  // Changing the day or slot clears the technician for a new booking (availability changes); a reschedule keeps them.
+  const pick = (k) => (v) => setSurvey((x) => ({ ...x, [k]: v, technician_id: resched ? x.technician_id : '' }));
+  const book = () => (resched
+    ? run('survey', () => post(`/api/staff/surveys/${resched.id}/reschedule`, { technician_id: Number(survey.technician_id), survey_date: day, slot }),
+      'Visit rescheduled. It now shows on the technician’s dashboard.').then((r) => { if (r) { stopResched(); reload(); } })
+    : run('survey', () => post(`/api/staff/leads/${id}/survey`, { technician_id: Number(survey.technician_id), survey_date: day, slot }),
+      'Booking confirmed and technician assigned.').then((r) => r && reload()));
   return (
     <>
-      <PageHead back={{ to: '/app/enquiries', label: 'Enquiries' }} eyebrow={`${l.ref} · via ${l.channel}`} title={l.contact_name}
+      <PageHead back={{ to: '/app/enquiries', label: 'Enquiries' }} eyebrow={`Project ${l.project_ref || l.ref} · via ${l.channel}`} title={l.contact_name}
                 sub={`Received ${fmtDate(l.created_at, true)} · Owner ${l.salesperson || '—'}`}>
         <Pill state={l.stage}>{l.stage_label}</Pill>
-        {l.phone && <a className="btn btn--secondary btn--sm" href={`tel:${l.phone}`}>Call</a>}
         {l.can_edit && l.has_approved_survey && !l.orders.some((o) => o.state !== 'cancel') && (
           <button className="btn btn--primary btn--sm" disabled={!!busy} onClick={async () => {
             const r = await run('quote', () => post(`/api/staff/leads/${id}/quote`), 'Quotation prepared.');
@@ -150,38 +163,41 @@ export function Enquiry() {
               <F label="Wants subsidy" type="checkbox" value={l.subsidy_requested} onChange={set('subsidy_requested')} disabled={ro} />
             </div>
           </Section>
-          <Section title="Phone screening">
-            <p className="muted small">Shadow-free roof area, bill or units and a suitable grid connection are needed before a survey. Suggested size from the bill: <strong>{l.recommended_kw || '—'} kW</strong>.</p>
-            <div className="ws-form">
-              <F label="Shadow-free roof (sq ft)" type="number" value={l.roof_area_sqft} onChange={set('roof_area_sqft')} disabled={ro} />
-              <F label="Monthly bill (₹)" type="number" value={l.monthly_bill} onChange={set('monthly_bill')} disabled={ro} />
-              <F label="Monthly units (kWh)" type="number" value={l.monthly_units} onChange={set('monthly_units')} disabled={ro} />
-              <F label="Grid connection" type="select" value={l.grid_suitable} onChange={set('grid_suitable')} options={GRID} disabled={ro} />
-              <F label="Electricity board (DISCOM)" value={l.discom} onChange={set('discom')} disabled={ro} />
-              <F label="Consumer no." value={l.consumer_no} onChange={set('consumer_no')} disabled={ro} />
-              <F label="Notes" type="textarea" full value={l.notes} onChange={set('notes')} disabled={ro} />
-            </div>
-            {!l.screening_ok && <p className="ws-warn">Screening incomplete. Save roof area, bill and “Suitable” grid to book a survey.</p>}
-          </Section>
         </div>
         <div className="stack">
           <Section title="Roof surveys">
             <ul className="list">
               {l.surveys.map((s) => (
                 <li key={s.id}><Link to={`/app/surveys/${s.id}`}><strong>{s.ref}</strong> · {s.technician || 'Unassigned'}</Link> <Pill state={s.state}>{s.state_label}</Pill>
-                  <div className="muted">{s.survey_date ? fmtLocal(s.survey_date) : 'No date'} · {s.recommended_kw || '—'} kW</div></li>
+                  <div className="muted">{s.survey_date ? fmtLocal(s.survey_date) : 'No date'} · {s.recommended_kw || '—'} kW
+                    {l.can_edit && s.state === 'scheduled' && !['won', 'lost'].includes(l.stage) && resched?.id !== s.id && (
+                      <> · <button type="button" className="link--btn" onClick={() => startResched(s)}>Reschedule</button></>)}</div></li>
               ))}
               {!l.surveys.length && <li className="muted">No survey yet.</li>}
             </ul>
-            {l.can_edit && (!l.surveys.length || l.surveys.every((s) => s.state === 'rejected')) && (
-              <div className="ws-form ws-form--tight">
-                <F label="Technician" type="select" value={survey.technician_id} onChange={(v) => setSurvey({ ...survey, technician_id: v })}
-                   options={[{ value: '', label: 'Choose…' }, ...(techs.data || []).map((t) => ({ value: t.id, label: t.name }))]} />
-                <F label="Visit" type="datetime-local" value={survey.survey_date} onChange={(v) => setSurvey({ ...survey, survey_date: v })} />
-                <div className="field--full">
-                  <button className="btn btn--primary btn--sm" disabled={!l.screening_ok || !survey.technician_id || busy === 'survey'}
-                    onClick={() => run('survey', () => post(`/api/staff/leads/${id}/survey`, { technician_id: Number(survey.technician_id), survey_date: fromLocalInput(survey.survey_date) }), 'Survey booked.').then((r) => r && reload())}>
-                    Book roof survey</button>
+            {(canBook || resched) && (
+              <div className="booking">
+                {resched ? (
+                  <p className="small"><strong>Reschedule {resched.ref}</strong>: pick a new day, time slot or technician. The visit moves to the new technician’s dashboard.</p>
+                ) : (
+                  <p className="small"><strong>Confirm the booking</strong> after calling the customer.
+                    {l.preferred_date ? <> They asked for <strong>{fmtDate(l.preferred_date)}</strong>, {l.preferred_slot_label || 'any time'}.</> : ' No preferred day given.'}</p>
+                )}
+                <div className="ws-form ws-form--tight">
+                  <F label="Day" type="date" min={todayLocal()} value={day} onChange={pick('day')}
+                     hint={day && day < todayLocal() ? 'Choose today or a later day.' : ''} />
+                  <F label="Time slot" type="select" value={slot} onChange={pick('slot')}
+                     options={[{ value: '', label: 'Choose…' }, ...((techs.data?.slots) || []).map((s) => ({ value: s.value, label: s.label }))]} />
+                  <F label="Technician" type="select" full value={survey.technician_id} onChange={(v) => setSurvey({ ...survey, technician_id: v })}
+                     options={[{ value: '', label: 'Choose…' }, ...((techs.data?.rows) || []).map((t) => ({
+                       value: t.id,
+                       label: `${t.name}${t.in_area ? ' · covers this area' : ''}${t.busy.length ? ` · busy (${t.busy.join(', ')})` : day && slot ? ' · free' : ''} · ${t.open_work} open`
+                     }))]} hint="Technicians covering the customer's city or state, and free in that slot, are listed first." />
+                  <div className="field--full actions actions--left">
+                    <button className="btn btn--primary btn--sm" disabled={!survey.technician_id || !day || day < todayLocal() || !slot || busy === 'survey'} onClick={book}>
+                      {resched ? 'Save new booking' : <>Confirm booking &amp; assign</>}</button>
+                    {resched && <button type="button" className="btn btn--secondary btn--sm" onClick={stopResched}>Cancel</button>}
+                  </div>
                 </div>
               </div>
             )}
@@ -212,14 +228,15 @@ export function Surveys() {
       <PageHead eyebrow={me.role === 'technician' ? 'My visits' : 'Sales'} title="Roof surveys" sub="Visit, measure, then Sales approves the recommended size.">
         <Search value={q} onChange={setQ} placeholder="Customer, ref, city" />
       </PageHead>
-      <Chips value={state} onChange={setState} options={[{ value: '', label: 'All' }, ...(data?.states || [])]} />
+      <Chips value={state} onChange={setState} options={[{ value: '', label: 'All' },
+        ...(data?.states || []).map((s) => ({ ...s, count: data?.counts?.[s.value] || 0 }))]} />
       {error ? <ErrorBox error={error} onRetry={reload} /> : !data ? <Loading /> : (
         <Table rows={data.rows} rowLink={(s) => `/app/surveys/${s.id}`} empty="No surveys."
           columns={[
             { key: 'ref', label: 'Ref' }, { key: 'contact_name', label: 'Customer' }, { key: 'city', label: 'City' },
             { key: 'technician', label: 'Surveyor' },
             { key: 'survey_date', label: 'Visit', render: (s) => (s.survey_date ? fmtLocal(s.survey_date) : '—') },
-            { key: 'recommended_kw', label: 'kW', num: true },
+            { key: 'recommended_kw', label: 'kW', num: true, render: (s) => s.recommended_kw || '—' },
             { key: 'state', label: 'Status', render: (s) => <Pill state={s.state}>{s.state_label}</Pill> }
           ]} />
       )}
@@ -229,6 +246,7 @@ export function Surveys() {
 
 export function Survey() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const { busy, run } = useAction();
   const { data: s, error, reload, setData } = useLoad(() => get(`/api/staff/surveys/${id}`), [id]);
   if (error) return <ErrorBox error={error} onRetry={reload} />;
@@ -246,11 +264,15 @@ export function Survey() {
       <PageHead back={{ to: '/app/surveys', label: 'Surveys' }} eyebrow={`${s.ref} · enquiry ${s.lead_ref}`} title={s.contact_name}
                 sub={`${[s.street, s.city].filter(Boolean).join(', ') || 'No address'} · ${s.survey_date ? fmtLocal(s.survey_date) : 'No date'} · ${s.technician || 'No surveyor'}`}>
         <Pill state={s.state}>{s.state_label}</Pill>
-        {s.phone && <a className="btn btn--secondary btn--sm" href={`tel:${s.phone}`}>Call</a>}
         {open && s.state === 'scheduled' && <button className="btn btn--primary btn--sm" disabled={!!busy} onClick={() => act('done', 'Marked visited.')}>Mark visited</button>}
         {s.can_approve && s.state === 'done' && <button className="btn btn--primary btn--sm" disabled={!!busy} onClick={() => act('approve', 'Survey approved.')}>Approve</button>}
         {s.can_approve && ['scheduled', 'done'].includes(s.state) && <button className="btn btn--secondary btn--sm" disabled={!!busy} onClick={() => { const reason = window.prompt('Reason for rejecting?'); if (reason !== null) act('reject', 'Survey rejected.', { reason }); }}>Reject</button>}
         {s.can_approve && ['approved', 'rejected'].includes(s.state) && <button className="btn btn--secondary btn--sm" disabled={!!busy} onClick={() => act('reset', 'Survey reopened.')}>Reopen</button>}
+        {s.can_quote && <button className="btn btn--primary btn--sm" disabled={!!busy} onClick={async () => {
+          const r = await run('quote', async () => { if (open) await save(); return post(`/api/staff/surveys/${id}/quote`); }, 'Quote built from the survey.');
+          if (r) navigate(`/app/orders/${r.id}`);
+        }}>Build quote</button>}
+        {s.quote && <Link className="btn btn--secondary btn--sm" to={`/app/orders/${s.quote.id}`}>Open quote {s.quote.ref}</Link>}
         {s.can_delete && <DeleteButton url={`/api/staff/surveys/${id}`} what="this survey" after="/app/surveys" />}
       </PageHead>
       <div className="side-grid">
@@ -290,7 +312,7 @@ export function Orders() {
       <PageHead eyebrow="Sales" title="Quotes & orders" sub="Send quotes, take the advance, and follow each job to completion.">
         <Search value={q} onChange={setQ} placeholder="Customer or ref" />
       </PageHead>
-      <Chips value={state} onChange={setState} options={[{ value: '', label: 'All' }, { value: 'draft', label: 'Draft', count: c.draft || 0 },
+      <Chips value={state} onChange={setState} options={[{ value: '', label: 'All' }, { value: 'approval', label: 'Needs approval' }, { value: 'draft', label: 'Draft', count: c.draft || 0 },
         { value: 'sent', label: 'Sent', count: c.sent || 0 }, { value: 'sale', label: 'Confirmed', count: c.sale || 0 }, { value: 'cancel', label: 'Cancelled', count: c.cancel || 0 }]} />
       {error ? <ErrorBox error={error} onRetry={reload} /> : !data ? <Loading /> : (
         <Table rows={data.rows} rowLink={(o) => `/app/orders/${o.id}`} empty="No orders."
@@ -317,19 +339,22 @@ export function Order() {
   if (error) return <ErrorBox error={error} onRetry={reload} />;
   if (!o) return <Loading />;
   const draft = o.state === 'draft' && o.can_edit;
-  const act = (a, msg, body) => run(a, () => post(`/api/staff/orders/${id}/${a}`, body), msg).then((r) => r && reload());
+  const act = (a, msg, body) => run(a, () => post(`/api/staff/orders/${id}/${a}`, body), msg).then((r) => { if (r) reload(); return r; });
   const setLine = (lid, k, v) => setData({ ...o, lines: o.lines.map((l) => (l.id === lid ? { ...l, [k]: v } : l)) });
   const saveLines = () => run('lines', () => put(`/api/staff/orders/${id}/lines`, { lines: o.lines.map((l) => ({ id: l.id, qty: l.qty, discount: l.discount })) }), 'Quotation updated.').then((r) => r && reload());
   const f = o.financials;
   return (
     <>
-      <PageHead back={{ to: '/app/orders', label: 'Quotes & orders' }} eyebrow={`${o.state === 'sale' ? 'Order' : 'Quotation'} ${o.ref}`}
+      {o.approval_state === 'pending' && <div className="ws-banner">Discount above {o.discount_limit}% is waiting for Sales / Admin approval before this quote can be sent.</div>}
+      {o.payment_plan && <div className="ws-banner">Customer chose: {o.payment_plan === 'full' ? 'pay 100% upfront' : 'advance now, balance after installation'}.</div>}
+      <PageHead back={{ to: '/app/orders', label: 'Quotes & orders' }} eyebrow={`${o.project_ref ? `Project ${o.project_ref} · ` : ''}${o.state === 'sale' ? 'Order' : 'Quotation'} ${o.ref}`}
                 title={o.customer} sub={`${o.kw} kW ${sysLabel(o.system_type)} · ${fmtDate(o.date_order)} · Owner ${o.salesperson || '—'}`}>
         <Pill state={o.state}>{o.state_label}</Pill>
         <a className="btn btn--secondary btn--sm" href={o.print_url} target="_blank" rel="noreferrer">PDF</a>
         {o.can_edit && ['draft', 'sent'].includes(o.state) && <button className="btn btn--secondary btn--sm" disabled={!!busy} onClick={() => act('send', 'Quotation sent to the customer.')}>{o.state === 'sent' ? 'Resend' : 'Send to customer'}</button>}
-        {o.can_edit && ['draft', 'sent'].includes(o.state) && <button className="btn btn--primary btn--sm" disabled={!!busy} onClick={() => act('confirm', 'Order confirmed.')}>Confirm order</button>}
-        {o.can_edit && o.state !== 'cancel' && <button className="btn btn--secondary btn--sm" disabled={!!busy} onClick={() => window.confirm('Cancel this order?') && act('cancel', 'Order cancelled.')}>Cancel</button>}
+        {o.can_approve && <button className="btn btn--primary btn--sm" disabled={!!busy} onClick={() => act('approve-discount', 'Discount approved. The quote can be sent.')}>Approve discount</button>}
+        {o.can_confirm && ['draft', 'sent'].includes(o.state) && <button className="btn btn--primary btn--sm" disabled={!!busy} onClick={() => act('confirm', 'Order confirmed.')}>Confirm order</button>}
+        {o.can_confirm && o.state !== 'cancel' && <button className="btn btn--secondary btn--sm" disabled={!!busy} onClick={() => window.confirm('Cancel this order?') && act('cancel', 'Order cancelled.')}>Cancel</button>}
         {o.can_delete && o.state !== 'sale' && <DeleteButton url={`/api/staff/orders/${id}`} what="this quotation" after="/app/orders" />}
       </PageHead>
       <div className="side-grid">
@@ -358,7 +383,7 @@ export function Order() {
               </table>
             </div>
             {draft && <AddLine onAdd={(product_id, qty) => act('add-line', 'Line added.', { product_id: Number(product_id), qty: Number(qty) || 1 })} />}
-            {draft && me.role !== 'director' && <p className="form-hint">Discounts above 10% need the Director.</p>}
+            {draft && me.role !== 'director' && <p className="form-hint">Prices come from the catalogue. A discount above {o.discount_limit}% needs Sales / Admin approval before the quote can be sent{me.role === 'sales' ? '; above 10% needs the Director' : ''}.</p>}
           </Section>
           <Section title="Payments & invoices">
             <KV items={[['Paid', <strong className="good" key="p">{inr(o.paid)}</strong>], [`Advance (${o.advance_pct}%)`, inr(o.advance_needed)],
@@ -378,7 +403,7 @@ export function Order() {
                 }}>Cancel</button></>}</li>)}</ul>
             )}
             {o.can_edit && ['sales', 'director'].includes(me.role) && o.state !== 'cancel' && o.paid + 0.5 < o.amount_total && (
-              <form className="ws-form ws-form--tight" onSubmit={(e) => { e.preventDefault(); act('payment', 'Payment recorded.', { ...pay, amount: Number(pay.amount) }).then(() => setPay({ amount: '', method: 'upi', reference: '' })); }}>
+              <form className="ws-form ws-form--tight" onSubmit={(e) => { e.preventDefault(); act('payment', 'Payment recorded.', { ...pay, amount: Number(pay.amount) }).then((r) => r && setPay({ amount: '', method: 'upi', reference: '' })); }}>
                 <F label="Amount received (₹)" type="number" min="1" value={pay.amount} onChange={(v) => setPay({ ...pay, amount: v })} hint={o.advance_due ? `Advance due: ${inr(o.advance_due)}` : ''} />
                 <F label="Method" type="select" value={pay.method} onChange={(v) => setPay({ ...pay, method: v })} options={['upi', 'bank', 'cash', 'cheque'].map((m) => ({ value: m, label: m.toUpperCase() }))} />
                 <F label="Reference" value={pay.reference} onChange={(v) => setPay({ ...pay, reference: v })} />
@@ -501,7 +526,6 @@ export function Customer() {
       <PageHead back={{ to: '/app/customers', label: 'Customers' }} eyebrow="Customer" title={c.name}
                 sub={[c.phone, c.email, [c.street, c.city].filter(Boolean).join(', ')].filter(Boolean).join(' · ')}>
         <Pill state={c.has_login ? 'active' : ''}>{c.has_login ? 'Has website login' : 'No login yet'}</Pill>
-        {c.phone && <a className="btn btn--secondary btn--sm" href={`tel:${c.phone}`}>Call</a>}
         {c.can_edit && <button type="button" className="btn btn--secondary btn--sm" onClick={() => setEditing(!editing)}>{editing ? 'Close' : 'Edit'}</button>}
         {c.can_delete && !c.orders.length && !c.tickets.length && !c.leads.length && !c.warranties.length &&
           <DeleteButton url={`/api/staff/customers/${id}`} what="this customer" after="/app/customers" />}

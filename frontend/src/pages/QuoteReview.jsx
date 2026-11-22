@@ -21,6 +21,7 @@ export default function QuoteReview() {
   const toast = useToast();
   const { data: q, error, reload } = useLoad(() => api.myQuote(id), [id]);
   const [name, setName] = useState('');
+  const [plan, setPlan] = useState('advance');
   const [payment, setPayment] = useState(null); // {payment_id, mode, amount, razorpay?}
   const [card, setCard] = useState('4111 1111 1111 1111');
   const [err, setErr] = useState('');
@@ -34,15 +35,22 @@ export default function QuoteReview() {
     setBusy(true);
     try {
       const r = await fn();
-      if (!r?.ok) throw new Error(r?.error || 'Please try again.');
+      if (!r?.ok) {
+        if (r?.accepted) reload();   // the acceptance was saved; only the payment couldn't start
+        throw new Error(r?.error || 'Please try again.');
+      }
       if (r.mode === 'razorpay') {
         await loadRazorpay();
         new window.Razorpay({
           key: r.razorpay.key, order_id: r.razorpay.order_id, amount: Math.round(r.amount * 100), currency: 'INR',
           name: r.razorpay.name, description: r.description,
           handler: async (resp) => {
-            const v = await api.verifyRazorpay({ payment_id: r.payment_id, ...resp });
-            if (v.ok) { toast('Payment received. Thank you!'); reload(); } else toast(v.error, 'error');
+            try {
+              const v = await api.verifyRazorpay({ payment_id: r.payment_id, ...resp });
+              if (v.ok) { toast('Payment received. Thank you!'); reload(); } else toast(v.error, 'error');
+            } catch (ex) {
+              toast(ex.message, 'error');
+            }
           }
         }).open();
       } else {
@@ -50,7 +58,7 @@ export default function QuoteReview() {
       }
     } catch (ex) { setErr(ex.message); } finally { setBusy(false); }
   };
-  const accept = (e) => { e.preventDefault(); startPay(() => api.acceptQuote(q.id, name)); };
+  const accept = (e) => { e.preventDefault(); startPay(() => api.acceptQuote(q.id, name, plan)); };
   const payTest = async (e) => {
     e.preventDefault();
     setBusy(true);
@@ -105,16 +113,36 @@ export default function QuoteReview() {
           </form>
         ) : q.quote_pending && !q.accepted_by ? (
           <form className="card card--alt form" onSubmit={accept}>
-            <h3>Accept and book your installation</h3>
-            <p className="muted">Type your full name to accept this quotation, then pay the {q.advance_pct}% advance ({inr(q.advance_amount)}) to book the installation.</p>
-            <div className="field"><label className="label" htmlFor="acc">Your full name</label><input id="acc" className="input" value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" /></div>
-            <button className="btn btn--primary" disabled={busy || name.trim().length < 2}>Accept & pay advance</button>
+            <h3>Accept and choose how to pay</h3>
+            <div className="plans" role="radiogroup" aria-label="Payment plan">
+              <button type="button" role="radio" aria-checked={plan === 'advance'} className={`plan${plan === 'advance' ? ' is-active' : ''}`} onClick={() => setPlan('advance')}>
+                <strong>Advance now, rest later</strong>
+                <span className="plan__amt">{inr(q.advance_amount)} now</span>
+                <span className="muted small">{q.advance_pct}% to book. The balance of {inr(q.total - q.advance_amount)} is due after installation, before we switch the system on.</span>
+              </button>
+              {q.full_amount && (
+                <button type="button" role="radio" aria-checked={plan === 'full'} className={`plan${plan === 'full' ? ' is-active' : ''}`} onClick={() => setPlan('full')}>
+                  <strong>Pay in full upfront</strong>
+                  <span className="plan__amt">{inr(q.full_amount)}</span>
+                  <span className="muted small">{q.full_discount_pct}% off ({inr(q.total - q.full_amount)} saved). Nothing more to pay later.</span>
+                </button>
+              )}
+            </div>
+            <div className="field"><label className="label" htmlFor="acc">Type your full name to accept</label><input id="acc" className="input" value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" /></div>
+            <button className="btn btn--primary" disabled={busy || name.trim().length < 2}>
+              Accept &amp; pay {inr(plan === 'full' ? q.full_amount : q.advance_amount)}</button>
           </form>
         ) : q.advance_due > 0 ? (
           <div className="card card--alt">
             <h3>{q.accepted_by ? `Accepted by ${q.accepted_by}` : 'Advance due'}</h3>
-            <p className="muted">Pay the advance of {inr(q.advance_due)} to book your installation.</p>
-            <button className="btn btn--primary" disabled={busy} onClick={() => startPay(() => api.payOrder(q.id, 'advance'))}>Pay {inr(q.advance_due)}</button>
+            <p className="muted">{q.payment_plan === 'full' && q.full_amount
+              ? `You chose to pay in full upfront: ${inr(q.full_amount)} (${q.full_discount_pct}% off).`
+              : `Pay the advance of ${inr(q.advance_due)} to book your installation.`}</p>
+            <div className="actions actions--left">
+              <button className="btn btn--primary" disabled={busy} onClick={() => startPay(() => api.payOrder(q.id, q.payment_plan === 'full' && q.full_amount ? 'full' : 'advance'))}>
+                Pay {inr(q.payment_plan === 'full' && q.full_amount ? q.full_amount : q.advance_due)}</button>
+              {q.full_amount && q.payment_plan !== 'full' && <button className="btn btn--secondary" disabled={busy} onClick={() => startPay(() => api.payOrder(q.id, 'full'))}>Pay in full instead ({inr(q.full_amount)})</button>}
+            </div>
           </div>
         ) : (
           <div className="card card--alt">

@@ -10,7 +10,7 @@ export default function RequireRole({ roles, children }) {
 
   if (me === undefined) return <p className="empty" style={{ padding: '160px 0' }}>Loading…</p>;
   if (!me.authenticated) {
-    return <Navigate to={`/login?next=${encodeURIComponent(location.pathname)}`} replace />;
+    return <Navigate to={`/login?next=${encodeURIComponent(location.pathname + location.search)}`} replace />;
   }
   if (!roles.includes(me.role)) {
     const home = me.home || '/';

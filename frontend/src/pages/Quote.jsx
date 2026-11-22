@@ -22,7 +22,16 @@ const TYPES = {
   }
 };
 
+const SLOTS = [
+  { value: 'morning', label: 'Morning', sub: '9am–12pm' },
+  { value: 'afternoon', label: 'Afternoon', sub: '12–3pm' },
+  { value: 'evening', label: 'Evening', sub: '3–6pm' }
+];
+const iso = (d) => d.toISOString().slice(0, 10);
+const dayOffset = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return iso(d); };
+
 const blank = (state) => ({
+  preferred_date: '', preferred_slot: '',
   name: '', phone: '', email: '', state, street: '', system_type: 'on_grid', monthly_bill: '', roof_area: '',
   subsidy: true, notes: ''
 });
@@ -70,6 +79,9 @@ export default function Quote() {
     if (f.name.trim().length < 2) e.name = 'Please enter your full name.';
     if (!normalizePhone(f.phone)) e.phone = 'Enter a 10-digit Indian mobile number, e.g. 98765 43210.';
     if (!f.state) e.state = 'Choose your state.';
+    if (!f.preferred_date) e.preferred_date = 'Choose the day you’d like the survey.';
+    else if (f.preferred_date < dayOffset(1) || f.preferred_date > dayOffset(30)) e.preferred_date = 'Choose a day between tomorrow and 30 days from now.';
+    if (!f.preferred_slot) e.preferred_slot = 'Choose a time slot.';
     if (f.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(f.email.trim())) e.email = 'This email doesn’t look right.';
     if (f.monthly_bill && !(bill >= 100 && bill <= 1000000)) e.monthly_bill = 'Enter your monthly bill in rupees (₹100 or more).';
     if (f.roof_area && !(Number(f.roof_area) >= 20 && Number(f.roof_area) <= 100000)) e.roof_area = 'Enter an area in square feet, or leave it empty.';
@@ -99,7 +111,7 @@ export default function Quote() {
       saveState(f.state);
       clearQuotePrefill();
       setDone({ ...res, phone: normalizePhone(f.phone) });
-      toast('Quote request received. We’ll call you shortly.');
+      toast('Survey request received. We’ll call you to confirm the booking.');
     } catch (err) {
       toast(err.message || 'We couldn’t send your request. Please call +91 79 4000 5000.', 'error');
     } finally {
@@ -112,11 +124,12 @@ export default function Quote() {
   return (
     <>
       <section className="page-head wrap">
-        <span className="eyebrow">Free quote</span>
-        <h1 className="headline">{prefill ? 'Your quote request.' : 'Let’s size your system.'}</h1>
+        <span className="eyebrow">Free roof survey</span>
+        <h1 className="headline">Book your free roof survey.</h1>
         <p className="lead">
-          {prefill ? 'We’ve filled in what you entered on the savings page. Add your contact details and we’ll call within two working hours.'
-            : 'Tell us a little about your home. We’ll call within two working hours to book your free roof survey.'}
+          A technician measures your roof, checks shade and the right capacity, then prepares your exact quote.
+          Pick a day and time; our team calls you to confirm the booking.
+          {prefill ? ' We’ve filled in what you entered on the savings page.' : ''}
         </p>
       </section>
 
@@ -140,6 +153,33 @@ export default function Quote() {
                         items={Object.entries(TYPES).map(([value, t]) => ({ value, label: t.label }))} />
                 </div>
                 <span className="form-hint">{TYPES[f.system_type].help}</span>
+              </div>
+
+              <div className="field">
+                <span className="label">When should the technician visit?</span>
+                <div className="form-row">
+                  <div className="field">
+                    <label className="label" htmlFor="q-day">Preferred day</label>
+                    <input id="q-day" className="input" type="date" min={dayOffset(1)} max={dayOffset(30)} value={f.preferred_date}
+                           onChange={set('preferred_date')} aria-invalid={!!errors.preferred_date} />
+                    {err('preferred_date')}
+                  </div>
+                  <div className="field">
+                    <span className="label" id="q-slot-label">Time slot</span>
+                    <div className="choices choices--3" role="radiogroup" aria-labelledby="q-slot-label">
+                      {SLOTS.map((sl) => (
+                        <button key={sl.value} type="button" role="radio" aria-checked={f.preferred_slot === sl.value}
+                                className={`choice${f.preferred_slot === sl.value ? ' is-active' : ''}`}
+                                onClick={() => { put('preferred_slot', sl.value); setErrors((x) => ({ ...x, preferred_slot: '' })); }}>
+                          <div className="choice__main">{sl.label}</div>
+                          <div className="choice__sub">{sl.sub}</div>
+                        </button>
+                      ))}
+                    </div>
+                    {err('preferred_slot')}
+                  </div>
+                </div>
+                <span className="form-hint">This is your preference: we’ll call to confirm it, or agree another time with you.</span>
               </div>
 
               <div className="form-row">
@@ -224,7 +264,7 @@ export default function Quote() {
                       <strong className="tabular">{inr(total)}</strong>
                     </div>
                     <p className="form-hint">
-                      Estimate only{prefill?.custom ? `, using your price of ${inr(prefill.custom.costPerKw)}/kW` : ''}. The final price is fixed after the free roof survey.
+                      Estimate only{prefill?.custom ? `, using your price of ${inr(prefill.custom.costPerKw)}/kW` : ''}. Your exact quote comes after the survey.
                       {subsidyShown && ' The subsidy is paid by the government to your bank account after installation.'}
                     </p>
                   </>
@@ -234,9 +274,9 @@ export default function Quote() {
               </div>
 
               <button type="submit" className="btn btn--primary btn--block" disabled={sending}>
-                {sending ? 'Sending…' : 'Request my free quote'}
+                {sending ? 'Sending…' : 'Book my free survey'}
               </button>
-              <p className="form-hint center">No payment now. An advisor calls you to book a free roof survey.</p>
+              <p className="form-hint center">No payment now. The survey is free and there’s no obligation to buy.</p>
             </form>
           )}
         </div>
