@@ -13,7 +13,7 @@ const GOOGLE_ERRORS = {
 
 // Pages a ?next= may send a user back to, by role
 const STAFF = ['director', 'sales', 'warehouse', 'technician', 'support'];
-const NEXT_ROLES = { '/app': STAFF, '/account': ['customer'] };
+const NEXT_ROLES = { '/app': STAFF, '/account': ['customer'], '/book-survey': ['customer'] };
 
 // Demo accounts from backend/app/seed.py (temporary, for testing). One click fills the form.
 const DEMO_PASSWORD = 'Sunpower@2026';

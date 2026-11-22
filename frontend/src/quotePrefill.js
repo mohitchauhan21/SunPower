@@ -19,6 +19,26 @@ export function clearQuotePrefill() {
   try { sessionStorage.removeItem(KEY); } catch { /* ignore */ }
 }
 
+// A guest's filled-in booking form, kept while they sign up (same tab, one hour).
+const DRAFT = 'sp_booking_draft';
+
+export function saveBookingDraft(form) {
+  try { sessionStorage.setItem(DRAFT, JSON.stringify({ form, at: Date.now() })); } catch { /* storage off */ }
+}
+
+export function readBookingDraft() {
+  try {
+    const d = JSON.parse(sessionStorage.getItem(DRAFT) || 'null');
+    return d && Date.now() - d.at < 3600 * 1000 ? d.form : null;
+  } catch {
+    return null;
+  }
+}
+
+export function clearBookingDraft() {
+  try { sessionStorage.removeItem(DRAFT); } catch { /* ignore */ }
+}
+
 /** Indian mobile number as +91XXXXXXXXXX, or null (same rule as the server). */
 export function normalizePhone(raw) {
   let d = String(raw || '').replace(/\D/g, '');

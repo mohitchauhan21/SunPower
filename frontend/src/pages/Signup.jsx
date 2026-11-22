@@ -1,23 +1,31 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api.js';
 import { goHome, useAuth } from '../auth.jsx';
 import { codeProblem, passwordProblem } from '../password.js';
 import { CodeField, ConfirmField, PasswordField } from '../components/ui/Secret.jsx';
 import GoogleButton from '../components/GoogleButton.jsx';
+import { readBookingDraft } from '../quotePrefill.js';
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
 export default function Signup() {
   const { me, refresh } = useAuth();
   const navigate = useNavigate();
-  const [f, setF] = useState({ name: '', email: '', phone: '', password: '', confirm: '', recovery_code: '' });
+  const [params] = useSearchParams();
+  // Coming from the booking form: same name, email and mobile, then straight back to finish booking.
+  const next = params.get('next') === '/book-survey?resume=1' ? '/book-survey?resume=1' : null;
+  const booking = next ? readBookingDraft() : null;
+  const [f, setF] = useState({ name: booking?.name || '', email: booking?.email || '', phone: booking?.phone || '',
+    password: '', confirm: '', recovery_code: '' });
   const [errors, setErrors] = useState({});
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState('');
 
-  useEffect(() => { if (me?.authenticated) goHome(navigate, me.home); }, [me, navigate]);
+  useEffect(() => {
+    if (me?.authenticated) goHome(navigate, next && me.role === 'customer' ? next : me.home);
+  }, [me, navigate, next]);
 
   const set = (k) => (v) => { setF((s) => ({ ...s, [k]: v })); setErrors((s) => ({ ...s, [k]: '' })); };
 
@@ -70,7 +78,8 @@ export default function Signup() {
     <section className="wrap auth">
       <div className="auth__card fade-up">
         <h1 className="headline">Create account</h1>
-        <p className="lead">Follow your installation, warranties and repairs in one place.</p>
+        <p className="lead">{booking ? 'One last step: create your account to book the survey. Your details are filled in.'
+          : 'Follow your installation, warranties and repairs in one place.'}</p>
 
         <GoogleButton mode="signup" portal="customer" onError={setError} />
 
@@ -99,7 +108,7 @@ export default function Signup() {
           <button className="btn btn--primary btn--block" disabled={busy}>{busy ? 'Creating account…' : 'Create account'}</button>
           <p className="form-hint center">For homeowners and businesses. SunPower staff accounts are set up by the office.</p>
         </form>
-        <p className="auth__foot muted">Already have an account? <Link to="/login" className="auth__small">Sign in</Link></p>
+        <p className="auth__foot muted">Already have an account? <Link to={next ? `/login?next=${encodeURIComponent(next)}` : '/login'} className="auth__small">Sign in</Link></p>
       </div>
     </section>
   );

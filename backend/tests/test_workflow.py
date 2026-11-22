@@ -452,3 +452,16 @@ def test_razorpay_webhook_confirms_payment(client):
             assert db.val("SELECT COUNT(*) FROM mail_queue WHERE email_to = ? AND subject LIKE 'Invoice %'", email)
     again = client.post("/api/sunpower/razorpay/webhook", content=body, headers={"X-Razorpay-Signature": sig})
     assert again.status_code == 200                                         # repeated events are harmless
+
+
+def test_signed_in_customer_books_with_account_details(client):
+    as_(client, "customer")
+    me = ok(client.get("/api/my/overview"))["customer"]
+    day = (date.today() + timedelta(days=6)).isoformat()
+    lid = ok(client.post("/api/sunpower/enquiry", json={
+        "name": "Someone Else", "phone": "9000000001", "email": "other@example.com", "state": "Gujarat",
+        "street": "Second home, Plot 9", "preferred_date": day, "preferred_slot": "evening"}, headers=H))["id"]
+    as_(client, "sales")
+    lead = ok(client.get("/api/staff/leads/%s" % lid))
+    assert lead["contact_name"] == me["name"] and lead["email"] == me["email"]       # account details, not the form's
+    assert lead["street"] == "Second home, Plot 9"                                     # another property is fine

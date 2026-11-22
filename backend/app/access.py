@@ -59,7 +59,7 @@ MODULES = [
     ("surveys", "Surveys", "/app/surveys"),
     ("orders", "Quotes & orders", "/app/orders"),
     ("deliveries", "Dispatch", "/app/dispatch"),
-    ("stock", "Stock", "/app/stock"),
+    ("stock", "Inventory", "/app/stock"),
     ("jobs", "Installations", "/app/jobs"),
     ("tickets", "Requests", "/app/service"),
     ("warranties", "Warranties", "/app/warranties"),

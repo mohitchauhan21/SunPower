@@ -28,7 +28,7 @@ const TITLES = {
   '/': 'Rooftop solar', '/estimate': 'Savings estimate', '/book-survey': 'Book a survey', '/login': 'Sign in',
   '/forgot-password': 'Forgot password', '/reset-password': 'New password', '/signup': 'Create account', '/account': 'My account',
   '/app': 'Today', '/app/insights': 'Insights', '/app/me': 'My account', '/app/enquiries': 'Enquiries', '/app/surveys': 'Surveys', '/app/orders': 'Quotes & orders',
-  '/app/dispatch': 'Dispatch', '/app/stock': 'Stock', '/app/jobs': 'Installations', '/app/service': 'Service',
+  '/app/dispatch': 'Dispatch', '/app/stock': 'Inventory', '/app/jobs': 'Installations', '/app/service': 'Service',
   '/app/warranties': 'Warranties', '/app/customers': 'Customers', '/app/subsidy': 'Subsidy', '/app/reports': 'Reports',
   '/app/settings': 'Settings'
 };

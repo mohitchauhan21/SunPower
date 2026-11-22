@@ -2,12 +2,13 @@ import { Link, NavLink, Navigate, Outlet, useLocation } from 'react-router-dom';
 import { ROLE_LABELS, useAuth } from '../auth.jsx';
 import './staff.css';
 
-// At most five groups. Each group holds the modules (pages) that belong together;
+// Sidebar groups. Each group holds the modules (pages) that belong together;
 // people only see the groups and pages their role may open (me.modules, from the server).
 export const GROUPS = [
   { key: 'today', label: 'Today', icon: 'M12 3v2M12 19v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M3 12h2M19 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4M12 8a4 4 0 100 8 4 4 0 000-8z', modules: ['dashboard'] },
   { key: 'sales', label: 'Sales', icon: 'M4 6h16M4 12h10M4 18h7', modules: ['leads', 'surveys', 'orders', 'customers', 'subsidies'] },
-  { key: 'ops', label: 'Operations', icon: 'M14.7 6.3a4 4 0 00-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 005.4-5.4l-2.5 2.5-2.5-2.5z', modules: ['jobs', 'deliveries', 'stock'] },
+  { key: 'ops', label: 'Operations', icon: 'M14.7 6.3a4 4 0 00-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 005.4-5.4l-2.5 2.5-2.5-2.5z', modules: ['jobs', 'deliveries'] },
+  { key: 'inventory', label: 'Inventory', icon: 'M21 8l-9-5-9 5v8l9 5 9-5V8zM3 8l9 5 9-5M12 13v8', modules: ['stock'] },
   { key: 'service', label: 'Service', icon: 'M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z', modules: ['tickets', 'warranties'] },
   { key: 'business', label: 'Business', icon: 'M4 20V10M10 20V4M16 20v-7M22 20H2', modules: ['insights', 'reports', 'settings'] }
 ];

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../auth.jsx';
 import { api, inr, num } from '../api.js';
 import Tabs from '../components/ui/Tabs.jsx';
@@ -9,7 +9,7 @@ import { useToast } from '../components/ui/Toast.jsx';
 import EnquirySuccess from '../components/EnquirySuccess.jsx';
 import { estimateLocal } from '../solar.js';
 import { saveState, savedState, useSubsidyTable } from '../subsidy.js';
-import { clearQuotePrefill, normalizePhone, readQuotePrefill } from '../quotePrefill.js';
+import { clearBookingDraft, clearQuotePrefill, normalizePhone, readBookingDraft, readQuotePrefill, saveBookingDraft } from '../quotePrefill.js';
 
 const TYPES = {
   on_grid: {
@@ -40,22 +40,34 @@ export default function Quote() {
   const toast = useToast();
   const { me } = useAuth();
   const [params] = useSearchParams();
+  const navigate = useNavigate();
   const table = useSubsidyTable();
   // Figures carried over from the savings page (only when coming from it)
   const prefill = useMemo(() => (params.get('from') === 'estimate' ? readQuotePrefill() : null), [params]);
-  const [f, setF] = useState(() => ({
+  // Back from signing up: the form exactly as the guest left it.
+  const draft = useMemo(() => (params.get('resume') ? readBookingDraft() : null), [params]);
+  const [f, setF] = useState(() => draft || ({
     ...blank(prefill?.state || savedState()),
     monthly_bill: prefill?.monthly_bill ? String(prefill.monthly_bill) : ''
   }));
+  const [locked, setLocked] = useState({});   // personal details that come from the customer's account
   const [errors, setErrors] = useState({});
   const [sending, setSending] = useState(false);
   const [done, setDone] = useState(null);
   const sent = useRef(false);
 
-  // Signed-in customer: start with their own name and email
+  // Signed-in customer: name, mobile and email come from their account and can't be changed here
+  // (the address can: it may be another property).
   useEffect(() => {
-    if (me?.role === 'customer') setF((s) => ({ ...s, name: s.name || me.name || '', email: s.email || me.login || '' }));
-  }, [me]);
+    if (me?.role !== 'customer') return;
+    api.myOverview().then((o) => {
+      const c = o?.customer || {};
+      const phone = normalizePhone(c.phone) ? c.phone : '';
+      setF((s) => ({ ...s, name: c.name || s.name, email: c.email || s.email, phone: phone || s.phone,
+        street: s.street || (draft ? '' : c.street || '') }));
+      setLocked({ name: !!c.name, email: !!c.email, phone: !!phone });
+    }).catch(() => {});
+  }, [me, draft]);
 
   const set = (k) => (e) => { setF((s) => ({ ...s, [k]: e.target.value })); setErrors((x) => ({ ...x, [k]: '' })); };
   const put = (k, v) => setF((s) => ({ ...s, [k]: v }));
@@ -92,6 +104,11 @@ export default function Quote() {
   const submit = async (e) => {
     e.preventDefault();
     if (sending || sent.current || !validate()) return;
+    if (me && !me.authenticated) {   // guest: create the account first, then come back and confirm
+      saveBookingDraft(f);
+      navigate('/signup?next=' + encodeURIComponent('/book-survey?resume=1'));
+      return;
+    }
     setSending(true);
     try {
       const res = await api.submitEnquiry({
@@ -110,6 +127,7 @@ export default function Quote() {
       sent.current = true;
       saveState(f.state);
       clearQuotePrefill();
+      clearBookingDraft();
       setDone({ ...res, phone: normalizePhone(f.phone) });
       toast('Survey request received. We’ll call you to confirm the booking.');
     } catch (err) {
@@ -129,7 +147,7 @@ export default function Quote() {
         <p className="lead">
           A technician measures your roof, checks shade and the right capacity, then prepares your exact quote.
           Pick a day and time; our team calls you to confirm the booking.
-          {prefill ? ' We’ve filled in what you entered on the savings page.' : ''}
+          {draft ? ' Welcome! Your details are filled in: check them and press the button to book.' : prefill ? ' We’ve filled in what you entered on the savings page.' : ''}
         </p>
       </section>
 
@@ -202,19 +220,21 @@ export default function Quote() {
               <div style={{ borderTop: '1px solid var(--line)', paddingTop: 20 }} className="form-row">
                 <div className="field">
                   <label className="label" htmlFor="q-name">Full name</label>
-                  <input id="q-name" className="input" required autoComplete="name" value={f.name} onChange={set('name')} aria-invalid={!!errors.name} />
-                  {err('name')}
+                  <input id="q-name" className="input" required autoComplete="name" value={f.name} onChange={set('name')} aria-invalid={!!errors.name}
+                         readOnly={locked.name} aria-readonly={locked.name || undefined} />
+                  {err('name') || (locked.name && <span className="form-hint">From your account. Change it in <Link to="/account">My account</Link>.</span>)}
                 </div>
                 <div className="field">
                   <label className="label" htmlFor="q-phone">Mobile number</label>
                   <input id="q-phone" className="input" type="tel" required inputMode="tel" autoComplete="tel" placeholder="+91"
-                         value={f.phone} onChange={set('phone')} aria-invalid={!!errors.phone} />
-                  {err('phone') || <span className="form-hint">We call this number to book your survey.</span>}
+                         value={f.phone} onChange={set('phone')} aria-invalid={!!errors.phone} readOnly={locked.phone} aria-readonly={locked.phone || undefined} />
+                  {err('phone') || <span className="form-hint">{locked.phone ? 'From your account. ' : ''}We call this number to book your survey.</span>}
                 </div>
                 <div className="field">
                   <label className="label" htmlFor="q-email">Email <span className="form-hint">(optional)</span></label>
-                  <input id="q-email" className="input" type="email" autoComplete="email" value={f.email} onChange={set('email')} aria-invalid={!!errors.email} />
-                  {err('email')}
+                  <input id="q-email" className="input" type="email" autoComplete="email" value={f.email} onChange={set('email')} aria-invalid={!!errors.email}
+                         readOnly={locked.email} aria-readonly={locked.email || undefined} />
+                  {err('email') || (locked.email && <span className="form-hint">From your account.</span>)}
                 </div>
                 <div className="field">
                   <label className="label" htmlFor="q-state">State</label>
@@ -227,7 +247,7 @@ export default function Quote() {
                 <div className="field field--full">
                   <label className="label" htmlFor="q-street">Address <span className="form-hint">(optional)</span></label>
                   <input id="q-street" className="input" autoComplete="street-address" value={f.street} onChange={set('street')} />
-                  <span className="form-hint">Needed before the survey visit; you can also give it on the call.</span>
+                  <span className="form-hint">The property to survey. For another property, enter its address here.</span>
                 </div>
                 <div className="field field--full">
                   <label className="label" htmlFor="q-notes">Anything else? <span className="form-hint">(optional)</span></label>

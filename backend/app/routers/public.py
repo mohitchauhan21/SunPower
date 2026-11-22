@@ -68,6 +68,11 @@ def enquiry(request: Request, body: dict = Body(default={}), db=Depends(get_db),
     if rate_limited("enquiry:" + ip, limit=20, window=3600):
         return {"ok": False, "error": "Too many requests from this connection. Please call us instead."}
     from ..subsidy import BY_NAME
+    cust = db.get("customers", user["customer_id"]) if user and user["role"] == "customer" and user.get("customer_id") else None
+    if cust:   # the same name, mobile and email throughout: they come from the account, not the form
+        body = {**body, "name": cust["name"], "email": cust["email"] or body.get("email")}
+        if rules.normalize_phone(cust["phone"]):
+            body["phone"] = cust["phone"]
     name = rules.text(body.get("name")).strip()[:120]
     if len(name) < 2:
         return {"ok": False, "field": "name", "error": "Please enter your full name."}
@@ -99,6 +104,8 @@ def enquiry(request: Request, body: dict = Body(default={}), db=Depends(get_db),
             rules.money(_float(est.get("cost"))), rules.money(_float(est.get("subsidy"))),
             rules.money(_float(est.get("net_cost"))))
     customer_id = user["customer_id"] if user and user["role"] == "customer" else None
+    if cust and not rules.normalize_phone(cust["phone"]):   # first booking: keep the mobile on the account
+        db.update("customers", cust["id"], {"phone": phone})
     try:
         lid = rules.create_enquiry(db, {
             "contact_name": name, "phone": phone,

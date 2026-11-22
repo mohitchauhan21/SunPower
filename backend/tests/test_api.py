@@ -165,6 +165,7 @@ def test_state_wise_subsidy_and_custom_price(client):
 
 
 def test_enquiry_checks_phone_state_and_duplicates(client):
+    client.cookies.clear()   # a guest on the website
     send = lambda **b: client.post("/api/sunpower/enquiry", json=b, headers=H).json()
     assert send(name="Asha Rao", phone="12345")["field"] == "phone"
     assert send(name="Asha Rao", phone="98765 11111", state="Atlantis")["field"] == "state"
