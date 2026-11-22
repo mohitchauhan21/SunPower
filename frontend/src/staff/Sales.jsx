@@ -41,7 +41,7 @@ export function Enquiries() {
       {error ? <ErrorBox error={error} onRetry={reload} /> : !data ? <Loading /> : (
         <Table rows={data.rows} rowLink={(l) => `/app/enquiries/${l.id}`} empty="No enquiries match."
           columns={[
-            { key: 'ref', label: 'Ref' }, { key: 'contact_name', label: 'Customer' }, { key: 'phone', label: 'Phone' },
+            { key: 'ref', label: 'Project ID', render: (r) => <strong className="pid">{r.project_ref || r.ref}</strong> }, { key: 'contact_name', label: 'Customer' }, { key: 'phone', label: 'Phone' },
             { key: 'city', label: 'City' },
             { key: 'requested_kw', label: 'Size', render: (l) => (l.requested_kw ? `${l.requested_kw} kW ${sysLabel(l.system_type)}` : '—') },
             { key: 'channel', label: 'Via' },
@@ -96,6 +96,62 @@ function NewEnquiry({ onDone }) {
         <div className="field--full"><button className="btn btn--primary" disabled={busy === 'save' || !f.contact_name || !f.phone}>Create enquiry</button></div>
       </form>
     </Section>
+  );
+}
+
+const SLOT_SHORT = { morning: 'M', afternoon: 'A', evening: 'E' };
+const dayLabel = (d) => new Date(d + 'T00:00').toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric' });
+
+/** Who is free when: technicians x the next 10 days x morning / afternoon / evening. Click a free slot to pick it. */
+function TechAvailability({ leadId, skip, chosen, day, slot, onPick }) {
+  const [start, setStart] = useState(todayLocal());
+  const { data } = useLoad(() => get(`/api/staff/leads/${leadId}/availability`, { start, days: 10, skip: skip || '' }), [leadId, start, skip]);
+  if (!data) return <div className="field--full muted small">Loading availability…</div>;
+  const shift = (n) => { const d = new Date(start + 'T00:00'); d.setDate(d.getDate() + n); const v = d.toISOString().slice(0, 10); setStart(v < todayLocal() ? todayLocal() : v); };
+  const me = data.techs.find((t) => String(t.id) === String(chosen));
+  const takenNow = me && day && slot && me.slots[day]?.[slot];
+  const nextFree = me && data.days.flatMap((d) => data.slots.map((s) => (!me.slots[d][s.value] && (d > todayLocal() || (d === todayLocal() && new Date().getHours() < ({ morning: 10, afternoon: 13, evening: 16 })[s.value])) ? [d, s] : null))).find(Boolean);
+  return (
+    <div className="field field--full">
+      <div className="avail-head">
+        <span className="label">Availability</span>
+        <span className="avail-nav">
+          <button type="button" className="link link--btn small" disabled={start <= todayLocal()} onClick={() => shift(-10)}>‹ Earlier</button>
+          <button type="button" className="link link--btn small" onClick={() => shift(10)}>Later ›</button>
+        </span>
+      </div>
+      {takenNow && <p className="ws-warn small" style={{ margin: '0 0 6px' }}>{me.name} has {takenNow === 'survey' ? 'another survey' : 'an installation'} then.
+        {nextFree ? ` Next free: ${dayLabel(nextFree[0])}, ${nextFree[1].label.toLowerCase()}.` : ' No free slot in these days.'}</p>}
+      <div className="avail-scroll">
+        <table className="avail">
+          <thead><tr><th>Technician</th>{data.days.map((d) => <th key={d}>{dayLabel(d)}</th>)}</tr></thead>
+          <tbody>
+            {data.techs.map((t) => (
+              <tr key={t.id} className={String(t.id) === String(chosen) ? 'is-chosen' : ''}>
+                <th><span>{t.name}</span>{t.in_area && <span className="avail-area">covers area</span>}</th>
+                {data.days.map((d) => (
+                  <td key={d}>
+                    {data.slots.map((s) => {
+                      const started = d === todayLocal() && new Date().getHours() >= ({ morning: 10, afternoon: 13, evening: 16 })[s.value];
+                      const why = t.slots[d][s.value] || (started ? 'past' : null);
+                      const picked = String(t.id) === String(chosen) && d === day && s.value === slot;
+                      return (
+                        <button key={s.value} type="button" disabled={!!why}
+                                className={`avail-slot${why ? ` is-busy is-${why}` : ''}${picked ? ' is-picked' : ''}`}
+                                title={`${t.name} · ${dayLabel(d)} ${s.label}: ${why ? `busy (${why})` : 'free'}`}
+                                aria-label={`${t.name}, ${dayLabel(d)} ${s.label}, ${why ? `busy with ${why}` : 'free'}`}
+                                onClick={() => onPick(t.id, d, s.value)}>{SLOT_SHORT[s.value]}</button>
+                      );
+                    })}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <span className="form-hint">M / A / E = morning, afternoon, evening. Grey = free (click to choose), orange = survey, red = installation (whole day).</span>
+    </div>
   );
 }
 
@@ -194,6 +250,8 @@ export function Enquiry() {
                        value: t.id,
                        label: `${t.name}${t.in_area ? ' · covers this area' : ''}${t.busy.length ? ` · busy (${t.busy.join(', ')})` : day && slot ? ' · free' : ''} · ${t.open_work} open`
                      }))]} hint="Technicians covering the customer's city or state, and free in that slot, are listed first." />
+                  <TechAvailability leadId={id} skip={resched?.id} chosen={survey.technician_id} day={day} slot={slot}
+                                    onPick={(t, d, sl) => setSurvey({ technician_id: String(t), day: d, slot: sl })} />
                   <div className="field--full actions actions--left">
                     <button className="btn btn--primary btn--sm" disabled={!survey.technician_id || !day || day < todayLocal() || !slot || busy === 'survey'} onClick={book}>
                       {resched ? 'Save new booking' : <>Confirm booking &amp; assign</>}</button>
@@ -234,7 +292,7 @@ export function Surveys() {
       {error ? <ErrorBox error={error} onRetry={reload} /> : !data ? <Loading /> : (
         <Table rows={data.rows} rowLink={(s) => `/app/surveys/${s.id}`} empty="No surveys."
           columns={[
-            { key: 'ref', label: 'Ref' }, { key: 'contact_name', label: 'Customer' }, { key: 'city', label: 'City' },
+            { key: 'ref', label: 'Project ID', render: (r) => <strong className="pid">{r.project_ref || r.ref}</strong> }, { key: 'contact_name', label: 'Customer' }, { key: 'city', label: 'City' },
             { key: 'technician', label: 'Surveyor' },
             { key: 'survey_date', label: 'Visit', render: (s) => (s.survey_date ? fmtLocal(s.survey_date) : '—') },
             { key: 'recommended_kw', label: 'kW', num: true, render: (s) => s.recommended_kw || '—' },
@@ -283,7 +341,7 @@ const YESNO = [{ value: '', label: '—' }, { value: 'yes', label: 'Yes' }, { va
 const SEVERITY = ['critical', 'high', 'medium', 'low'];
 // Columns that live on the survey itself, shown at the start of their section.
 const S_COLUMNS = { roof: ['roof_type', 'roof_direction', 'roof_azimuth_deg', 'roof_tilt', 'usable_area_sqft', 'latitude', 'longitude'], shade: ['shading'],
-  electrical: ['earthing_possible'], summary: ['recommended_kw'] };
+  electrical: ['earthing_possible'], summary: ['system_type', 'recommended_kw'] };
 
 function MultiPick({ label, options, value = [], onChange, disabled }) {
   const toggle = (o) => onChange(value.includes(o) ? value.filter((x) => x !== o) : [...value, o]);
@@ -321,6 +379,7 @@ export function Survey() {
   const save = (quiet) => run('save', () => patch(`/api/staff/surveys/${id}`, {
     ...Object.fromEntries(fields.map((k) => [k, s[k] === '' ? null : s[k]])), earthing_possible: s.earthing_possible ? 1 : 0,
     cable_distance_m: d.ac_cable_m || s.cable_distance_m || null, survey_date: s.survey_date, result: s.result || null,
+    system_type: s.system_type || 'on_grid',
     details: Object.fromEntries(Object.keys(s.spec).map((k) => [k, d[k] ?? null]).concat([['issues', d.issues || []]])) }),
     quiet ? undefined : 'Saved.');
   // Bring in what the server works out (missing items, parts, photos, state) without touching what's being typed.
@@ -369,6 +428,8 @@ export function Survey() {
     : recKw < 1 || recKw > 100 ? 'We quote 1 to 100 kW.'
     : s.usable_area_sqft && recKw > fitKw + 0.01 ? `The roof fits about ${fitKw} kW.` : null;
   const column = (k) => ({
+    system_type: <F key={k} label="System type" type="select" value={s.system_type || 'on_grid'} onChange={set(k)} disabled={!open} options={SYSTEM}
+                    hint={s.system_type === 'off_grid' ? 'Off-Grid: batteries added, no PM Surya Ghar subsidy. Fill in the Battery tab.' : 'Grid-connected with net metering; eligible for the subsidy.'} />,
     roof_type: <F key={k} label={lbl(k, 'Roof type')} type="select" value={s.roof_type || ''} onChange={set(k)} options={ROOF} disabled={!open} />,
     roof_direction: <F key={k} label={lbl(k, 'Roof facing')} type="select" value={s.roof_direction || ''} onChange={setDirection} options={[{ value: '', label: '—' }, ...DIRS]} disabled={!open} />,
     roof_azimuth_deg: <F key={k} label="Facing (°)" type="number" min="0" max="360" step="1" value={d.roof_azimuth_deg} onChange={setAzimuth}
@@ -454,7 +515,7 @@ export function Survey() {
 
   return (
     <>
-      <PageHead back={{ to: '/app/surveys', label: 'Surveys' }} eyebrow={`${s.ref} · enquiry ${s.lead_ref}`} title={s.contact_name}
+      <PageHead back={{ to: '/app/surveys', label: 'Surveys' }} eyebrow={`Project ${s.project_ref || s.lead_ref} · roof survey`} title={s.contact_name}
                 sub={`${[s.street, s.city].filter(Boolean).join(', ') || 'No address'} · ${s.survey_date ? fmtLocal(s.survey_date) : 'No date'} · ${s.technician || 'No surveyor'}`}>
         <Pill state={s.state}>{s.state_label}</Pill>
         {open && <button className="btn btn--secondary btn--sm" disabled={busy === 'save'} onClick={saveAndReload}>Save</button>}
@@ -566,7 +627,7 @@ export function Orders() {
       {error ? <ErrorBox error={error} onRetry={reload} /> : !data ? <Loading /> : (
         <Table rows={data.rows} rowLink={(o) => `/app/orders/${o.id}`} empty="No orders."
           columns={[
-            { key: 'ref', label: 'Order' }, { key: 'customer', label: 'Customer' },
+            { key: 'ref', label: 'Project ID', render: (r) => <strong className="pid">{r.project_ref || r.ref}</strong> }, { key: 'customer', label: 'Customer' },
             { key: 'kw', label: 'System', render: (o) => `${o.kw} kW ${sysLabel(o.system_type)}` },
             { key: 'amount_total', label: 'Total', num: true, render: (o) => inr(o.amount_total) },
             { key: 'paid', label: 'Paid', num: true, render: (o) => inr(o.paid) },
@@ -597,7 +658,7 @@ export function Order() {
     <>
       {o.approval_state === 'pending' && <div className="ws-banner">Discount above {o.discount_limit}% is waiting for Sales / Admin approval before this quote can be sent.</div>}
       {o.payment_plan && <div className="ws-banner">Customer chose: {o.payment_plan === 'full' ? 'pay 100% upfront' : 'advance now, balance after installation'}.</div>}
-      <PageHead back={{ to: '/app/orders', label: 'Quotes & orders' }} eyebrow={`${o.project_ref ? `Project ${o.project_ref} · ` : ''}${o.state === 'sale' ? 'Order' : 'Quotation'} ${o.ref}`}
+      <PageHead back={{ to: '/app/orders', label: 'Quotes & orders' }} eyebrow={`Project ${o.project_ref || o.ref} · ${o.state === 'sale' ? 'order' : 'quotation'}`}
                 title={o.customer} sub={`${o.kw} kW ${sysLabel(o.system_type)} · ${fmtDate(o.date_order)} · Owner ${o.salesperson || '—'}`}>
         <Pill state={o.state}>{o.state_label}</Pill>
         <a className="btn btn--secondary btn--sm" href={o.print_url} target="_blank" rel="noreferrer">PDF</a>
@@ -825,7 +886,7 @@ export function Subsidies() {
       <Chips value={state} onChange={setState} options={[{ value: '', label: 'All' }, ...(data?.states || [])]} />
       {error ? <ErrorBox error={error} onRetry={reload} /> : !data ? <Loading /> : (
         <Table rows={data.rows} rowLink={(s) => `/app/subsidy/${s.id}`} empty="No subsidy files."
-          columns={[{ key: 'ref', label: 'File' }, { key: 'customer', label: 'Customer' }, { key: 'order_ref', label: 'Order' }, { key: 'kw', label: 'kW', num: true },
+          columns={[{ key: 'ref', label: 'Project ID', render: (r) => <strong className="pid">{r.project_ref || r.ref}</strong> }, { key: 'customer', label: 'Customer' }, { key: 'kw', label: 'kW', num: true },
             { key: 'application_no', label: 'Portal no.' }, { key: 'amount_expected', label: 'Expected', num: true, render: (s) => inr(s.amount_expected) },
             { key: 'amount_received', label: 'Received', num: true, render: (s) => inr(s.amount_received) },
             { key: 'state', label: 'Status', render: (s) => <Pill state={s.state}>{s.state_label}</Pill> }]} />
@@ -850,7 +911,7 @@ export function Subsidy() {
   const ro = !s.can_edit;
   return (
     <>
-      <PageHead back={{ to: '/app/subsidy', label: 'Subsidy' }} eyebrow={`${s.ref} · order ${s.order_ref}`} title={s.customer} sub={`${s.kw} kW · ${s.scheme}`}>
+      <PageHead back={{ to: '/app/subsidy', label: 'Subsidy' }} eyebrow={`Project ${s.project_ref || s.ref} · subsidy file`} title={s.customer} sub={`${s.kw} kW · ${s.scheme}`}>
         <Pill state={s.state}>{s.state_label}</Pill>
         {!ro && next && <button className="btn btn--primary btn--sm" disabled={!!busy} onClick={() => act(next[0], 'Status updated.')}>{next[1]}</button>}
         {!ro && !['disbursed', 'rejected'].includes(s.state) && <button className="btn btn--secondary btn--sm" disabled={!!busy} onClick={() => window.confirm('Mark this file rejected?') && act('reject', 'Marked rejected.')}>Rejected</button>}

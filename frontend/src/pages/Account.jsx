@@ -59,7 +59,7 @@ function Overview({ data, reload }) {
           <header className="order__head">
             <div>
               <h3>{o.kw ? `${o.kw} kW rooftop solar` : 'Solar system'}</h3>
-              <p className="muted small">{o.project ? `Project ${o.project} · ` : ''}{o.quote_pending ? 'Quotation' : 'Order'} {o.name} · {fmtDate(o.date)}</p>
+              <p className="muted small">Project {o.project || o.name} · {o.quote_pending ? 'quotation' : 'order'} · {fmtDate(o.date)}</p>
             </div>
             <span className={`pill ${o.quote_pending ? 'pill--warn' : o.steps[o.steps.length - 1].done ? 'pill--ok' : ''}`}>
               {o.quote_pending ? 'Waiting for your approval' : o.steps[o.steps.length - 1].done ? 'Installed' : 'In progress'}

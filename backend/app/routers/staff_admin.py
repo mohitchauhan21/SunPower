@@ -320,12 +320,12 @@ def today_view(user=Depends(staff_only), db=Depends(get_db)):
     def new_leads(mine=False):
         rows = db.q("SELECT * FROM leads WHERE stage = 'new'" + (" AND salesperson_id = ?" if mine else "") +
                     " ORDER BY created_at", *([uid] if mine else []))
-        return [_item(l["contact_name"], "%s · %s kW · %s" % (l["ref"], l["requested_kw"] or "?", l["city"] or "no city"),
+        return [_item(l["contact_name"], "%s · %s kW · %s" % ((l.get("project_ref") or l["ref"]), l["requested_kw"] or "?", l["city"] or "no city"),
                       "/app/enquiries/%s" % l["id"], "Call", l["created_at"], "warn") for l in rows]
 
     def surveys_to_approve():
         rows = db.q("SELECT s.*, l.contact_name FROM surveys s JOIN leads l ON l.id = s.lead_id WHERE s.state = 'done' ORDER BY s.id")
-        return [_item(s["contact_name"], "%s · %s kW recommended" % (s["ref"], s["recommended_kw"] or "?"),
+        return [_item(s["contact_name"], "%s · %s kW recommended" % ((s.get("project_ref") or s["ref"]), s["recommended_kw"] or "?"),
                       "/app/surveys/%s" % s["id"], "Approve") for s in rows]
 
     def quotes_to_move():
@@ -333,10 +333,10 @@ def today_view(user=Depends(staff_only), db=Depends(get_db)):
         for o in db.q("SELECT o.*, c.name AS customer FROM orders o JOIN customers c ON c.id = o.customer_id "
                       "WHERE o.state IN ('draft','sent') ORDER BY o.date_order"):
             if o["state"] == "draft":
-                out.append(_item(o["customer"], "%s · %g kW · %s" % (o["ref"], o["kw"], rules.money(o["amount_total"])),
+                out.append(_item(o["customer"], "%s · %g kW · %s" % ((o.get("project_ref") or o["ref"]), o["kw"], rules.money(o["amount_total"])),
                                  "/app/orders/%s" % o["id"], "Send quote"))
             elif (nowdt - rules.parse_dt(o["date_order"])).days >= 3:
-                out.append(_item(o["customer"], "%s · sent %s days ago" % (o["ref"], (nowdt - rules.parse_dt(o["date_order"])).days),
+                out.append(_item(o["customer"], "%s · sent %s days ago" % ((o.get("project_ref") or o["ref"]), (nowdt - rules.parse_dt(o["date_order"])).days),
                                  "/app/orders/%s" % o["id"], "Follow up"))
         return out
 
@@ -346,18 +346,18 @@ def today_view(user=Depends(staff_only), db=Depends(get_db)):
                       "WHERE o.state = 'sale' ORDER BY o.confirmed_at"):
             due = rules.advance_due(db, o)
             if due > 0:
-                out.append(_item(o["customer"], "%s · advance %s due" % (o["ref"], rules.money(due)),
+                out.append(_item(o["customer"], "%s · advance %s due" % ((o.get("project_ref") or o["ref"]), rules.money(due)),
                                  "/app/orders/%s" % o["id"], "Advance", tone="bad"))
         for i in db.q("SELECT i.*, c.name AS customer FROM invoices i JOIN customers c ON c.id = i.customer_id "
                       "WHERE i.state = 'posted' AND i.amount_total - i.amount_paid > 0.5 ORDER BY i.date"):
-            out.append(_item(i["customer"], "%s · %s unpaid" % (i["ref"], rules.money(i["amount_total"] - i["amount_paid"])),
+            out.append(_item(i["customer"], "%s · %s unpaid" % ((i.get("project_ref") or i["ref"]), rules.money(i["amount_total"] - i["amount_paid"])),
                              "/app/orders/%s" % i["order_id"] if i["order_id"] else "/app/reports", "Invoice"))
         return out
 
     def deliveries(state):
         rows = db.q("SELECT d.*, o.ref AS order_ref, o.kw, c.name AS customer FROM deliveries d JOIN orders o ON o.id = d.order_id "
                     "JOIN customers c ON c.id = o.customer_id WHERE d.state = ? ORDER BY d.id", state)
-        return [_item(d["customer"], "%s · %g kW kit · order %s" % (d["ref"], d["kw"], d["order_ref"]), "/app/dispatch/%s" % d["id"],
+        return [_item(d["customer"], "%s · %g kW kit · order %s" % ((d.get("project_ref") or d["ref"]), d["kw"], d["order_ref"]), "/app/dispatch/%s" % d["id"],
                       "Dispatch" if state == "ready" else "Advance due") for d in rows]
 
     def low_stock():
@@ -391,7 +391,7 @@ def today_view(user=Depends(staff_only), db=Depends(get_db)):
         out = []
         for j in rows:
             tag, tone = ("On site", "warn") if j["state"] == "in_progress" else due(j["scheduled_at"])
-            out.append(_item(j["customer"], line(j["ref"], "%g kW" % (j["kw_planned"] or 0), j["city"]), "/app/jobs/%s" % j["id"],
+            out.append(_item(j["customer"], line((j.get("project_ref") or j["ref"]), "%g kW" % (j["kw_planned"] or 0), j["city"]), "/app/jobs/%s" % j["id"],
                              tag, j["scheduled_at"], tone))
         return out
 
@@ -408,7 +408,7 @@ def today_view(user=Depends(staff_only), db=Depends(get_db)):
         out = []
         for s in rows:
             tag, tone = due(s["survey_date"])
-            out.append(_item(s["contact_name"], line(s["ref"], "roof survey", s["city"]), "/app/surveys/%s" % s["id"],
+            out.append(_item(s["contact_name"], line((s.get("project_ref") or s["ref"]), "roof survey", s["city"]), "/app/surveys/%s" % s["id"],
                              tag, s["survey_date"], tone))
         return out
 
@@ -422,7 +422,7 @@ def today_view(user=Depends(staff_only), db=Depends(get_db)):
         out = []
         for t in rows:
             days = (nowdt - rules.parse_dt(t["reported_on"])).days
-            out.append(_item(t["customer"], "%s · %s" % (t["ref"], (t["description"] or "")[:70]), "/app/service/%s" % t["id"],
+            out.append(_item(t["customer"], "%s · %s" % ((t.get("project_ref") or t["ref"]), (t["description"] or "")[:70]), "/app/service/%s" % t["id"],
                              tag or ("Urgent" if t["priority"] == "2" else "%sd open" % days), t["reported_on"],
                              "bad" if days > 3 or t["priority"] == "2" else ""))
         return out

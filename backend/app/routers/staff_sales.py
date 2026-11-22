@@ -180,6 +180,17 @@ def lead_technicians(lid: int, day: str = "", slot: str = "", skip: int = 0, use
             "slots": [{"value": k, "label": v} for k, v in rules.SURVEY_SLOTS]}
 
 
+@router.get("/leads/{lid}/availability")
+def lead_availability(lid: int, start: str = "", days: int = 10, skip: int = 0, user=Depends(staff_only), db=Depends(get_db)):
+    """Each technician's free and busy slots for the coming days (survey booking)."""
+    need(user, "leads")
+    l = found(db.get("leads", lid), "Enquiry not found.")
+    try:
+        return rules.technician_availability(db, l, start[:10] or None, max(1, min(days, 21)), skip)
+    except ValueError:
+        raise HTTPException(400, "Choose a valid start day.")
+
+
 @router.post("/leads/{lid}/quote")
 def lead_quote(lid: int, user=Depends(staff_only), db=Depends(get_db)):
     need(user, "leads", write=True)
@@ -219,8 +230,8 @@ def surveys(state: str = "", q: str = "", user=Depends(staff_only), db=Depends(g
         sql += " AND s.state = ?"
         args.append(state)
     if q:
-        sql += " AND (l.contact_name LIKE ? OR s.ref LIKE ? OR l.city LIKE ?)"
-        args += [like(q)] * 3
+        sql += " AND (l.contact_name LIKE ? OR s.ref LIKE ? OR l.city LIKE ? OR s.project_ref LIKE ?)"
+        args += [like(q)] * 4
     rows = db.q(sql + " ORDER BY COALESCE(s.survey_date, s.created_at) DESC LIMIT 500", *args)
     for r in rows:
         r["state_label"] = rules.label(rules.SURVEY_STATES, r["state"])
@@ -321,10 +332,18 @@ def update_survey(sid: int, body: dict = Body(default={}), user=Depends(staff_on
                 if k == "recommended_kw":
                     raise HTTPException(400, "Recommended size must be between 1 and 100 kW.")
                 raise HTTPException(400, "%s must be a sensible positive number." % k.replace("_", " "))
-    db.update("surveys", sid, vals)
-    if vals.get("recommended_kw"):
+    if body.get("system_type") and body["system_type"] != s["system_type"]:   # technician decides On-Grid / Off-Grid
+        if body["system_type"] not in ("on_grid", "off_grid"):
+            raise HTTPException(400, "Choose On-Grid or Off-Grid.")
+        db.update("leads", s["lead_id"], {"system_type": body["system_type"]})
+        db.note("survey", sid, "System type set to %s by the survey." % ("Off-Grid" if body["system_type"] == "off_grid" else "On-Grid"),
+                user["id"])
+        s = {**s, "system_type": body["system_type"]}
+    if vals:
+        db.update("surveys", sid, vals)
+    if vals.get("recommended_kw") or body.get("system_type"):
         from ..catalog import ensure_package
-        ensure_package(db, vals["recommended_kw"], s["system_type"])
+        ensure_package(db, vals.get("recommended_kw") or s["recommended_kw"] or 0, s["system_type"])
     return {"ok": True}
 
 

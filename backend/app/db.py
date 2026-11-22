@@ -272,9 +272,40 @@ MIGRATIONS = [
     ("deliveries", "expected_on", "TEXT"),           # expected delivery day
     ("products", "location", "TEXT"),                 # warehouse rack / bin, e.g. "A-03"
     ("products", "unit", "TEXT"),                     # pcs, m, set...
+    ("surveys", "project_ref", "TEXT"),   # the enquiry's universal project ID (kept by triggers)
+    ("orders", "project_ref", "TEXT"),
+    ("deliveries", "project_ref", "TEXT"),
+    ("jobs", "project_ref", "TEXT"),
+    ("subsidies", "project_ref", "TEXT"),
+    ("invoices", "project_ref", "TEXT"),
+    ("payments", "project_ref", "TEXT"),
+    ("warranties", "project_ref", "TEXT"),
+    ("tickets", "project_ref", "TEXT"),
     ("surveys", "details", "TEXT"),                   # full site survey (JSON): electrical, cabling, mounting, issues...
     ("surveys", "result", "TEXT"),                    # technician's conclusion: feasible / conditional / not_feasible
 ]
+
+
+_FROM_LEAD = "(SELECT project_ref FROM leads WHERE id = NEW.lead_id)"
+_FROM_ORDER = "(SELECT project_ref FROM orders WHERE id = NEW.order_id)"
+PROJECT_TRIGGERS = "".join(
+    "CREATE TRIGGER IF NOT EXISTS %s_project_ins AFTER INSERT ON %s BEGIN "
+    "UPDATE %s SET project_ref = %s WHERE id = NEW.id; END;\n"
+    "CREATE TRIGGER IF NOT EXISTS %s_project_upd AFTER UPDATE OF %s ON %s BEGIN "
+    "UPDATE %s SET project_ref = %s WHERE id = NEW.id; END;\n" % (t, t, t, src, t, key, t, t, src)
+    for t, key, src in [("surveys", "lead_id", _FROM_LEAD), ("orders", "lead_id", _FROM_LEAD)]
+    + [(t, "order_id", _FROM_ORDER) for t in ("deliveries", "jobs", "subsidies", "invoices", "payments", "warranties", "tickets")]
+) + (
+    # an enquiry gets its ID just after it is created: pass it on to anything already linked
+    "CREATE TRIGGER IF NOT EXISTS leads_project_set AFTER UPDATE OF project_ref ON leads BEGIN "
+    "UPDATE surveys SET project_ref = NEW.project_ref WHERE lead_id = NEW.id; "
+    "UPDATE orders SET project_ref = NEW.project_ref WHERE lead_id = NEW.id; END;\n"
+)
+PROJECT_BACKFILL = [
+    "UPDATE surveys SET project_ref = (SELECT project_ref FROM leads WHERE id = surveys.lead_id) WHERE project_ref IS NULL",
+    "UPDATE orders SET project_ref = (SELECT project_ref FROM leads WHERE id = orders.lead_id) WHERE project_ref IS NULL",
+] + ["UPDATE %s SET project_ref = (SELECT project_ref FROM orders WHERE id = %s.order_id) WHERE project_ref IS NULL" % (t, t)
+     for t in ("deliveries", "jobs", "subsidies", "invoices", "payments", "warranties", "tickets")]
 
 
 def init_db(conn=None):
@@ -290,6 +321,11 @@ def init_db(conn=None):
     # Give older enquiries their project ID (same rule as rules.create_enquiry).
     conn.execute("UPDATE leads SET project_ref = 'SP-' || substr(created_at, 3, 2) || '-' || printf('%05d', id) "
                  "WHERE project_ref IS NULL")
+    # One universal ID per enquiry: every record made from it carries the same project ID, filled in by the
+    # database itself whenever a record is created or re-linked, so no code path can forget it.
+    conn.executescript(PROJECT_TRIGGERS)
+    for sql in PROJECT_BACKFILL:   # records made before this existed
+        conn.execute(sql)
     conn.commit()                      # save the changes to the file
     if own:
         conn.close()

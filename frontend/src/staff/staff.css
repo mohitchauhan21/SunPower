@@ -155,3 +155,26 @@ code { background: var(--bg-alt); border-radius: 6px; padding: 1px 6px; }
 
 .schedule-form { display: flex; gap: 8px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
 .schedule-form .input { max-width: 240px; }
+
+/* the universal project ID */
+.pid { font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: 0.01em; white-space: nowrap; }
+
+/* technician availability grid */
+.avail-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.avail-nav { display: flex; gap: 12px; }
+.avail-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; }
+.avail { border-collapse: collapse; font-size: 12px; width: 100%; }
+.avail th, .avail td { padding: 6px 6px; border-bottom: 1px solid var(--line); text-align: center; white-space: nowrap; }
+.avail thead th { font-weight: 600; color: var(--ink-2); background: var(--bg-alt); }
+.avail tbody th { text-align: left; font-weight: 500; position: sticky; left: 0; background: #fff; min-width: 140px; }
+.avail tbody th span { display: block; }
+.avail-area { font-size: 11px; color: var(--ok); font-weight: 400; }
+.avail tr.is-chosen th, .avail tr.is-chosen td { background: #fff8ef; }
+.avail-slot { width: 22px; height: 22px; margin: 0 1px; border-radius: 6px; border: 1px solid var(--line-strong); background: #fff;
+  font-size: 10px; font-weight: 600; color: var(--ink-2); cursor: pointer; padding: 0; }
+.avail-slot:hover:not(:disabled) { border-color: var(--ink); color: var(--ink); }
+.avail-slot.is-busy { cursor: not-allowed; color: #fff; border-color: transparent; }
+.avail-slot.is-survey { background: #e8740c; }
+.avail-slot.is-installation { background: var(--bad); }
+.avail-slot.is-picked { background: var(--ink); color: #fff; border-color: var(--ink); }
+.avail-slot.is-past { background: var(--bg-alt); color: var(--ink-3); border-color: var(--line); }

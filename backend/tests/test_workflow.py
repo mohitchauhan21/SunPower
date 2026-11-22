@@ -409,6 +409,16 @@ def test_survey_to_warranty_without_payment(client):
     as_(client, "director")
     ws = [w for w in ok(client.get("/api/staff/warranties"))["rows"] if w.get("order_ref") == order["ref"]]
     assert ws and all(w["start_date"] == date.today().isoformat() for w in ws)        # warranties start at installation
+    # one universal project ID from enquiry to warranty
+    from app.db import session
+    with session() as db:
+        pid = db.val("SELECT project_ref FROM leads WHERE id = ?", lid)
+        assert pid and pid.startswith("SP-")
+        for table, where in (("surveys", "lead_id = %d" % lid), ("orders", "id = %d" % oid), ("deliveries", "order_id = %d" % oid),
+                             ("jobs", "order_id = %d" % oid), ("invoices", "order_id = %d" % oid), ("warranties", "order_id = %d" % oid)):
+            assert {r["project_ref"] for r in db.q("SELECT project_ref FROM %s WHERE %s" % (table, where))} == {pid}, table
+    found = ok(client.get("/api/staff/jobs", params={"q": pid}))["rows"]
+    assert [j["id"] for j in found] == [jid]                                            # search by project ID
     invs = ok(client.get("/api/staff/orders/%s" % oid))["invoices"]
     assert any(i["kind"] == "final" for i in invs)                                      # installed -> final invoice
     assert abs(sum(i["amount_total"] for i in invs if i["state"] != "cancel") - order["amount_total"]) < 1

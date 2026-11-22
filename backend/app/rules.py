@@ -417,6 +417,30 @@ def suggest_technicians(db, lead, day=None, slot=None, skip_survey=0):
     return out
 
 
+def technician_availability(db, lead, start=None, days=10, skip_survey=0):
+    """Who is free when, for the next `days` days: {days: [...], techs: [{id, name, in_area, slots: {day: {slot: busy-kind or None}}}]}.
+    A survey takes its slot; an installation takes the whole day."""
+    first = date.fromisoformat(start) if start else date.today()
+    span = [(first + timedelta(days=i)).isoformat() for i in range(days)]
+    last = span[-1]
+    slots = [k for k, _l in SURVEY_SLOTS]
+    techs = []
+    for t in db.q("SELECT id, name, service_area FROM users WHERE role = 'technician' AND active = 1 ORDER BY name"):
+        grid = {d: {s: None for s in slots} for d in span}
+        for s in db.q("SELECT survey_date FROM surveys WHERE technician_id = ? AND state = 'scheduled' AND id != ? "
+                      "AND substr(survey_date, 1, 10) BETWEEN ? AND ?", t["id"], skip_survey or 0, span[0], last):
+            grid[s["survey_date"][:10]][slot_of(s["survey_date"])] = "survey"
+        for j in db.q("SELECT j.scheduled_at FROM jobs j JOIN job_techs jt ON jt.job_id = j.id WHERE jt.user_id = ? "
+                      "AND j.state != 'done' AND substr(j.scheduled_at, 1, 10) BETWEEN ? AND ?", t["id"], span[0], last):
+            for s in slots:
+                grid[j["scheduled_at"][:10]][s] = "installation"
+        free = sum(1 for d in span for s in slots if not grid[d][s])
+        techs.append({"id": t["id"], "name": t["name"], "service_area": t["service_area"] or "",
+                      "in_area": in_area(t, lead.get("city"), lead.get("state")), "slots": grid, "free_slots": free})
+    techs.sort(key=lambda t: (not t["in_area"], -t["free_slots"], t["name"]))
+    return {"days": span, "slots": [{"value": k, "label": l} for k, l in SURVEY_SLOTS], "techs": techs}
+
+
 def lead_screening_ok(lead):
     return bool(lead["roof_area_sqft"] and (lead["monthly_bill"] or lead["monthly_units"])
                 and lead["grid_suitable"] == "yes")
@@ -922,13 +946,13 @@ def send_quote(db, order, actor_id):
     if cust.get("email"):
         if not db.one("SELECT id FROM users WHERE customer_id = ?", cust["id"]):
             invite_customer(db, cust["id"])
-        html = mailer.branded(db, "Your solar quotation %s" % order["ref"], [
+        html = mailer.branded(db, "Your solar quotation – project %s" % (order.get("project_ref") or order["ref"]), [
             "Hi %s," % cust["name"],
             "Your quotation for a %g kW rooftop system is ready: %s including GST." % (
                 order["kw"], money(order["amount_total"])),
             "Review it, accept it online and pay the %s%% advance to book your installation." % db.setting("advance_pct")],
             "Review my quotation", quote_link(db, order))
-        mailer.queue(db, cust["email"], "Your SunPower quotation %s" % order["ref"], html)
+        mailer.queue(db, cust["email"], "Your SunPower quotation – project %s" % (order.get("project_ref") or order["ref"]), html)
     db.note("order", order["id"], "Quotation sent to the customer.", actor_id)
 
 
@@ -1084,7 +1108,7 @@ def email_invoice(db, iid, note=None):
     if note:
         lines.append(note)
     html = mailer.branded(db, "Invoice %s" % inv["ref"], lines, "View invoice", frontend(db) + invoice_url(db, inv))
-    mailer.queue(db, cust["email"], "Invoice %s – %s" % (inv["ref"], db.setting("company_name") or "SunPower"), html)
+    mailer.queue(db, cust["email"], "Invoice %s – project %s" % (inv["ref"], inv.get("project_ref") or "-"), html)
 
 
 INVOICE_KIND = {"advance": "Advance receipt", "final": "Tax invoice", "service": "Service invoice"}
@@ -1396,7 +1420,7 @@ def schedule_installation(db, job, when, actor):
             "Your solar installation is %s for %s. Our crew will call you before arriving." % (
                 "booked" if first else "now", datetime.strptime(when[:16], "%Y-%m-%d %H:%M").strftime("%d %b %Y at %H:%M"))],
             "Track my installation", frontend(db) + "/account")
-        mailer.queue(db, cust["email"], "Installation date – %s" % (db.setting("company_name") or "SunPower"), html)
+        mailer.queue(db, cust["email"], "Installation date – project %s" % (job.get("project_ref") or job["ref"]), html)
 
 
 def job_start(db, job, actor_id):

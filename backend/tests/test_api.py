@@ -535,3 +535,23 @@ def test_large_system_gets_its_own_package(client):
     parts = {l["code"]: l["qty"] for l in client.get("/api/staff/kits/%s" % kit["id"]).json()["lines"]}
     assert parts["PNL-540"] == 65 and parts["INV-35KW"] == 1 and parts["STR-1KW"] == 35   # 35 kW / 540 W panels
     assert kit_line["price_unit"] > 0
+
+
+def test_technician_availability_and_system_type_from_survey(client):
+    from datetime import date, timedelta
+    sid, lid = _book_and_visit(client, fill=False)
+    login(client, "sales@sunpower.demo")
+    day = (date.today() + timedelta(days=4)).isoformat()
+    a = client.get("/api/staff/leads/%s/availability" % lid, params={"days": 7}).json()
+    assert len(a["days"]) == 7 and [s["value"] for s in a["slots"]] == ["morning", "afternoon", "evening"]
+    ramesh = next(t for t in a["techs"] if "Ramesh" in t["name"])
+    assert ramesh["slots"][day]["morning"] in ("survey", "installation")   # the visit booked in _book_and_visit
+    assert ramesh["slots"][day]["evening"] in (None, "survey", "installation")
+    login(client, "tech01@sunpower.demo")
+    fill_survey(client, sid, 3, backup_hours=6, essential_load_w=800)
+    r = client.patch("/api/staff/surveys/%s" % sid, json={"system_type": "off_grid"}, headers=H)
+    assert r.status_code == 200, r.text
+    s = client.get("/api/staff/surveys/%s" % sid).json()
+    assert s["system_type"] == "off_grid" and any(x["key"] == "battery" for x in s["sections"])
+    oid = client.post("/api/staff/surveys/%s/quote" % sid, headers=H).json()["id"]
+    assert client.get("/api/staff/orders/%s" % oid).json()["system_type"] == "off_grid"   # quote follows the survey

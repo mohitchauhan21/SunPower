@@ -98,8 +98,8 @@ def deliveries(state: str = "", q: str = "", user=Depends(staff_only), db=Depend
         sql += " AND d.state = ?"
         args.append(state)
     if q:
-        sql += " AND (c.name LIKE ? OR d.ref LIKE ? OR o.ref LIKE ?)"
-        args += [like(q)] * 3
+        sql += " AND (c.name LIKE ? OR d.ref LIKE ? OR o.ref LIKE ? OR d.project_ref LIKE ?)"
+        args += [like(q)] * 4
     rows = db.q(sql + " ORDER BY CASE d.state WHEN 'ready' THEN 0 WHEN 'waiting' THEN 1 ELSE 2 END, d.id DESC LIMIT 300", *args)
     for r in rows:
         r["state_label"] = rules.label(rules.DELIVERY_STATES, r["state"])
@@ -197,7 +197,7 @@ def _job(db, user, jid, write=False):
 @router.get("/jobs")
 def jobs(state: str = "", q: str = "", user=Depends(staff_only), db=Depends(get_db)):
     lvl = need(user, "jobs")
-    sql = ("SELECT j.id, j.ref, j.state, j.scheduled_at, j.kw_planned, j.site_end, o.ref AS order_ref, c.name AS customer, c.city, "
+    sql = ("SELECT j.id, j.ref, j.project_ref, j.state, j.scheduled_at, j.kw_planned, j.site_end, o.ref AS order_ref, c.name AS customer, c.city, "
            "(SELECT GROUP_CONCAT(u.name, ', ') FROM job_techs jt JOIN users u ON u.id = jt.user_id WHERE jt.job_id = j.id) AS crew "
            "FROM jobs j JOIN orders o ON o.id = j.order_id JOIN customers c ON c.id = j.customer_id WHERE 1=1")
     args = []
@@ -210,8 +210,8 @@ def jobs(state: str = "", q: str = "", user=Depends(staff_only), db=Depends(get_
         sql += " AND j.state = ?"
         args.append(state)
     if q:
-        sql += " AND (c.name LIKE ? OR j.ref LIKE ? OR c.city LIKE ?)"
-        args += [like(q)] * 3
+        sql += " AND (c.name LIKE ? OR j.ref LIKE ? OR c.city LIKE ? OR j.project_ref LIKE ?)"
+        args += [like(q)] * 4
     rows = db.q(sql + " ORDER BY CASE j.state WHEN 'in_progress' THEN 0 WHEN 'planned' THEN 1 ELSE 2 END, j.scheduled_at LIMIT 300", *args)
     for r in rows:
         r["state_label"] = rules.label(rules.JOB_STATES, r["state"])
@@ -328,7 +328,7 @@ def _ticket(db, user, tid, write=False):
 @router.get("/tickets")
 def tickets(stage: str = "", q: str = "", user=Depends(staff_only), db=Depends(get_db)):
     lvl = need(user, "tickets")
-    sql = ("SELECT t.id, t.ref, t.stage, t.priority, t.reported_on, t.description, t.warranty_id, c.name AS customer, "
+    sql = ("SELECT t.id, t.ref, t.project_ref, t.stage, t.priority, t.reported_on, t.description, t.warranty_id, c.name AS customer, "
            "p.name AS product, u.name AS technician FROM tickets t JOIN customers c ON c.id = t.customer_id "
            "LEFT JOIN products p ON p.id = t.product_id LEFT JOIN users u ON u.id = t.technician_id WHERE 1=1")
     args = []
@@ -343,8 +343,8 @@ def tickets(stage: str = "", q: str = "", user=Depends(staff_only), db=Depends(g
         sql += " AND t.stage = ?"
         args.append(stage)
     if q:
-        sql += " AND (c.name LIKE ? OR t.ref LIKE ? OR t.description LIKE ?)"
-        args += [like(q)] * 3
+        sql += " AND (c.name LIKE ? OR t.ref LIKE ? OR t.description LIKE ? OR t.project_ref LIKE ?)"
+        args += [like(q)] * 4
     rows = db.q(sql + " ORDER BY CASE WHEN t.stage IN ('closed','cancel') THEN 1 ELSE 0 END, t.priority DESC, t.reported_on DESC LIMIT 300", *args)
     for r in rows:
         r["stage_label"] = rules.label(rules.TICKET_STAGES, r["stage"])
@@ -479,8 +479,8 @@ def warranties(q: str = "", status: str = "", user=Depends(staff_only), db=Depen
         sql += " AND w.end_date < ?"
         args.append(t0)
     if q:
-        sql += " AND (s.name LIKE ? OR c.name LIKE ? OR c.phone LIKE ? OR o.ref LIKE ?)"
-        args += [like(q)] * 4
+        sql += " AND (s.name LIKE ? OR c.name LIKE ? OR c.phone LIKE ? OR o.ref LIKE ? OR w.project_ref LIKE ?)"
+        args += [like(q)] * 5
     rows = db.q(sql + " ORDER BY w.end_date LIMIT 300", *args)
     for r in rows:
         r["active"] = r["start_date"] <= t0 <= r["end_date"]

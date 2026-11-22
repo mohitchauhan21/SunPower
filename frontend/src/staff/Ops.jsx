@@ -40,16 +40,16 @@ export function Deliveries() {
         { value: 'done', label: 'Dispatched', count: c.done || 0 }, { value: 'delivered', label: 'Delivered', count: c.delivered || 0 }]} />
       {error ? <ErrorBox error={error} onRetry={reload} /> : !data ? <Loading /> : (
         <Table rows={data.rows} rowLink={(d) => `/app/dispatch/${d.id}`} empty="Nothing to dispatch."
-          columns={[{ key: 'ref', label: 'Delivery' }, { key: 'order_ref', label: 'Order' }, { key: 'customer', label: 'Customer' },
+          columns={[{ key: 'ref', label: 'Project ID', render: (r) => <strong className="pid">{r.project_ref || r.ref}</strong> }, { key: 'customer', label: 'Customer' },
             { key: 'city', label: 'City' }, { key: 'kw', label: 'kW', num: true },
             { key: 'short', label: 'Stock', render: (d) => (d.short == null ? '—' : d.short ? <span className="bad">{d.short} item{d.short === 1 ? '' : 's'} short</span> : <span className="good">All in stock</span>) },
             { key: 'date_done', label: 'Dispatched', render: (d) => fmtDate(d.date_done) || '—' },
             { key: 'state', label: 'Status', render: (d) => <Pill state={d.state}>{d.state_label}</Pill> },
             ...(can.write ? [{ key: 'act', label: '', render: (d) => (
               <span className="row-acts">
-                {d.state === 'ready' && <button type="button" className="link link--btn" disabled={!!busy} onClick={() => pack(d)}>Pack</button>}
-                {['ready', 'packed'].includes(d.state) && <Link className="btn btn--primary btn--sm" to={`/app/dispatch/${d.id}`}>Dispatch</Link>}
-                {d.state === 'done' && <Link className="link" to={`/app/dispatch/${d.id}`}>Mark delivered</Link>}
+                {d.state === 'ready' && <button type="button" className="btn btn--secondary btn--sm" disabled={!!busy} onClick={() => pack(d)}>Mark packed</button>}
+                {d.state === 'packed' && <Link className="btn btn--primary btn--sm" to={`/app/dispatch/${d.id}`}>Dispatch</Link>}
+                {d.state === 'done' && <Link className="btn btn--secondary btn--sm" to={`/app/dispatch/${d.id}`}>Mark delivered</Link>}
               </span>) }] : [])]} />
       )}
     </>
@@ -82,12 +82,12 @@ export function Delivery() {
   };
   return (
     <>
-      <PageHead back={{ to: '/app/dispatch', label: 'Dispatch' }} eyebrow={`${d.ref} · order ${d.order_ref}`} title={d.customer}
+      <PageHead back={{ to: '/app/dispatch', label: 'Dispatch' }} eyebrow={`Project ${d.project_ref || d.ref} · dispatch`} title={d.customer}
                 sub={[d.street, d.city, d.phone].filter(Boolean).join(' · ')}>
         <Pill state={d.state}>{d.state_label}</Pill>
-        {open && d.state === 'ready' && <button className="btn btn--secondary btn--sm" disabled={!!busy}
+        {open && d.state === 'ready' && <button className="btn btn--primary btn--sm" disabled={!!busy}
           onClick={() => run('pack', () => post(`/api/staff/deliveries/${id}/pack`), 'Kit marked packed.').then((r) => r && reload())}>Mark packed</button>}
-        {open && <button className="btn btn--primary btn--sm" disabled={!!busy || (d.advance_due > 0 && !override)} onClick={validate}>Dispatch kit</button>}
+        {open && d.state !== 'ready' && <button className="btn btn--primary btn--sm" disabled={!!busy || (d.advance_due > 0 && !override)} onClick={validate}>Dispatch kit</button>}
         {d.can_edit && d.state === 'done' && <button className="btn btn--primary btn--sm" disabled={!!busy}
           onClick={() => run('deliver', () => post(`/api/staff/deliveries/${id}/deliver`), 'Marked delivered to the site.').then((r) => r && reload())}>Mark delivered</button>}
       </PageHead>
@@ -107,14 +107,13 @@ export function Delivery() {
         <Section title="Packing list">
           <div className="table-scroll">
             <table className="table">
-              <thead><tr><th>Item</th><th className="num">Needed</th><th className="num">In stock</th><th className="num">Short</th><th>Serial / batch</th></tr></thead>
+              <thead><tr><th>Item</th><th className="num">Needed</th><th className="num">In stock</th><th>Serial / batch</th></tr></thead>
               <tbody>
                 {d.lines.map((l) => (
                   <tr key={l.id}>
                     <td><strong>{l.name}</strong><div className="muted small">{l.code}{l.warranty_months ? ` · ${l.warranty_months / 12} yr warranty` : ''}</div></td>
                     <td className="num">{l.qty}</td>
                     <td className={`num ${l.qty_on_hand < l.qty && open ? 'bad' : ''}`}>{l.qty_on_hand}</td>
-                    <td className="num">{!open ? '—' : l.qty_on_hand < l.qty ? <span className="bad">{l.qty - l.qty_on_hand}</span> : <span className="good">0</span>}</td>
                     <td>
                       {l.tracking === 'none' ? <span className="muted">—</span>
                         : shipped ? <code className="serials">{l.serials.join(', ')}</code>
@@ -131,7 +130,9 @@ export function Delivery() {
           </div>
         </Section>
         <div className="stack">
-          <Section title="Order"><KV items={[['Order', <Link key="o" to={`/app/orders/${d.order_id}`}>{d.order_ref}</Link>], ['Order total', inr(d.amount_total)], ['Paid so far', inr(d.paid)], ['Packed', fmtDate(d.packed_at, true) || '—'], ['Dispatched', fmtDate(d.date_done, true) || '—'], ['Delivered', fmtDate(d.delivered_at, true) || '—']]} /></Section>
+          <Section title="Progress"><KV items={[['Project', d.project_ref || d.order_ref],
+            ...[['Packed', d.packed_at], ['Dispatched', d.date_done], ['Delivered', d.delivered_at]].filter(([, v]) => v).map(([k, v]) => [k, fmtDate(v, true)]),
+            ...(!d.packed_at ? [['Next', 'Pack the kit, then dispatch it with every serial / batch number']] : !d.date_done ? [['Next', 'Scan serials and dispatch']] : !d.delivered_at ? [['Next', 'Mark delivered when it reaches the site']] : [])]} /></Section>
           <Notes model="delivery" id={d.id} notes={d.notes} reload={reload} />
         </div>
       </div>
@@ -405,7 +406,7 @@ export function Jobs() {
         </div>
       ) : (
         <Table rows={rows} rowLink={(j) => `/app/jobs/${j.id}`} empty="No jobs."
-          columns={[{ key: 'ref', label: 'Job' }, { key: 'customer', label: 'Customer' }, { key: 'city', label: 'City' }, { key: 'kw_planned', label: 'kW', num: true },
+          columns={[{ key: 'ref', label: 'Project ID', render: (r) => <strong className="pid">{r.project_ref || r.ref}</strong> }, { key: 'customer', label: 'Customer' }, { key: 'city', label: 'City' }, { key: 'kw_planned', label: 'kW', num: true },
             { key: 'scheduled_at', label: 'Scheduled', render: (j) => fmtLocal(j.scheduled_at) }, { key: 'crew', label: 'Crew', render: (j) => j.crew || <span className="bad">Not assigned</span> },
             { key: 'state', label: 'Status', render: (j) => <Pill state={j.state}>{j.state_label}</Pill> }]} />
       )}
@@ -481,7 +482,7 @@ export function Job() {
   const done = j.checklist.filter((c) => c.done).length;
   return (
     <>
-      <PageHead back={{ to: '/app/jobs', label: 'Jobs' }} eyebrow={`${j.ref} · order ${j.order_ref}`} title={j.customer}
+      <PageHead back={{ to: '/app/jobs', label: 'Jobs' }} eyebrow={`Project ${j.project_ref || j.ref} · installation`} title={j.customer}
                 sub={`${j.kw_planned} kW ${j.system_type === 'off_grid' ? 'Off-Grid' : 'On-Grid'} · ${fmtLocal(j.scheduled_at)}`}>
         <Pill state={j.state}>{j.state_label}</Pill>
         {j.street && <a className="btn btn--secondary btn--sm" target="_blank" rel="noreferrer" href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([j.street, j.city].join(', '))}`}>Directions</a>}
@@ -584,7 +585,7 @@ export function Tickets() {
         ...(data?.stages || []).filter((s) => s.value !== 'cancel').map((s) => ({ ...s, count: data?.counts?.[s.value] || 0 }))]} />
       {error ? <ErrorBox error={error} onRetry={reload} /> : !data ? <Loading /> : (
         <Table rows={data.rows} rowLink={(t) => `/app/service/${t.id}`} empty="No requests."
-          columns={[{ key: 'ref', label: 'Request' }, { key: 'customer', label: 'Customer' }, { key: 'product', label: 'Equipment', render: (t) => t.product || '—' },
+          columns={[{ key: 'ref', label: 'Project ID', render: (r) => <strong className="pid">{r.project_ref || r.ref}</strong> }, { key: 'customer', label: 'Customer' }, { key: 'product', label: 'Equipment', render: (t) => t.product || '—' },
             { key: 'description', label: 'Problem', render: (t) => <span className="clip">{t.description}</span> },
             { key: 'technician', label: 'Technician', render: (t) => t.technician || <span className="bad">Unassigned</span> },
             { key: 'priority', label: '', render: (t) => (t.priority === '2' ? <Pill state="failed">Urgent</Pill> : t.priority === '1' ? <Pill state="waiting">High</Pill> : null) },
@@ -662,7 +663,7 @@ export function Ticket() {
   const sellable = (parts.data?.rows || []).filter((p) => !p.is_kit && !p.is_service);
   return (
     <>
-      <PageHead back={{ to: '/app/service', label: 'Service' }} eyebrow={`${t.ref} · via ${t.channel || 'phone'} · open ${t.days_open} day${t.days_open === 1 ? '' : 's'}`} title={t.customer}
+      <PageHead back={{ to: '/app/service', label: 'Service' }} eyebrow={`${t.project_ref ? `Project ${t.project_ref} · repair ${t.ref}` : t.ref} · via ${t.channel || 'phone'} · open ${t.days_open} day${t.days_open === 1 ? '' : 's'}`} title={t.customer}
                 sub={[t.product, t.serial && `serial ${t.serial}`, t.order_ref && `order ${t.order_ref}`].filter(Boolean).join(' · ') || 'Equipment not specified'}>
         <Pill state={t.under_warranty ? 'done' : 'waiting'}>{t.under_warranty ? 'Under warranty – free' : 'Out of warranty – billable'}</Pill>
         <Pill state={t.stage}>{t.stage_label}</Pill>
@@ -771,7 +772,7 @@ export function Warranties() {
         <Table rows={data.rows} empty="No warranties match."
           columns={[{ key: 'serial', label: 'Serial', render: (w) => <code>{w.serial}</code> }, { key: 'product', label: 'Equipment' },
             { key: 'customer', label: 'Customer', render: (w) => <Link to={`/app/customers/${w.customer_id}`}>{w.customer}</Link> }, { key: 'phone', label: 'Phone' },
-            { key: 'order_ref', label: 'Order' }, { key: 'start_date', label: 'From', render: (w) => fmtDate(w.start_date) },
+            { key: 'order_ref', label: 'Project ID', render: (w) => <strong className="pid">{w.project_ref || w.order_ref}</strong> }, { key: 'start_date', label: 'From', render: (w) => fmtDate(w.start_date) },
             { key: 'end_date', label: 'Until', render: (w) => fmtDate(w.end_date) },
             { key: 'active', label: 'Status', render: (w) => <Pill state={w.active ? 'active' : 'expired'}>{w.active ? 'Active' : 'Expired'}</Pill> },
             ...(me.role === 'director' ? [{ key: 'ext', label: '', render: (w) => <button className="link link--btn" onClick={() => extend(w)}>Change</button> }] : [])]} />
