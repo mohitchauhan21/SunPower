@@ -1,0 +1,32 @@
+<section id="architecture" class="dark num">
+<p class="eyebrow">System architecture</p>
+<h2 class="in">Three layers, plus an AI helper service</h2>
+<div style="display:grid; grid-template-columns:1fr 380px; gap:28px; margin-top:36px">
+<div style="display:flex; flex-direction:column; gap:8px">
+<div class="in" style="--i:1; background:#16263D; border-radius:20px; padding:18px 24px; display:flex; flex-direction:column; gap:14px">
+<p class="tag">Users</p>
+<div style="display:flex; gap:12px; flex-wrap:wrap"><p class="pill">Website &amp; booking</p><p class="pill">Customer portal</p><p class="pill">Staff workspace</p><p class="pill">Technician on phone</p></div>
+</div>
+<x-shape kind="arrow-down" class="fade" style="--i:2; background:#F28C28; width:32px; height:24px; align-self:center"></x-shape>
+<div class="in" style="--i:3; background:#16263D; border-radius:20px; padding:18px 24px; display:flex; flex-direction:column; gap:14px">
+<p class="tag">Front end · React 18 + Vite</p>
+<p class="small muted">Single-page app: savings calculator, survey form, inventory, dispatch, invoices, dashboards</p>
+</div>
+<x-shape kind="arrow-down" class="fade" style="--i:4; background:#F28C28; width:32px; height:24px; align-self:center"></x-shape>
+<div class="in" style="--i:5; background:#22385A; border-radius:20px; padding:18px 24px; display:flex; flex-direction:column; gap:14px; border:2px solid #F28C28">
+<p class="tag">Back end · FastAPI (Python 3.12)</p>
+<div style="display:flex; gap:12px; flex-wrap:wrap"><p class="pill sun">Business rules</p><p class="pill">Role-based access</p><p class="pill">REST API</p><p class="pill">Print &amp; PDF pages</p></div>
+</div>
+<x-shape kind="arrow-down" class="fade" style="--i:6; background:#F28C28; width:32px; height:24px; align-self:center"></x-shape>
+<div class="in" style="--i:7; background:#16263D; border-radius:20px; padding:18px 24px; display:flex; flex-direction:row; align-items:center; gap:20px">
+<x-icon name="Database" style="width:48px; height:48px; color:#3FA36B"></x-icon>
+<p class="small"><b>SQLite database</b> <span style="color:#BFCBDB">· enquiries, surveys, orders, stock, serials, jobs, warranties, invoices</span></p>
+</div>
+</div>
+<div style="display:flex; flex-direction:column; gap:14px">
+<div class="card in" style="--i:8; border:2px solid #F7C548"><x-icon name="Lightbulb" style="color:#F7C548"></x-icon><h3 style="font-size:30px">AI helper service</h3><p>Separate FastAPI app with free local models: bill OCR, message reader, fault diagnosis, panel photo check</p></div>
+<div class="card in" style="--i:9"><x-icon name="Globe"></x-icon><h3 style="font-size:30px">Outside services</h3><p>PVGIS solar estimate · Razorpay payments · Google sign-in · SMTP email</p></div>
+</div>
+</div>
+<aside>Architecture in three layers. At the top, the users: the public website where customers book, the customer portal, and one staff workspace that adapts to six roles, with technician pages that work on a phone. The front end is a React single-page app built with Vite. It talks to a FastAPI back end in Python, where all the business rules live, together with role-based access and sign-in. Data is stored in SQLite. On the side runs a separate AI helper service with free local models, and the system connects to PVGIS for solar estimates, Razorpay for payments, Google sign-in and email.</aside>
+</section>

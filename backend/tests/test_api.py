@@ -122,6 +122,10 @@ def test_installation_needs_checklist_photo_kw_signature(client):
     login(client, "tech01@sunpower.demo")
     job = next(j for j in client.get("/api/staff/jobs").json()["rows"] if j["state"] == "planned")
     jid = job["id"]
+    from datetime import date
+    login(client, "director@sunpower.demo")   # installation day is today
+    client.patch("/api/staff/jobs/%s" % jid, json={"scheduled_at": date.today().isoformat() + "T08:00"}, headers=H)
+    login(client, "tech01@sunpower.demo")
     client.post("/api/staff/jobs/%s/start" % jid, headers=H)
     r = client.post("/api/staff/jobs/%s/finish" % jid, headers=H)
     assert r.status_code == 400 and "Checklist" in r.json()["detail"]
@@ -144,7 +148,7 @@ def test_dispatch_blocked_without_advance(client, payments_on):
 
 
 def test_customer_sees_own_account_and_quote_pdf(client):
-    login(client, "customer@sunpower.demo")
+    login(client, "customer2@sunpower.demo")   # the demo customer with an installed system
     o = client.get("/api/my/overview").json()
     assert o["orders"] and o["warranties"]
     assert client.get(o["orders"][0]["pdf_url"]).status_code == 200
@@ -555,3 +559,9 @@ def test_technician_availability_and_system_type_from_survey(client):
     assert s["system_type"] == "off_grid" and any(x["key"] == "battery" for x in s["sections"])
     oid = client.post("/api/staff/surveys/%s/quote" % sid, headers=H).json()["id"]
     assert client.get("/api/staff/orders/%s" % oid).json()["system_type"] == "off_grid"   # quote follows the survey
+
+
+def test_demo_customer_starts_empty(client):
+    login(client, "customer@sunpower.demo")
+    o = client.get("/api/my/overview").json()
+    assert o["customer"]["name"] == "Aarav Nair" and not o["orders"] and not o["enquiries"] and not o["warranties"]

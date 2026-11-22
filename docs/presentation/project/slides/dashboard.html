@@ -1,0 +1,33 @@
+<section id="dashboard" class="dark num">
+<p class="eyebrow">Dashboard &amp; business intelligence</p>
+<h2 class="in">What the director sees at a glance</h2>
+<div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:18px; margin-top:40px">
+<div class="card in" style="--i:1; padding:24px"><p class="small muted">Invoiced this month</p><p class="big" style="font-size:56px">₹18.4 L</p></div>
+<div class="card in" style="--i:2; padding:24px"><p class="small muted">Collected</p><p class="big good" style="font-size:56px">₹15.1 L</p></div>
+<div class="card in" style="--i:3; padding:24px"><p class="small muted">Installs done</p><p class="big" style="font-size:56px">11</p></div>
+<div class="card in" style="--i:4; padding:24px"><p class="small muted">Waiting to install</p><p class="big" style="font-size:56px">9</p></div>
+</div>
+<div style="display:grid; grid-template-columns:1fr 600px; gap:24px; margin-top:24px">
+<div class="card fade" style="--i:5; padding:28px; gap:16px">
+<p class="small muted">Profit per installation (last 6 jobs)</p>
+<svg width="900" height="230" viewBox="0 0 900 230" aria-label="Bar chart of profit per installation: five jobs made a profit, one made a loss">
+<line x1="0" y1="170" x2="900" y2="170" stroke="#3A5072" stroke-width="2"/>
+<rect x="20" y="70" width="110" height="100" rx="8" fill="#3FA36B"/>
+<rect x="170" y="40" width="110" height="130" rx="8" fill="#3FA36B"/>
+<rect x="320" y="90" width="110" height="80" rx="8" fill="#3FA36B"/>
+<rect x="470" y="170" width="110" height="50" rx="8" fill="#F28C28"/>
+<rect x="620" y="60" width="110" height="110" rx="8" fill="#3FA36B"/>
+<rect x="770" y="100" width="110" height="70" rx="8" fill="#3FA36B"/>
+</svg>
+<p class="small" style="color:#F7C548">Orange bar = loss-making job, flagged for review</p>
+</div>
+<div style="display:flex; flex-direction:column; gap:14px">
+<div class="card fade" style="--i:6; padding:22px 26px; flex-direction:row; justify-content:space-between; align-items:center"><p class="small">Subsidy files in progress</p><p class="pill sun">20</p></div>
+<div class="card fade" style="--i:7; padding:22px 26px; flex-direction:row; justify-content:space-between; align-items:center"><p class="small">Open repair requests</p><p class="pill">6</p></div>
+<div class="card fade" style="--i:8; padding:22px 26px; flex-direction:row; justify-content:space-between; align-items:center"><p class="small">Items short in stock</p><p class="pill leaf">0</p></div>
+<div class="card fade" style="--i:9; padding:22px 26px; flex-direction:row; justify-content:space-between; align-items:center"><p class="small">Period</p><p class="small" style="font-weight:600">Day · Week · Month · Year</p></div>
+</div>
+</div>
+<p class="foot">Illustrative layout with sample figures; the live dashboard reads the same numbers from the database.</p>
+<aside>The director gets one view of the business: invoiced versus collected, installations done and still waiting, profit per installation with loss-making jobs flagged in orange, subsidy files in progress, open repairs and any stock shortages. It can be switched between day, week, month and year, and there is a printable report that can be emailed. The figures on this slide are an illustration; in the demo the same panels read live data.</aside>
+</section>

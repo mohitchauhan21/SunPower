@@ -9,7 +9,8 @@ Demo logins (password for all: Sunpower@2026, recovery code 2580):
   warehouse@sunpower.demo  Warehouse
   support@sunpower.demo    Service desk
   tech01@sunpower.demo …   Technicians (15)
-  customer@sunpower.demo   A customer with an installed system
+  customer@sunpower.demo   Aarav Nair: a customer with nothing yet (for a live walkthrough)
+  customer2@sunpower.demo  A customer with an installed system
 """
 import base64
 import random
@@ -50,6 +51,34 @@ FAULTS = [
 # 1x1 transparent PNG: stands in for roof photos and signatures in the demo
 PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=")
 SIGNATURE = "data:image/png;base64," + base64.b64encode(PNG).decode()
+
+
+DEMO_CUSTOMER = "Aarav Nair"
+
+
+def _name(rnd):
+    """A random customer name, never the demo customer's."""
+    while True:
+        n = "%s %s" % (rnd.choice(FIRST), rnd.choice(LAST))
+        if n != DEMO_CUSTOMER:
+            return n
+
+
+def _top_up_stock(db, actor_id):
+    """Keep the shelves full after the demo orders have taken their parts."""
+    for p in db.q("SELECT * FROM products WHERE is_kit = 0 AND is_service = 0 AND active = 1"):
+        if p["tracking"] == "serial":
+            target = 220 if p["code"] == "BAT-150" else 60
+            have = db.val("SELECT COUNT(*) FROM serials WHERE product_id = ? AND state = 'in_stock'", p["id"])
+            if have < target:
+                prefix = p["code"].replace("-", "")
+                start = db.val("SELECT COUNT(*) FROM serials WHERE product_id = ?", p["id"]) + 1
+                rules.receive_stock(db, p, 0, ["%s-27%04d" % (prefix, n) for n in range(start, start + target - have)],
+                                    actor_id, "Restock")
+        else:
+            target = 1200 if p["tracking"] == "lot" else (3000 if "(m)" in p["name"] else 300)
+            if p["qty_on_hand"] < target:
+                rules.receive_stock(db, p, target - p["qty_on_hand"], [], actor_id, "Restock")
 
 
 def _ts(dt):
@@ -114,18 +143,21 @@ def load_demo(db):
     today = datetime.now().replace(minute=0, second=0, microsecond=0)
     plans = [{"days_ago": 800, "kw": 3, "type": "on_grid", "pay": "paid", "stage": "installed"},
              {"days_ago": 545, "kw": 5, "type": "off_grid", "pay": "paid", "stage": "installed"}]
+    RECENT = ["confirmed", "scheduled", "packed", "dispatched", "delivered", "confirmed", "scheduled", "packed",
+              "dispatched", "installed"]   # the last 10 orders: one or two at every step after confirmation
     for i in range(38):
-        days = rnd.randint(0, 85)
+        recent = i >= 28
+        days = rnd.randint(1, 9) if recent else rnd.randint(11, 85)
         plans.append({"days_ago": days, "kw": rnd.choice([1, 2, 3, 3, 3, 4, 5]),
                       "type": "off_grid" if rnd.random() < .3 else "on_grid",
                       "pay": "paid" if days > 20 else rnd.choice(["advance", "advance", "paid", "invoiced"]),
                       "loss": i in (4, 11, 23),
-                      "stage": "installed" if days > 10 else rnd.choice(["installed", "dispatched", "confirmed"])})
+                      "stage": RECENT[i - 28] if recent else "installed"})
 
     installed_orders, open_jobs = [], []
     for i, plan in enumerate(plans):
         when = today - timedelta(days=plan["days_ago"], hours=rnd.randint(0, 6))
-        name = "%s %s" % (rnd.choice(FIRST), rnd.choice(LAST))
+        name = _name(rnd)
         email = "%s.%d@example.com" % (name.lower().replace(" ", "."), i)
         phone = "+91 98%08d" % rnd.randint(0, 99999999)
         area, city, state, discom = rnd.choice(PLACES)
@@ -161,9 +193,15 @@ def load_demo(db):
                              rnd.choice(sales), purpose="advance")
         if plan["pay"] == "invoiced" or (plan["pay"] == "paid" and plan["stage"] == "installed"):
             rules.final_invoice(db, db.get("orders", oid), director["id"])
-        if plan["stage"] in ("dispatched", "installed"):
+        if plan["stage"] in ("dispatched", "delivered", "installed"):
             _dispatch(db, oid, warehouse)
+            if plan["stage"] == "delivered":
+                rules.deliver_delivery(db, db.one("SELECT * FROM deliveries WHERE order_id = ?", oid), warehouse)
+        elif plan["stage"] == "packed":
+            rules.pack_delivery(db, db.one("SELECT * FROM deliveries WHERE order_id = ?", oid), warehouse)
         job = db.one("SELECT * FROM jobs WHERE order_id = ?", oid)
+        if plan["stage"] in ("scheduled", "packed", "dispatched", "delivered"):   # Sales has booked the installation day
+            db.update("jobs", job["id"], {"scheduled_at": _ts((today + timedelta(days=rnd.randint(1, 8))).replace(hour=rnd.choice([10, 11, 14])))})
         crew = rnd.sample(techs, rnd.randint(2, 3))
         if plan["stage"] != "installed" and len(open_jobs) < 4:
             crew = [techs[0]] + crew[:1]   # Ramesh (tech01) always has work in the demo
@@ -191,16 +229,22 @@ def load_demo(db):
     _subsidies(db, today)
     _tickets(db, rnd, installed_orders, techs, director, support)
     _pipeline(db, rnd, techs, sales, director, today)
-    # one customer login with an installed system
+    # customer2: an installed system (for screenshots and the tests)
     cust_id = db.val("SELECT customer_id FROM orders WHERE id = ?", installed_orders[-1])
-    db.update("customers", cust_id, {"email": "customer@sunpower.demo"})
+    db.update("customers", cust_id, {"email": "customer2@sunpower.demo"})
     existing = db.one("SELECT id FROM users WHERE customer_id = ?", cust_id)
     if existing:
-        db.update("users", existing["id"], {"email": "customer@sunpower.demo", "password_hash": hash_password(DEMO_PASSWORD),
+        db.update("users", existing["id"], {"email": "customer2@sunpower.demo", "password_hash": hash_password(DEMO_PASSWORD),
                                             "recovery_code_hash": hash_password(DEMO_CODE)})
     else:
-        _user(db, db.val("SELECT name FROM customers WHERE id = ?", cust_id), "customer@sunpower.demo", "customer",
+        _user(db, db.val("SELECT name FROM customers WHERE id = ?", cust_id), "customer2@sunpower.demo", "customer",
               customer_id=cust_id)
+    # customer: Aarav Nair, nothing booked yet, for a live walkthrough from the first enquiry
+    aarav = rules.ensure_customer(db, DEMO_CUSTOMER, "customer@sunpower.demo", "+91 9876543210", None, "Ahmedabad")
+    db.update("customers", aarav, {"state": "Gujarat"})
+    uid = _user(db, DEMO_CUSTOMER, "customer@sunpower.demo", "customer", customer_id=aarav)
+    db.update("users", uid, {"phone": "+91 9876543210"})
+    _top_up_stock(db, warehouse["id"])
     db.exec("DELETE FROM mail_queue")  # demo emails are not real
 
 
@@ -229,9 +273,7 @@ def _backdate(db, oid, lid, sid, when, stage, rnd):
         db.update("jobs", job["id"], {"scheduled_at": _ts(start), "site_start": _uts(start), "site_end": _uts(end),
                                       "signed_on": _uts(end)})
         db.exec("UPDATE timesheets SET date = ? WHERE job_id = ?", start.date().isoformat(), job["id"])
-    else:
-        upcoming = datetime.now().replace(minute=0, second=0, microsecond=0) + timedelta(days=rnd.randint(0, 6))
-        db.update("jobs", job["id"], {"scheduled_at": _ts(upcoming.replace(hour=rnd.choice([9, 10, 11, 14])))})
+    # open jobs keep the date Sales gave them (or none yet: "waiting for Sales to schedule")
     db.exec("UPDATE notes SET created_at = ? WHERE (model = 'order' AND res_id = ?) OR (model = 'lead' AND res_id = ?)",
             w, oid, lid)
 
@@ -285,28 +327,33 @@ def _tickets(db, rnd, installed, techs, director, support):
 
 def _pipeline(db, rnd, techs, sales, director, today):
     """Fresh enquiries at every stage, so Sales has work today."""
-    for i in range(7):
-        name = "%s %s" % (rnd.choice(FIRST), rnd.choice(LAST))
+    for i in range(12):
+        name = _name(rnd)
         kw = rnd.choice([2, 3, 5])
         lid = rules.create_enquiry(db, {
             "contact_name": name, "phone": "+91 97%08d" % rnd.randint(0, 99999999),
-            "email": "%s.new%d@example.com" % (name.lower().replace(" ", "."), i), "city": PLACES[i][1],
-            "state": PLACES[i][2], "street": "%d, %s" % (rnd.randint(1, 250), PLACES[i][0]), "requested_kw": kw,
+            "email": "%s.new%d@example.com" % (name.lower().replace(" ", "."), i), "city": PLACES[i % len(PLACES)][1],
+            "state": PLACES[i % len(PLACES)][2], "street": "%d, %s" % (rnd.randint(1, 250), PLACES[i % len(PLACES)][0]), "requested_kw": kw,
             "subsidy_requested": True, "salesperson_id": sales[i % 2]}, channel=rnd.choice(["web", "whatsapp", "call"]))
         db.update("leads", lid, {"created_at": _ts(datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=rnd.randint(1, 60)))})
         if i < 2:
             continue                                    # new: call them
         db.update("leads", lid, {"roof_area_sqft": 400, "monthly_bill": 3200, "grid_suitable": "yes", "stage": "contacted"})
-        if i < 3:
+        if i < 4:
             continue                                    # screened, survey to book
-        tech = techs[0] if i in (3, 4) else rnd.choice(techs)
+        tech = techs[0] if i in (4, 5) else rnd.choice(techs)
+        slot_hour = [10, 13, 16][i % 3]
         sid = rules.schedule_survey(db, db.get("leads", lid), tech,
-                                    _ts((today + timedelta(days=1)).replace(hour=10 + i)), director["id"], allow_past=True)
-        if i < 5:
-            continue                                    # survey scheduled (Ramesh visits tomorrow)
-        db.update("surveys", sid, {"roof_type": "rcc", "roof_direction": "S", "roof_tilt": 15, "recommended_kw": kw})
+                                    _ts((today + timedelta(days=1 + i % 4)).replace(hour=slot_hour)), director["id"], allow_past=True)
+        if i < 7:
+            continue                                    # survey booked (Ramesh has visits in the coming days)
+        db.update("surveys", sid, {"roof_type": "rcc", "roof_direction": "S", "roof_tilt": 15, "usable_area_sqft": kw * 110,
+                                   "recommended_kw": kw})
         rules.survey_mark_done(db, db.get("surveys", sid), tech)
-        if i < 6:
+        if i < 9:
             continue                                    # visited, waiting for Sales approval
         rules.survey_approve(db, db.get("surveys", sid), director)
-        rules.create_quote(db, db.get("leads", lid), sales[0])   # draft quote to send
+        oid = rules.create_quote(db, db.get("leads", lid), sales[0])
+        if i < 11:
+            rules.send_quote(db, db.get("orders", oid), sales[0])   # quote with the customer
+        # the last one stays a draft quote to send

@@ -1,0 +1,28 @@
+<section id="testing" class="light num">
+<p class="eyebrow">Testing &amp; validation</p>
+<h2 class="in">63 of 63 automated tests pass</h2>
+<div style="display:grid; grid-template-columns:560px 1fr; gap:56px; margin-top:44px">
+<div style="display:flex; flex-direction:column; gap:20px">
+<div class="in" style="--i:1; background:#0E1A2B; border-radius:24px; padding:32px; display:flex; flex-direction:column; gap:8px">
+<p style="font-family:'Space Grotesk', Arial, sans-serif; font-size:96px; font-weight:700; color:#3FA36B; line-height:1">63 / 63</p>
+<p class="small" style="color:#BFCBDB">automated tests passing (pytest)</p>
+</div>
+<div class="in" style="--i:2; display:grid; grid-template-columns:repeat(3, 1fr); gap:14px">
+<div class="card" style="padding:20px; align-items:center"><p class="big" style="font-size:56px">40</p><p>API &amp; rules</p></div>
+<div class="card" style="padding:20px; align-items:center"><p class="big" style="font-size:56px">13</p><p>End-to-end</p></div>
+<div class="card" style="padding:20px; align-items:center"><p class="big" style="font-size:56px">10</p><p>Create / delete</p></div>
+</div>
+<p class="small fade" style="--i:3; color:#4A5568">Plus browser checks for every role on a test copy of the database.</p>
+</div>
+<div style="display:flex; flex-direction:column; gap:14px">
+<p class="tag in" style="--i:2">Bugs found and fixed</p>
+<div class="in" style="--i:3; display:flex; gap:16px; align-items:baseline"><x-icon name="CheckCircle" style="width:28px; height:28px; color:#23744A; flex:none"></x-icon><p style="font-size:26px">GST still 12% after the Sept 2025 cut → 5% on equipment</p></div>
+<div class="in" style="--i:4; display:flex; gap:16px; align-items:baseline"><x-icon name="CheckCircle" style="width:28px; height:28px; color:#23744A; flex:none"></x-icon><p style="font-size:26px">Survey accepted 4,545 kW on a 40 sq ft roof → size limits</p></div>
+<div class="in" style="--i:5; display:flex; gap:16px; align-items:baseline"><x-icon name="CheckCircle" style="width:28px; height:28px; color:#23744A; flex:none"></x-icon><p style="font-size:26px">Survey entries lost on “Next” → save before switching</p></div>
+<div class="in" style="--i:6; display:flex; gap:16px; align-items:baseline"><x-icon name="CheckCircle" style="width:28px; height:28px; color:#23744A; flex:none"></x-icon><p style="font-size:26px">Shared panel batch gave one order no warranty → fixed lookup</p></div>
+<div class="in" style="--i:7; display:flex; gap:16px; align-items:baseline"><x-icon name="CheckCircle" style="width:28px; height:28px; color:#23744A; flex:none"></x-icon><p style="font-size:26px">Installation could finish before its day → date check</p></div>
+<div class="in" style="--i:8; display:flex; gap:16px; align-items:baseline"><x-icon name="CheckCircle" style="width:28px; height:28px; color:#23744A; flex:none"></x-icon><p style="font-size:26px">Dispatch screen repeated buttons and columns → one next step</p></div>
+</div>
+</div>
+<aside>Testing was automated from the start. 63 automated tests run with pytest and all pass: 40 test the API and business rules, 13 are end-to-end tests that walk a customer from survey to warranty, and 10 test creating and deleting records safely. On top of that, every screen was checked in the browser for each role, on a copy of the database. The right side lists real bugs testing caught: GST was still 12 percent after the September 2025 cut; the survey accepted an impossible 4,545 kilowatts on a 40 square foot roof; entries were lost when pressing Next; a shared panel batch left one order without a warranty; an installation could be finished before its scheduled day; and the dispatch screen repeated information. Each one is now fixed and covered by a test.</aside>
+</section>
